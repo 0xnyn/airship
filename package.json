@@ -1,0 +1,40 @@
+{
+  "name": "airship",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Airship — a visual editor for your running web app, driven by Claude Code, Codex or OpenCode",
+  "type": "module",
+  "scripts": {
+    "build": "turbo run build",
+    "build:web": "turbo run build --filter=@airship/web",
+    "clean": "turbo run clean",
+    "commit": "czg",
+    "dev": "turbo run dev",
+    "dev:pkgs": "turbo run dev --filter=./packages/*",
+    "dev:web": "turbo run dev --filter=@airship/web",
+    "fix": "ultracite fix",
+    "format": "biome format --write .",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "prepare": "husky",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.6",
+    "@commitlint/cli": "^21.1.0",
+    "@commitlint/config-conventional": "^21.1.0",
+    "@types/node": "^22.10.0",
+    "czg": "^1.13.1",
+    "husky": "^9.1.7",
+    "tsup": "^8.5.0",
+    "turbo": "^2.10.1",
+    "typescript": "^5.7.0",
+    "ultracite": "^7.10.0",
+    "vitest": "^4.1.10"
+  },
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22.13.0"
+  }
+}

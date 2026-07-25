@@ -1,0 +1,40 @@
+# Reference projects — read-only, never tracked
+reference/
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# TanStack Start / Nitro — apps/web's server build and router scratch dir.
+# routeTree.gen.ts is deliberately NOT ignored: it is committed so a clean
+# checkout typechecks without running `tsr generate` first.
+.output/
+.nitro/
+.tanstack/
+
+# Turbo
+.turbo/
+
+# Storybook — the built catalogue, and the cache its Vite builder keeps
+storybook-static/
+.storybook-cache/
+
+# Runtime / local data
+.airship/
+*.log
+logs/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Env
+.env
+.env.*
+!.env.example

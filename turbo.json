@@ -1,0 +1,75 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "typecheck": {
+      "dependsOn": ["^build"]
+    },
+    "test": {
+      "dependsOn": ["^build"]
+    },
+    "lint": {},
+    "clean": {
+      "cache": false
+    },
+    "@airshiplabs/cli#build": {
+      "dependsOn": [
+        "^build",
+        "@airship/overlay#build",
+        "@airship/editor-tokens#build"
+      ],
+      "outputs": ["dist/**"]
+    },
+    "@airship/web#build": {
+      "dependsOn": ["^build"],
+      "outputs": [
+        ".output/**",
+        ".tanstack/**",
+        "dist/**",
+        "src/routeTree.gen.ts"
+      ]
+    },
+    "@airship/web#dev": {
+      "dependsOn": ["@airship/site-tokens#build"],
+      "cache": false,
+      "persistent": true
+    },
+    "storybook": {
+      "cache": false,
+      "persistent": true
+    },
+    "build-storybook": {
+      "outputs": ["storybook-static/**"]
+    },
+    "test:browser": {},
+    "@airship/overlay#storybook": {
+      "dependsOn": [
+        "@airship/editor-tokens#build",
+        "@airship/editor-icons#build"
+      ],
+      "cache": false,
+      "persistent": true
+    },
+    "@airship/overlay#build-storybook": {
+      "dependsOn": [
+        "@airship/editor-tokens#build",
+        "@airship/editor-icons#build"
+      ],
+      "outputs": ["storybook-static/**"]
+    },
+    "@airship/overlay#test:browser": {
+      "dependsOn": [
+        "@airship/editor-tokens#build",
+        "@airship/editor-icons#build"
+      ]
+    }
+  }
+}
