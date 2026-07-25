@@ -1,0 +1,6 @@
+#!/bin/sh
+# Conventional Commits, enforced. commitlint.config.ts has been in this repo
+# since the beginning wired to nothing, which is why the log is a wall of
+# "checkpoint". checks.yml runs the same rule over a PR's commits, because a
+# hook is only ever a courtesy — it can be skipped with --no-verify.
+pnpm commitlint --edit "$1"

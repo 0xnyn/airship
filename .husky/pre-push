@@ -1,0 +1,13 @@
+#!/bin/sh
+# Block pushing to main — open a PR from a branch instead.
+#
+# git feeds pre-push the refs being pushed on stdin, one per line:
+#   <local_ref> <local_sha> <remote_ref> <remote_sha>
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main)
+      echo "✖ Pushing to 'main' is blocked — open a PR from your branch."
+      exit 1
+      ;;
+  esac
+done
