@@ -1,0 +1,32 @@
+{
+  "name": "@airship/editor-tokens",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./tokens.css": "./dist/tokens.css",
+    "./fonts.css": "./dist/fonts.css",
+    "./fonts/*": "./dist/fonts/*"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node scripts/gen.mjs && tsup src/index.ts --format esm --dts --sourcemap --clean && node scripts/postbuild.mjs",
+    "clean": "rm -rf dist .turbo",
+    "dev": "node scripts/gen.mjs && tsup src/index.ts --format esm --dts --sourcemap --watch",
+    "gen": "node scripts/gen.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@fontsource-variable/inter": "^5.1.1",
+    "@fontsource/jetbrains-mono": "^5.1.1",
+    "yaml": "^2.6.1"
+  }
+}

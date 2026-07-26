@@ -1,0 +1,30 @@
+/*
+ * The editor's self-hosted type:
+ *   Inter (variable)     → "Inter"
+ *   JetBrains Mono       → "JetBrains Mono"
+ * The woff2 files are copied into ./fonts/ at build time from @fontsource.
+ * If they are absent the token font stacks fall back to system fonts.
+ * Independent copy for the editor package — never shared with the marketing
+ * token package, so each evolves on its own.
+ */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("./fonts/inter-variable.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("./fonts/jetbrains-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url("./fonts/jetbrains-mono-700.woff2") format("woff2");
+}
