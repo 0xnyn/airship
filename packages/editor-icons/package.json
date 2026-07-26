@@ -1,0 +1,27 @@
+{
+  "name": "@airship/editor-icons",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "node scripts/gen.mjs && tsup src/index.ts --format esm --dts --sourcemap --clean",
+    "clean": "rm -rf dist .turbo",
+    "dev": "node scripts/gen.mjs && tsup src/index.ts --format esm --dts --sourcemap --watch",
+    "gen": "node scripts/gen.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "yaml": "^2.6.1"
+  }
+}
