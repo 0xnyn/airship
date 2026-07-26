@@ -1,0 +1,31 @@
+/*
+ * The two families named by the font stacks in DESIGN.md, self-hosted.
+ * The woff2 files are copied into ./fonts/ at build time from @fontsource
+ * (see scripts/postbuild.mjs). If they are absent the stacks fall back to
+ * system fonts, which is a visible but survivable downgrade.
+ *
+ * @airship/editor-tokens ships a fonts.css declaring these SAME family names
+ * from its own copies of the same binaries. apps/web must import exactly one of
+ * the two — this one — or every face is downloaded twice.
+ */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("./fonts/inter-variable.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("./fonts/jetbrains-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url("./fonts/jetbrains-mono-700.woff2") format("woff2");
+}
