@@ -1,0 +1,36 @@
+{
+  "name": "@airship/source",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "import": "./dist/server.js"
+    },
+    "./tokens": {
+      "types": "./dist/tokens.d.ts",
+      "import": "./dist/tokens.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/browser.ts src/server.ts src/tokens.ts --format esm --dts --sourcemap --clean",
+    "clean": "rm -rf dist .turbo",
+    "dev": "tsup src/browser.ts src/server.ts src/tokens.ts --format esm --dts --sourcemap --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@airship/protocol": "workspace:*",
+    "@jridgewell/trace-mapping": "^0.3.31",
+    "bippy": "^0.5.32",
+    "element-source": "^0.0.5"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.10"
+  }
+}
