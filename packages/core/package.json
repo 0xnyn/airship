@@ -1,0 +1,33 @@
+{
+  "name": "@airship/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --sourcemap --clean",
+    "clean": "rm -rf dist .turbo",
+    "dev": "tsup src/index.ts --format esm --dts --sourcemap --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@airship/git": "workspace:*",
+    "@airship/protocol": "workspace:*",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.196",
+    "@openai/codex-sdk": "^0.146.0",
+    "@opencode-ai/sdk": "^1.18.13",
+    "diff": "^9.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0"
+  }
+}
