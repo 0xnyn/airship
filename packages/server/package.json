@@ -1,0 +1,34 @@
+{
+  "name": "@airship/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --sourcemap --clean",
+    "clean": "rm -rf dist .turbo",
+    "dev": "tsup src/index.ts --format esm --dts --sourcemap --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@airship/core": "workspace:*",
+    "@airship/editor-tokens": "workspace:*",
+    "@airship/git": "workspace:*",
+    "@airship/overlay": "workspace:*",
+    "@airship/protocol": "workspace:*",
+    "@airship/source": "workspace:*",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.0"
+  }
+}

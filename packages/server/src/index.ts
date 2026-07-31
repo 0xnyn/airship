@@ -1,0 +1,739 @@
+/**
+ * @airship/server — the daemon. Runs the universal proxy, serves the overlay,
+ * speaks the @airship/protocol WebSocket, and drives edits through @airship/core.
+ */
+import type { AddressInfo, Socket } from "node:net";
+import type {
+  CodexSettings,
+  OpencodeSettings,
+  RunEditResult,
+} from "@airship/core";
+import {
+  buildEditPrompt,
+  runEdit,
+  shutdownOpencodeServer,
+} from "@airship/core";
+import {
+  commitEdit,
+  createBranch,
+  createPr,
+  currentBranch,
+  defaultBranch,
+  ghStatus,
+  hasRemote,
+  isGitRepo,
+  pushBranch,
+  restoreFiles,
+} from "@airship/git";
+import {
+  type AgentKind,
+  type AirshipSurface,
+  type AttrEditTarget,
+  type ClientMessage,
+  ClientMessageSchema,
+  type CreateJobRequest,
+  type Effort,
+  type ElementContext,
+  type JobDiffBundle,
+  type JobStatus,
+  type MoveEdit,
+  type ReviewComment,
+  type ServerEvent,
+  type SourceLocation,
+  surfaceToMode,
+  type VisualEditTarget,
+} from "@airship/protocol";
+import { scanProjectTokens } from "@airship/source/tokens";
+import { type RawData, WebSocket, WebSocketServer } from "ws";
+import { listHistory, readBundle, thread, writeBundle } from "./history";
+import { JobStore } from "./jobs";
+import { openInEditor } from "./open-editor";
+import { preparePromptInput } from "./prompt-input";
+import { createProxyServer } from "./proxy";
+
+export type {
+  CodexConfigValue,
+  CodexSettings,
+  OpencodeSettings,
+} from "@airship/core";
+/** Re-exported so the CLI depends only on @airship/server. */
+export { checkAuth } from "@airship/core";
+export { isGitRepo } from "@airship/git";
+export type { AgentKind, AirshipSurface, Effort } from "@airship/protocol";
+
+const WS_PATH = "/__airship/ws";
+
+export interface ServerOptions {
+  /** Default backend for turns that do not name one. */
+  agent?: AgentKind;
+  /** Auto-commit each accepted edit with a Conventional-Commits message. */
+  autoCommit?: boolean;
+  /** Codex-only passthrough knobs; opaque here by design. */
+  codex?: CodexSettings;
+  /** Project root for file edits. */
+  cwd: string;
+  effort?: Effort;
+  maxBudgetUsd?: number;
+  /** Claude-only turn cap. */
+  maxTurns?: number;
+  model?: string;
+  /** OpenCode-only passthrough knobs; opaque here by design. */
+  opencode?: OpencodeSettings;
+  /** Port Airship's proxy listens on. */
+  port: number;
+  /** Sandbox edits to the project and cut network access. A launch-level
+   * posture, not per-job — the overlay picker chooses the agent, not this. */
+  safe?: boolean;
+  /**
+   * Which surface a top-level navigation lands on. A default, not a lock: the
+   * editor's own switcher sets a cookie that outranks it, and `?__airship=`
+   * outranks both.
+   */
+  surface?: AirshipSurface;
+  targetHost?: string;
+  /** Port the user's dev server is already running on. */
+  targetPort: number;
+}
+
+export interface RunningServer {
+  close: () => Promise<void>;
+  url: string;
+}
+
+export async function startServer(opts: ServerOptions): Promise<RunningServer> {
+  // Default to the hostname (not 127.0.0.1): dev servers like Vite 6 bind IPv6
+  // `localhost` (::1) only, so a hardcoded IPv4 target gets ECONNREFUSED. Node's
+  // happy-eyeballs (autoSelectFamily) then reaches whichever family it bound.
+  const targetHost = opts.targetHost ?? "localhost";
+  const { cwd } = opts;
+  const jobs = new JobStore();
+  const clients = new Set<WebSocket>();
+  const wss = new WebSocketServer({ noServer: true });
+
+  // Serialize edits: concurrent edits against the same working tree would
+  // cross-contaminate diff capture and undo baselines.
+  let editChain: Promise<void> = Promise.resolve();
+
+  function broadcast(event: ServerEvent): void {
+    const data = JSON.stringify(event);
+    for (const client of clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(data);
+      }
+    }
+  }
+
+  function send(ws: WebSocket, event: ServerEvent): void {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(event));
+    }
+  }
+
+  wss.on("connection", (ws: WebSocket) => {
+    clients.add(ws);
+    send(ws, {
+      defaultAgent: opts.agent ?? "claude",
+      jobs: jobs.snapshots(),
+      type: "hello",
+    });
+    // Push the token scan without being asked. The inspector needs it to render
+    // its very first selection, and a request/response round trip would leave
+    // the badges missing for the first element the user clicks. Deferred off the
+    // handshake so the first connection is never waiting on a tree walk.
+    setImmediate(() => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      try {
+        send(ws, { scan: scanProjectTokens(cwd), type: "tokens:result" });
+      } catch {
+        // A token scan is an enhancement, never a reason to break the session.
+      }
+    });
+    ws.on("message", (data: RawData) => handleMessage(ws, data));
+    ws.on("close", () => clients.delete(ws));
+    ws.on("error", () => clients.delete(ws));
+  });
+
+  function handleMessage(ws: WebSocket, data: RawData): void {
+    let parsed: ClientMessage;
+    try {
+      parsed = ClientMessageSchema.parse(JSON.parse(data.toString()));
+    } catch (err) {
+      send(ws, {
+        message: `invalid message: ${err instanceof Error ? err.message : String(err)}`,
+        type: "error",
+      });
+      return;
+    }
+
+    switch (parsed.type) {
+      case "edit": {
+        const { request } = parsed;
+        editChain = editChain
+          .then(() => startEdit(request))
+          .catch((err) => {
+            broadcast({
+              message: `edit failed: ${err instanceof Error ? err.message : String(err)}`,
+              type: "error",
+            });
+          });
+        break;
+      }
+      case "cancel":
+        jobs.get(parsed.jobId)?.abort?.abort();
+        break;
+      case "undo":
+        undo(ws, parsed.jobId);
+        break;
+      case "history":
+        send(ws, { entries: listHistory(cwd), type: "history" });
+        break;
+      // Read-only, so deliberately *not* on `editChain`: a token scan touches no
+      // files and must not queue behind a running edit, or the inspector would
+      // sit tokenless for as long as the agent takes.
+      case "tokens":
+        send(ws, {
+          scan: scanProjectTokens(cwd, { refresh: parsed.refresh }),
+          type: "tokens:result",
+        });
+        break;
+      // Off `editChain` for the same reason as `tokens`: it only resolves
+      // sources and renders a string. Queueing it behind a running edit would
+      // freeze the composer's live preview for the length of a turn. It does
+      // read files the agent may be mid-write on, which is harmless for a
+      // preview and cheaper than the alternative.
+      case "prompt":
+        sendPromptPreview(ws, parsed.request);
+        break;
+      case "thread":
+        send(ws, {
+          entries: thread(cwd, parsed.rootJobId),
+          rootJobId: parsed.rootJobId,
+          type: "thread",
+        });
+        break;
+      case "commit":
+        commit(ws, parsed.jobId, parsed.message, parsed.push);
+        break;
+      case "open":
+        send(ws, {
+          file: parsed.file,
+          type: "open:result",
+          ...openInEditor(cwd, parsed),
+        });
+        break;
+      case "pr":
+        createPullRequest(ws, parsed.jobId, parsed.title, parsed.branch);
+        break;
+      default:
+        break;
+    }
+  }
+
+  async function startEdit(request: CreateJobRequest): Promise<void> {
+    const displayPrompt = request.prompt.trim() || synthesizeLabel(request);
+    const rec = jobs.create(displayPrompt);
+    broadcast({
+      job: {
+        createdAt: rec.createdAt,
+        jobId: rec.jobId,
+        prompt: displayPrompt,
+        status: "running",
+      },
+      type: "job:created",
+    });
+
+    // The same resolution the `prompt` preview runs, from the same function —
+    // the two must render the identical string.
+    const promptInput = preparePromptInput(cwd, request);
+
+    const agent = request.agent ?? opts.agent ?? "claude";
+    const resumeSessionId = resolveResume(cwd, request.parentJobId, agent);
+
+    const abort = new AbortController();
+    rec.abort = abort;
+
+    const result = await runEdit(
+      {
+        // Spread first, and restate none of its fields below: every
+        // prompt-relevant input has to come from `preparePromptInput` or the
+        // preview stops matching what the agent is sent.
+        ...promptInput,
+        abortController: abort,
+        agent,
+        codex: opts.codex,
+        cwd,
+        effort: opts.effort,
+        fork: request.fork,
+        images: request.images,
+        maxBudgetUsd: opts.maxBudgetUsd,
+        maxTurns: opts.maxTurns,
+        model: opts.model,
+        opencode: opts.opencode,
+        resumeSessionId,
+        safe: opts.safe,
+      },
+      {
+        onSessionId: (id) => {
+          rec.sessionId = id;
+        },
+        onStep: (step) => {
+          rec.step = step;
+          broadcast({ jobId: rec.jobId, step, type: "job:step" });
+        },
+        onText: (delta) =>
+          broadcast({ delta, jobId: rec.jobId, type: "job:text" }),
+        onTimeline: (item) =>
+          broadcast({ item, jobId: rec.jobId, type: "job:timeline" }),
+        onTimelinePatch: (id, patch) =>
+          broadcast({
+            id,
+            jobId: rec.jobId,
+            patch,
+            type: "job:timeline:patch",
+          }),
+        onTodos: (todos) =>
+          broadcast({ jobId: rec.jobId, todos, type: "job:todos" }),
+      }
+    );
+
+    const status = jobStatus(abort.signal.aborted, result.ok);
+    const bundle = buildBundle({
+      agent,
+      createdAt: rec.createdAt,
+      displayPrompt,
+      jobId: rec.jobId,
+      parentJobId: request.parentJobId,
+      primaryElement: promptInput.element,
+      result,
+      source: promptInput.source ?? null,
+      status,
+    });
+
+    writeBundle(cwd, bundle);
+    jobs.finish(rec.jobId, status, result.error);
+
+    broadcast({
+      error: result.error,
+      jobId: rec.jobId,
+      status,
+      type: "job:status",
+    });
+    broadcast({ bundle, jobId: rec.jobId, type: "job:done" });
+    broadcast({ entries: listHistory(cwd), type: "history" });
+
+    if (opts.autoCommit && status === "done" && result.diffs.length) {
+      const sha = commitEdit(
+        cwd,
+        result.diffs.map((d) => d.file),
+        bundle.summary || displayPrompt
+      );
+      broadcast({
+        error: sha ? undefined : "auto-commit failed",
+        ok: Boolean(sha),
+        sha: sha ?? undefined,
+        type: "commit:result",
+      });
+    }
+  }
+
+  /**
+   * Render the instruction this request would produce, without running it.
+   *
+   * Goes through `preparePromptInput` + `buildEditPrompt` — the same two calls
+   * `startEdit` makes — so what the user reads is what the agent is handed.
+   */
+  function sendPromptPreview(ws: WebSocket, request: CreateJobRequest): void {
+    try {
+      send(ws, {
+        text: buildEditPrompt(preparePromptInput(cwd, request)),
+        type: "prompt:result",
+      });
+    } catch (err) {
+      send(ws, {
+        message: `prompt preview failed: ${err instanceof Error ? err.message : String(err)}`,
+        type: "error",
+      });
+    }
+  }
+
+  function undo(ws: WebSocket, jobId: string): void {
+    const bundle = readBundle(cwd, jobId);
+    if (!bundle?.diffs.length) {
+      send(ws, {
+        error: "nothing to undo",
+        jobId,
+        ok: false,
+        type: "undo:result",
+      });
+      return;
+    }
+    // Content-restore from the before-state captured by the SDK PreToolUse
+    // hooks — instant and reliable. (SDK `rewindEdit` is the alternative.)
+    const restored = restoreFiles(cwd, bundle.diffs);
+    const ok = restored.length === bundle.diffs.length;
+    broadcast({
+      error: ok
+        ? undefined
+        : `restored ${restored.length}/${bundle.diffs.length} files`,
+      jobId,
+      ok,
+      type: "undo:result",
+    });
+    broadcast({ entries: listHistory(cwd), type: "history" });
+  }
+
+  async function commit(
+    ws: WebSocket,
+    jobId: string,
+    message?: string,
+    push?: boolean
+  ): Promise<void> {
+    const bundle = readBundle(cwd, jobId);
+    if (!bundle?.diffs.length) {
+      send(ws, {
+        error: "nothing to commit",
+        ok: false,
+        type: "commit:result",
+      });
+      return;
+    }
+    const sha = commitEdit(
+      cwd,
+      bundle.diffs.map((d) => d.file),
+      message || bundle.summary || bundle.prompt
+    );
+    if (!(sha && push)) {
+      send(ws, {
+        error: sha ? undefined : "commit failed",
+        ok: Boolean(sha),
+        sha: sha ?? undefined,
+        type: "commit:result",
+      });
+      return;
+    }
+    const branch = currentBranch(cwd);
+    if (!branch) {
+      send(ws, {
+        error: "committed, but HEAD is detached — nothing to push",
+        ok: true,
+        pushed: false,
+        sha,
+        type: "commit:result",
+      });
+      return;
+    }
+    const pushed = await pushBranch(cwd, branch);
+    send(ws, {
+      error: pushed.ok
+        ? undefined
+        : `committed, but push failed: ${pushed.error}`,
+      ok: true,
+      pushed: pushed.ok,
+      sha,
+      type: "commit:result",
+    });
+  }
+
+  /**
+   * Commit → push → `gh pr create`.
+   *
+   * Each step fails differently and a bare "failed" is useless, so `stage` says
+   * which one stopped. The preflight is most of the value: being on the default
+   * branch or having no `origin` are the two everyday cases, and both are worth
+   * naming before anything is committed.
+   */
+  async function createPullRequest(
+    ws: WebSocket,
+    jobId: string,
+    title?: string,
+    branch?: string
+  ): Promise<void> {
+    const fail = (
+      stage: "branch" | "commit" | "create" | "preflight" | "push",
+      error: string
+    ): void => {
+      send(ws, { error, ok: false, stage, type: "pr:result" });
+    };
+
+    const bundle = readBundle(cwd, jobId);
+    const blocked = prPreflight(cwd, bundle);
+    if (blocked || !bundle) {
+      fail("preflight", blocked ?? "nothing to open a pull request for");
+      return;
+    }
+
+    const base = defaultBranch(cwd);
+    const branched = ensureFeatureBranch(cwd, jobId, base, branch);
+    if (!branched.head) {
+      fail(branched.stage ?? "preflight", branched.error ?? "no branch");
+      return;
+    }
+    const { head } = branched;
+
+    const summary = bundle.summary || bundle.prompt;
+    const sha = commitEdit(
+      cwd,
+      bundle.diffs.map((d) => d.file),
+      summary
+    );
+    if (!sha) {
+      fail("commit", "commit failed");
+      return;
+    }
+    const pushed = await pushBranch(cwd, head);
+    if (!pushed.ok) {
+      fail("push", pushed.error ?? "push failed");
+      return;
+    }
+    const pr = await createPr(cwd, {
+      base: base ?? undefined,
+      body: summary,
+      head,
+      title: title || summary.slice(0, 72),
+    });
+    send(ws, {
+      error: pr.error,
+      ok: pr.ok,
+      stage: pr.ok ? undefined : "create",
+      type: "pr:result",
+      url: pr.url,
+    });
+  }
+
+  const server = createProxyServer({
+    defaultMode: surfaceToMode(opts.surface ?? "canvas"),
+    onAirshipUpgrade: (req, socket, head) => {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        wss.emit("connection", ws, req);
+      });
+    },
+    targetHost,
+    targetPort: opts.targetPort,
+    wsPath: WS_PATH,
+  });
+
+  // A tunnelled upgrade (Vite HMR) hands the socket off to the proxy, so the
+  // http server stops accounting for it and `close()` will never reclaim it.
+  // Track them here so shutdown can hang up itself — otherwise Ctrl-C waits on
+  // an HMR socket that, by design, stays open forever.
+  const tunnelled = new Set<Socket>();
+  server.on("upgrade", (_req, socket) => {
+    tunnelled.add(socket as Socket);
+    socket.on("close", () => tunnelled.delete(socket as Socket));
+  });
+
+  await new Promise<void>((resolve) => {
+    server.listen(opts.port, () => resolve());
+  });
+
+  const addr = server.address() as AddressInfo | null;
+  const port = addr?.port ?? opts.port;
+  const url = `http://localhost:${port}`;
+
+  return {
+    close: () =>
+      new Promise<void>((resolve) => {
+        // The OpenCode backend spawns an `opencode serve` child that outlives
+        // the run and holds the event loop open. It is a no-op on the other
+        // backends and when no opencode edit ever happened.
+        shutdownOpencodeServer();
+        // `terminate`, not `close`: a graceful ws handshake waits on a peer that
+        // may never answer, and this path is already "we are going away".
+        for (const c of clients) {
+          c.terminate();
+        }
+        wss.close();
+        for (const socket of tunnelled) {
+          socket.destroy();
+        }
+        server.close(() => resolve());
+        // After `close()`, so no new connection sneaks in behind it. Idle
+        // keep-alive sockets from an open browser tab would otherwise hold the
+        // server up until they time out on their own.
+        server.closeAllConnections();
+      }),
+    url,
+  };
+}
+
+function preview(prompt: string): string {
+  return prompt.length > 120 ? `${prompt.slice(0, 117)}…` : prompt;
+}
+
+/** A readable label for a deltas-only visual edit (used when no note is given). */
+/** Everything that must hold before a PR is possible. Null means "go ahead". */
+function prPreflight(cwd: string, bundle: JobDiffBundle | null): string | null {
+  if (!bundle?.diffs.length) {
+    return "nothing to open a pull request for";
+  }
+  if (!isGitRepo(cwd)) {
+    return "not a git repository";
+  }
+  if (!hasRemote(cwd)) {
+    return "no `origin` remote";
+  }
+  const gh = ghStatus();
+  if (!gh.authed) {
+    return gh.error ?? "gh is unavailable";
+  }
+  return null;
+}
+
+/**
+ * The branch to open the PR from. A PR from the default branch to itself is not
+ * a thing, so being on it means branching first.
+ */
+function ensureFeatureBranch(
+  cwd: string,
+  jobId: string,
+  base: string | null,
+  requested?: string
+): { error?: string; head?: string; stage?: "branch" | "preflight" } {
+  const head = currentBranch(cwd);
+  if (!head) {
+    return { error: "HEAD is detached", stage: "preflight" };
+  }
+  if (head !== base) {
+    return { head };
+  }
+  const name = requested || `airship/${jobId.slice(0, 8)}`;
+  if (!createBranch(cwd, name)) {
+    return { error: `could not create branch ${name}`, stage: "branch" };
+  }
+  return { head: name };
+}
+
+function jobStatus(aborted: boolean, ok: boolean): JobStatus {
+  if (aborted) {
+    return "cancelled";
+  }
+  return ok ? "done" : "failed";
+}
+
+/**
+ * The session to resume, or null to start clean.
+ *
+ * `sessionId` names a Claude session on one backend and a Codex thread on the
+ * other, so resuming across a switch would hand an id to a backend that has
+ * never seen it. Dropping it starts a clean session instead — the conversation
+ * is lost either way, but the turn still runs. Bundles written before `agent`
+ * existed are Claude by construction.
+ */
+function resolveResume(
+  cwd: string,
+  parentJobId: string | undefined,
+  agent: AgentKind
+): string | null {
+  const parent = parentJobId ? readBundle(cwd, parentJobId) : null;
+  if (!parent) {
+    return null;
+  }
+  return (parent.agent ?? "claude") === agent
+    ? (parent.sessionId ?? null)
+    : null;
+}
+
+function buildBundle(args: {
+  agent: AgentKind;
+  createdAt: number;
+  displayPrompt: string;
+  jobId: string;
+  parentJobId?: string;
+  primaryElement?: ElementContext;
+  result: RunEditResult;
+  source: SourceLocation | null;
+  status: JobStatus;
+}): JobDiffBundle {
+  const { displayPrompt, primaryElement, result } = args;
+  return {
+    additions: result.diffs.reduce((n, d) => n + d.additions, 0),
+    agent: args.agent,
+    checkpointId: result.checkpointId ?? undefined,
+    completedAt: Date.now(),
+    createdAt: args.createdAt,
+    deletions: result.diffs.reduce((n, d) => n + d.deletions, 0),
+    diffs: result.diffs,
+    error: result.error,
+    filesChanged: result.diffs.length,
+    followUps: result.followUps,
+    jobId: args.jobId,
+    parentJobId: args.parentJobId,
+    prompt: displayPrompt,
+    promptPreview: preview(displayPrompt),
+    sessionId: result.sessionId ?? undefined,
+    status: args.status,
+    summary: result.summary,
+    target: {
+      displayName: primaryElement?.displayName ?? null,
+      source: args.source ?? null,
+      tagName: primaryElement?.tagName ?? "",
+    },
+    timeline: result.timeline,
+    usage: result.usage,
+  };
+}
+
+/**
+ * Visual-only edits carry an empty prompt; synthesize a readable label for the
+ * job list, history, and (auto-)commit message.
+ */
+function synthesizeLabel(request: CreateJobRequest): string {
+  if (request.comments?.length) {
+    return summarizeComments(request.comments);
+  }
+  if (request.visualChanges?.length) {
+    return summarizeVisual(request.visualChanges);
+  }
+  if (request.attrChanges?.length) {
+    return summarizeAttrs(request.attrChanges);
+  }
+  return summarizeMoves(request.moveChanges);
+}
+
+/** A readable label for an attributes-only turn. */
+function summarizeAttrs(targets: AttrEditTarget[]): string {
+  const count = targets.reduce((n, t) => n + t.changes.length, 0);
+  const first = targets[0].element;
+  const name = first.displayName ?? `<${first.tagName}>`;
+  const scope =
+    targets.length > 1 ? `${name} +${targets.length - 1} more` : name;
+  return `Attribute edit: ${count} change${count === 1 ? "" : "s"} to ${scope}`;
+}
+
+function summarizeVisual(targets?: VisualEditTarget[]): string {
+  if (!targets?.length) {
+    return "Visual edit";
+  }
+  const changeCount = targets.reduce((n, t) => n + t.changes.length, 0);
+  const first = targets[0].element;
+  const name = first.displayName ?? `<${first.tagName}>`;
+  const scope =
+    targets.length > 1 ? `${name} +${targets.length - 1} more` : name;
+  return `Visual edit: ${changeCount} change${changeCount === 1 ? "" : "s"} to ${scope}`;
+}
+
+/** A readable label for a comments-only turn (used when no note is given). */
+function summarizeComments(comments: ReviewComment[]): string {
+  const files = new Set(comments.map((c) => c.file));
+  const where =
+    files.size === 1
+      ? [...files][0]
+      : `${files.size} file${files.size === 1 ? "" : "s"}`;
+  return `Review: ${comments.length} comment${comments.length === 1 ? "" : "s"} on ${where}`;
+}
+
+/** A readable label for a moves-only edit (used when no note is given). */
+function summarizeMoves(moves?: MoveEdit[]): string {
+  if (!moves?.length) {
+    return "Visual edit";
+  }
+  const [first] = moves;
+  const what = first.element.displayName ?? `<${first.element.tagName}>`;
+  const where = first.newParent?.displayName ?? `<${first.newParent?.tagName}>`;
+  const scope = moves.length > 1 ? ` +${moves.length - 1} more` : "";
+  return first.newParent
+    ? `Move ${what} into ${where}${scope}`
+    : `Reposition ${what}${scope}`;
+}
