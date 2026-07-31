@@ -1,0 +1,43 @@
+{
+  "name": "@airship/overlay",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./bundle": "./dist/overlay.global.js",
+    "./hook": "./dist/hook.global.js"
+  },
+  "scripts": {
+    "build": "node scripts/check-css.mjs && tsup",
+    "build-storybook": "storybook build",
+    "check:css": "node scripts/check-css.mjs",
+    "clean": "rm -rf dist .turbo storybook-static",
+    "dev": "tsup --watch",
+    "storybook": "storybook dev -p 6006 --no-open",
+    "test": "vitest run",
+    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@airship/editor-icons": "workspace:*",
+    "@airship/editor-tokens": "workspace:*",
+    "@airship/protocol": "workspace:*",
+    "@airship/source": "workspace:*",
+    "@dnd-kit/abstract": "0.5.0",
+    "@dnd-kit/dom": "0.5.0",
+    "@dnd-kit/geometry": "0.5.0",
+    "bippy": "^0.5.32"
+  },
+  "devDependencies": {
+    "@storybook/addon-a11y": "10.5.7",
+    "@storybook/addon-vitest": "10.5.7",
+    "@storybook/html-vite": "10.5.7",
+    "@vitest/browser": "^4.1.10",
+    "@vitest/browser-playwright": "^4.1.10",
+    "happy-dom": "^20.11.1",
+    "playwright": "^1.62.1",
+    "storybook": "10.5.7",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.10"
+  }
+}
