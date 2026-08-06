@@ -1,0 +1,68 @@
+{
+  "name": "@airshiplabs/cli",
+  "version": "0.1.0",
+  "description": "Airship — a visual editor for your running web app, driven by Claude Code, Codex or OpenCode",
+  "keywords": [
+    "ai",
+    "claude",
+    "codex",
+    "developer-tools",
+    "editor",
+    "opencode",
+    "visual-editing"
+  ],
+  "homepage": "https://github.com/0xnyn/airship#readme",
+  "bugs": {
+    "url": "https://github.com/0xnyn/airship/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xnyn/airship.git",
+    "directory": "apps/cli"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "airship": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup && node scripts/vendor-assets.mjs",
+    "clean": "rm -rf dist .turbo",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.196",
+    "@clack/prompts": "^1.7.0",
+    "@jridgewell/trace-mapping": "^0.3.31",
+    "@openai/codex-sdk": "^0.146.0",
+    "@opencode-ai/sdk": "^1.18.13",
+    "bippy": "^0.5.32",
+    "citty": "^0.2.2",
+    "diff": "^9.0.0",
+    "element-source": "^0.0.5",
+    "picocolors": "^1.1.1",
+    "ws": "^8.21.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@airship/core": "workspace:*",
+    "@airship/editor-tokens": "workspace:*",
+    "@airship/git": "workspace:*",
+    "@airship/overlay": "workspace:*",
+    "@airship/protocol": "workspace:*",
+    "@airship/server": "workspace:*",
+    "@airship/source": "workspace:*",
+    "@types/node": "^22.10.0"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
