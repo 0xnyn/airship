@@ -1,0 +1,496 @@
+/*
+ * The "How it works" cards and the two figures they carry.
+ *
+ * Unlayered, like the rest of the page's CSS — see the comment block in app.css.
+ *
+ * Everything here resolves through `--pk-color-*`, so a token change reaches the
+ * figures without a second edit. The one exception is the picker blue in
+ * `.fig-source`, which is declared locally and explained where it appears.
+ *
+ * The figures are drawn in HTML and CSS rather than shipped as SVG. That is not
+ * a preference: they quote real colours from the token set and must follow it,
+ * and two of their strings (the file name and the diff) are read from
+ * content/mock-page.ts so they cannot drift from the hero. A flat asset would
+ * have to be re-exported every time either changed.
+ */
+
+/* ── the cards ─────────────────────────────────────────────────────────── */
+
+/*
+ * The grid sizes itself from `.section`, which is 1120px — see shell.css. At the
+ * old 640px measure two cards were ~310px each, which is not enough for a figure
+ * to say anything; widening the sections is what made this layout possible, and
+ * is why every section moved rather than this one alone.
+ */
+.steps-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 28px;
+}
+
+.step-card {
+  display: flex;
+  flex-direction: column;
+  padding: 32px 32px 36px;
+  background: var(--pk-color-surface-input);
+  border: none;
+  border-radius: 18px;
+}
+
+/*
+ * A fixed height, so the two titles sit on the same baseline no matter how tall
+ * the drawing inside happens to be. The figures are different shapes — one is a
+ * window, one is a vertical chain — and letting them size the box would stagger
+ * the text beside them.
+ */
+.step-figure {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  height: 232px;
+  margin-bottom: 28px;
+  overflow: hidden;
+}
+
+.step-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 24px;
+  color: var(--pk-color-text-primary);
+  text-align: center;
+  text-wrap: balance;
+}
+
+.step-card-desc {
+  max-width: 42ch;
+  margin: 0 auto;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--pk-color-text-secondary);
+  text-align: center;
+  text-wrap: pretty;
+}
+
+/* ── shared figure scaffolding ─────────────────────────────────────────── */
+
+.fig {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  font-family: var(--pk-font-sans);
+  user-select: none;
+}
+
+/* ── figure: the proxy ─────────────────────────────────────────────────── */
+
+/*
+ * Top-anchored and stretched to the full figure box, rather than a small window
+ * floating in the middle of it. The window is now taller than what is visible,
+ * and the bottom of it dissolves — see the mask on `.fig-window`.
+ */
+.fig-proxy {
+  align-items: center;
+  align-self: stretch;
+  justify-content: flex-start;
+}
+
+/*
+ * The window runs off the bottom of the figure and fades out instead of ending
+ * on an edge, so the drawing reads as a screenshot that continues past the card
+ * rather than a small object with empty space under it. The fade is also what
+ * carries the eye down into the title.
+ *
+ * `mask-image` rather than a gradient overlay: a mask makes the pixels actually
+ * transparent, so this stays correct if the card surface ever changes. An
+ * overlay would have to name the card's background colour, and would need
+ * re-stating every time that colour moved.
+ *
+ * It fades the box-shadow with it, which is the point — a 1px ring surviving
+ * past the fade is what makes this look like erasure rather than depth.
+ */
+.fig-window {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  max-width: 400px;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--pk-color-surface-panel);
+  border-radius: var(--pk-radius-xl);
+  box-shadow:
+    0 0 0 1px var(--pk-color-border-subtle),
+    0 8px 24px -6px rgb(0 0 0 / 0.14);
+  mask-image: linear-gradient(to bottom, #000 56%, transparent 100%);
+}
+
+.fig-chrome {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--pk-color-surface-chrome);
+  border-bottom: 1px solid var(--pk-color-border-faint);
+}
+
+.fig-dots {
+  display: flex;
+  flex-shrink: 0;
+  gap: 5px;
+}
+
+.fig-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.fig-dot-red {
+  background: #f87171;
+}
+.fig-dot-yellow {
+  background: #fbbf24;
+}
+.fig-dot-green {
+  background: #4ade80;
+}
+
+.fig-url {
+  font-family: var(--pk-font-mono);
+  font-size: 10px;
+  color: var(--pk-color-text-muted);
+}
+
+/* Names the port airship is standing in front of. This pill is the entire
+   "sits in front of" claim — without it the window is just a browser. */
+.fig-proxy-pill {
+  padding: 2px 7px;
+  margin-left: auto;
+  font-family: var(--pk-font-mono);
+  font-size: 9px;
+  color: var(--pk-color-text-tertiary);
+  white-space: nowrap;
+  background: var(--pk-color-surface-input);
+  border-radius: var(--pk-radius-pill);
+}
+
+/* Takes the whole window below the chrome, and has no bottom padding: the
+   frames are meant to run past the bottom edge and be cut by the fade, so a
+   gutter under them would only make the window look like it ends. */
+.fig-canvas {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 14px;
+  align-items: stretch;
+  min-height: 0;
+  padding: 16px 14px 0;
+  background: var(--pk-color-surface-page);
+}
+
+/* Full height rather than a fixed one, so the frames end wherever the fade puts
+   them instead of at a number that has to be re-tuned per breakpoint. */
+.fig-frame {
+  position: relative;
+  padding: 8px;
+  background: var(--pk-color-surface-panel);
+  border: 1px solid var(--pk-color-border-subtle);
+  border-radius: 5px;
+}
+
+/* 393 and 1280 are the real numbers — an iPhone 15's logical width and a common
+   desktop breakpoint — so the two frames are visibly a phone and a desktop
+   rather than two rectangles. */
+.fig-frame-sm {
+  flex: 0 0 74px;
+}
+
+.fig-frame-lg {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.fig-frame-w {
+  position: absolute;
+  top: -16px;
+  left: 0;
+  font-family: var(--pk-font-mono);
+  font-size: 9px;
+  color: var(--pk-color-text-tertiary);
+}
+
+.fig-frame-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  height: 100%;
+}
+
+/* The payoff of the pair: the same content stacks in the narrow frame and sits
+   in a row in the wide one, which is what "media queries fire" looks like. */
+.fig-frame-body-row {
+  flex-direction: row;
+  gap: 8px;
+}
+
+.fig-bar {
+  background: var(--pk-color-border-default);
+  border-radius: 3px;
+}
+
+.fig-bar-full {
+  height: 8px;
+}
+
+.fig-bar-half {
+  width: 60%;
+  height: 8px;
+}
+
+/* The one non-text row in the phone's skeleton — a card or image between the
+   lines, so the stack does not read as six identical dashes. */
+.fig-bar-block {
+  height: 26px;
+  margin: 2px 0;
+}
+
+.fig-bar-col {
+  flex: 1;
+  height: 100%;
+}
+
+/* ── figure: source ────────────────────────────────────────────────────── */
+
+/*
+ * Three beats stacked in the order the tool runs: the element you picked, the
+ * file and line it resolved to, the edit that landed.
+ *
+ * `--fig-primary` is the picker blue, and it is written literally rather than
+ * read from a token because `--ap-primary` is scoped to `.ap-mock` in
+ * editor-mock.css — those are the editor's tokens, deliberately not the page's.
+ * This is the one place the page quotes one, and it is the same value.
+ */
+.fig-source {
+  --fig-primary: #0d99ff;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  /* Room for `.fig-pick-badge`, which is absolute and translated a full line
+     ABOVE the element it labels — without this it hangs outside the figure's
+     own box and is clipped by `.step-figure`'s overflow. */
+  padding-top: 18px;
+}
+
+.fig-pick {
+  position: relative;
+  padding: 9px 18px;
+  font-size: 12px;
+  color: var(--pk-color-cta-text);
+  outline: 2px solid var(--fig-primary);
+  outline-offset: 3px;
+  background: var(--pk-color-cta-bg);
+  border-radius: var(--pk-radius-pill);
+}
+
+/* The identity badge, above the box's top-left corner — same placement and same
+   10px mono as `.ap-box-label` in the hero. */
+.fig-pick-badge {
+  position: absolute;
+  top: -8px;
+  left: -2px;
+  padding: 2px 5px;
+  font-family: var(--pk-font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: #fff;
+  white-space: nowrap;
+  background: var(--fig-primary);
+  border-radius: 3px;
+  transform: translateY(-100%);
+}
+
+.fig-handle {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  background: #fff;
+  border: 1px solid var(--fig-primary);
+  border-radius: 1px;
+}
+
+.fig-handle-tl {
+  top: -8px;
+  left: -8px;
+}
+.fig-handle-tr {
+  top: -8px;
+  right: -8px;
+}
+.fig-handle-bl {
+  bottom: -8px;
+  left: -8px;
+}
+.fig-handle-br {
+  right: -8px;
+  bottom: -8px;
+}
+
+.fig-resolve {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 14px;
+}
+
+.fig-thread {
+  width: 1px;
+  height: 14px;
+  background: var(--pk-color-border-default);
+}
+
+.fig-chip {
+  padding: 4px 9px;
+  margin-top: 6px;
+  font-family: var(--pk-font-mono);
+  font-size: 10px;
+  color: var(--pk-color-text-muted);
+  background: var(--pk-color-surface-panel);
+  border-radius: var(--pk-radius-sm);
+  box-shadow: 0 0 0 1px var(--pk-color-border-subtle);
+}
+
+.fig-chip-line {
+  color: var(--pk-color-text-tertiary);
+}
+
+.fig-diff {
+  width: 100%;
+  max-width: 260px;
+  margin-top: 16px;
+  overflow: hidden;
+  background: var(--pk-color-surface-panel);
+  border-radius: var(--pk-radius-lg);
+  box-shadow:
+    0 0 0 1px var(--pk-color-border-subtle),
+    0 6px 18px -6px rgb(0 0 0 / 0.12);
+}
+
+.fig-diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  background: var(--pk-color-surface-chrome);
+  border-bottom: 1px solid var(--pk-color-border-faint);
+}
+
+.fig-diff-file {
+  font-family: var(--pk-font-mono);
+  font-size: 10px;
+  color: var(--pk-color-text-muted);
+}
+
+.fig-diff-stat {
+  font-family: var(--pk-font-mono);
+  font-size: 9px;
+  color: var(--pk-color-text-tertiary);
+}
+
+.fig-diff-body {
+  padding: 6px 0;
+}
+
+.fig-diff-line {
+  padding: 1px 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--pk-font-mono);
+  font-size: 10px;
+  line-height: 17px;
+  white-space: nowrap;
+}
+
+.fig-diff-del {
+  color: var(--pk-color-syntax-old);
+  background: color-mix(in srgb, var(--pk-color-syntax-old) 8%, transparent);
+}
+
+.fig-diff-add {
+  color: var(--pk-color-syntax-new);
+  background: color-mix(in srgb, var(--pk-color-syntax-new) 8%, transparent);
+}
+
+/* ── responsive ────────────────────────────────────────────────────────── */
+
+/*
+ * The cards stack at the same width the nav collapses. Below it the grid's two
+ * columns are narrower than the 400px window the proxy figure wants, and a
+ * figure that has to shrink to fit stops being readable before the text does.
+ */
+@media (max-width: 768px) {
+  .steps-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .step-card {
+    padding: 24px 24px 28px;
+  }
+
+  .step-figure {
+    height: 216px;
+    margin-bottom: 22px;
+  }
+
+  .step-title {
+    font-size: 15px;
+    line-height: 22px;
+  }
+}
+
+/*
+ * At phone widths the figures shrink rather than the box that holds them.
+ *
+ * `.step-figure` is a fixed height so both titles share a baseline, which means
+ * the box cannot simply be cut down to fit a smaller card — anything taller than
+ * it is silently clipped by its own `overflow: hidden`. So the source figure's
+ * drawing comes down first (a tighter chain, a narrower diff) and the box
+ * follows it, with a few pixels to spare.
+ *
+ * The proxy figure needs nothing here any more: its window fills whatever height
+ * the box has and the fade lands at the bottom of it either way.
+ */
+@media (max-width: 640px) {
+  .step-figure {
+    height: 200px;
+  }
+
+  .step-card-desc {
+    font-size: 13px;
+    line-height: 20px;
+  }
+
+  .fig-canvas {
+    padding: 14px 12px 0;
+  }
+
+  .fig-resolve {
+    padding-top: 10px;
+  }
+
+  .fig-thread {
+    height: 10px;
+  }
+
+  .fig-diff {
+    max-width: 240px;
+    margin-top: 12px;
+  }
+
+  .fig-diff-line {
+    line-height: 15px;
+  }
+}

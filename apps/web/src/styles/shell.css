@@ -1,0 +1,1262 @@
+/*
+ * The page shell: top bar, reading column, type scale, and every section that
+ * is not the hero.
+ *
+ * Unlayered on purpose — see the comment block in app.css. A Tailwind utility
+ * cannot override anything in this file, which is what a transcribed layout
+ * needs.
+ *
+ * Colours resolve through `--pk-color-*` rather than being written literally, so
+ * DESIGN.md stays the only place a value is decided. Geometry is literal px,
+ * because it was measured.
+ */
+
+/* ── skip link ─────────────────────────────────────────────────────────── */
+
+/* Parked off-screen rather than `display: none`, which would take it out of the
+   tab order and defeat the point of having it. */
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: 16px;
+  z-index: 1000;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--pk-color-cta-text);
+  text-decoration: none;
+  background: var(--pk-color-cta-bg);
+  border-radius: 0 0 8px 8px;
+  transition: top 150ms ease;
+}
+
+.skip-link:focus {
+  top: 0;
+}
+
+/* ── layout ────────────────────────────────────────────────────────────── */
+
+/*
+ * Clears the sticky bar on every anchor jump.
+ *
+ * Unconditional, unlike the 56px this replaces: the bar used to be a fixed rail
+ * above 1240px and only became sticky below it, so the offset was only needed
+ * there. It is sticky at every width now, and a section that lands underneath it
+ * is the failure this prevents.
+ *
+ * The bar measures ~60px (a 32px control plus 14px of padding either side), so
+ * 72 leaves a little air above the heading rather than butting it against the
+ * chrome. It is the only offset in play — `.section` deliberately carries no
+ * `scroll-margin-top`, so this one number is the whole answer.
+ */
+/*
+ * No rubber-band. macOS lets you drag the whole document past its own end and
+ * springs it back, which on this page means dragging the wallpaper band or the
+ * clipped wordmark away from the edge they were composed to sit against.
+ *
+ * `none` rather than `contain`: `contain` only stops scroll chaining to a
+ * parent, and the bounce is the part being removed here. It applies to touch as
+ * well as trackpads, so it also turns off pull-to-refresh on Android — the page
+ * has nothing to refresh to, but that is the trade.
+ */
+html {
+  overscroll-behavior: none;
+  scroll-padding-top: 72px;
+}
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--pk-color-surface-shell);
+}
+
+/* Holds the three bands the page is made of: the hero's words, the full-bleed
+   wallpaper, and the reading column. Only the middle one touches the edges. */
+.main {
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * No bottom padding, deliberately.
+ *
+ * The sections are held apart by `gap`, so padding-bottom here was never
+ * spacing between anything — it was only trailing room after the last child.
+ * That child is the footer, whose last element is a wordmark clipped so it runs
+ * off the bottom of the page, and 64px of air under it undid exactly that.
+ */
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: 64px;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  padding: 64px 48px 0;
+}
+
+/*
+ * Every section is 1120px — the header's width, so section headings line up with
+ * the wordmark rather than with a narrower column inside it.
+ *
+ * The reading measure did not go away, it moved down a level: it is now the cap
+ * on the PROSE inside a section (the selector list below), not on the section
+ * itself. Sections hold things that want the room — a two-up card grid,
+ * a terminal block, a row of code — and things that want a line length, and
+ * those two wants stopped being the same number the moment the first card grid
+ * appeared. Keeping them fused meant either cramped cards or unreadable prose.
+ */
+.section {
+  align-self: center;
+  width: 100%;
+  max-width: 1120px;
+}
+
+/*
+ * The reading measure, applied to prose that would otherwise run the full 1120.
+ *
+ * Left-aligned rather than centred, so a capped paragraph still starts on the
+ * same x as the heading above it. A section reads as one left edge with a ragged
+ * right, not as a column floating in a wide box.
+ */
+.section-desc,
+.install-note,
+.install-compat,
+.faq-answer > div > p {
+  max-width: 720px;
+}
+
+/*
+ * The hero's words only — the animation is a sibling band, not a child.
+ *
+ * This is the one section that sets its own horizontal padding, because it sits
+ * outside `.content` so that the full-bleed band can follow it without having to
+ * escape a padded parent.
+ */
+.hero {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  padding: 88px 48px 56px;
+}
+
+/* ── header ────────────────────────────────────────────────────────────── */
+
+/*
+ * Translucent, and the blur is the point: the bar spends most of its scroll over
+ * the full-bleed wallpaper band, and a solid slab crossing a photograph reads as
+ * a lid. Frosted, it reads as glass over the page.
+ *
+ * `saturate` alongside the blur is not decoration — blurring alone washes colour
+ * out, and the wallpaper under this bar is the most saturated thing on the page.
+ * Pushing saturation back up keeps what shows through recognisably the image
+ * rather than a grey fog.
+ */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: color-mix(
+    in srgb,
+    var(--pk-color-surface-shell) 72%,
+    transparent
+  );
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  backdrop-filter: blur(14px) saturate(180%);
+}
+
+/*
+ * Without backdrop-filter the bar is just 72% opaque, and 13px secondary text
+ * over a moving wallpaper at that opacity is not readable. Fall back to solid.
+ */
+@supports not (
+    (backdrop-filter: blur(1px)) or
+    (-webkit-backdrop-filter: blur(1px))
+  ) {
+  .site-header {
+    background: var(--pk-color-surface-shell);
+  }
+}
+
+/*
+ * Wider than the 720px reading column on purpose. A bar that stopped at the
+ * column would read as a card floating on the page rather than as the edge of
+ * it; the wordmark and the nav want to sit near the corners.
+ */
+.header-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+  max-width: 1120px;
+  padding: 14px 48px;
+  margin: 0 auto;
+}
+
+/* `auto` on the right is what pushes the nav and the controls to the far edge;
+   everything after this element is right-aligned by consequence. */
+.header-logo {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  margin: 0 auto 0 0;
+  color: var(--pk-color-text-primary);
+  text-decoration: none;
+}
+
+.header-mark {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  color: var(--pk-color-text-primary);
+}
+
+/* The only 500-weight word in the bar, and the only place the product is
+   named in type rather than in prose. */
+.header-wordmark {
+  font-size: 15px;
+  font-weight: 500;
+  letter-spacing: -0.3px;
+}
+
+/* The always-visible half of the bar: whatever lives here stays reachable at
+   every width, including behind the collapsed menu. */
+.header-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  margin-left: 12px;
+}
+
+.hamburger {
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 4px;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.hamburger-line {
+  display: block;
+  width: 16px;
+  height: 1.5px;
+  background: var(--pk-color-text-secondary);
+  border-radius: 1px;
+  transform-origin: center;
+  transition: transform 200ms cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+/* 3.75px is half the 6px gap plus half the 1.5px rule — the offset that lands
+   both lines exactly on the centre before they rotate. */
+.menu-open .hamburger-line:first-child {
+  transform: translateY(3.75px) rotate(45deg);
+}
+
+.menu-open .hamburger-line:last-child {
+  transform: translateY(-3.75px) rotate(-45deg);
+}
+
+.toc {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.toc-inner {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: row;
+  align-items: center;
+  width: auto;
+}
+
+.toc-link {
+  display: flex;
+  align-items: center;
+  padding: 7px 12px;
+  font-size: 13px;
+  line-height: 16px;
+  color: var(--pk-color-text-secondary);
+  white-space: nowrap;
+  text-decoration: none;
+  border-radius: 8px;
+  transition: color 150ms ease;
+}
+
+.toc-link:hover,
+.toc-link:focus-visible {
+  color: var(--pk-color-text-primary);
+}
+
+.toc-link:focus-visible {
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+
+.toc-link[aria-current="true"] {
+  color: var(--pk-color-text-primary);
+}
+
+/* A vertical rule between the page's own sections and the links that leave it.
+   Becomes a horizontal one again in the collapsed menu, where the nav is a
+   column. */
+.toc-sep {
+  width: 1px;
+  height: 14px;
+  margin: 0 10px;
+  background: var(--pk-color-border-faint);
+}
+
+.external-icon {
+  margin-left: 3px;
+  vertical-align: -1px;
+  opacity: 0.6;
+}
+
+/* ── typography ────────────────────────────────────────────────────────── */
+
+/* The small line above the heading. Secondary colour and 13px, so it reads as a
+   label on the hero rather than as the first line of it. */
+.hero-eyebrow {
+  align-self: center;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--pk-color-text-secondary);
+  text-align: center;
+}
+
+/* The agent marks that finish the eyebrow's sentence.
+
+   16px against 13px text: the marks carry the set's optical inset, so their
+   artwork fills only the middle ~11px of the box — which lands on the text's cap
+   height. A 13px box would read as smaller than the words, not level with them.
+
+   Inline rather than flex so the line stays one run of text: the marks sit in
+   the sentence, and `text-align: center` on the parent keeps centring it as a
+   whole. The -3px lift centres the box on the cap without pushing the glyph past
+   the 20px line box, which `vertical-align: middle` would.
+
+   `display` is set explicitly because Tailwind's preflight resets `svg` to
+   `display: block`. Left at that the three marks each take their own line and
+   the eyebrow becomes four lines tall. */
+.hero-eyebrow-mark {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+}
+
+.hero-eyebrow-mark:first-of-type {
+  margin-left: 6px;
+}
+
+.hero-eyebrow-mark + .hero-eyebrow-mark {
+  margin-left: 3px;
+}
+
+.hero-heading {
+  align-self: center;
+  width: 100%;
+  max-width: 640px;
+  margin: 0 0 12px;
+  font-size: 32px;
+  font-weight: 500;
+  line-height: 40px;
+  color: var(--pk-color-text-primary);
+  text-align: center;
+  letter-spacing: -0.45px;
+  text-wrap: balance;
+}
+
+/* Narrower than the 640px column the rest of the page uses: this is three
+   sentences of centred prose, and at 640 the ragged edges on both sides start
+   to read as a shape rather than as text. */
+.hero-sub {
+  align-self: center;
+  width: 100%;
+  max-width: 560px;
+  margin: 0 0 28px;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--pk-color-text-secondary);
+  text-align: center;
+  text-wrap: pretty;
+}
+
+.section-heading {
+  margin: 0 0 16px;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 28px;
+  color: var(--pk-color-text-primary);
+}
+
+.section-desc {
+  margin: 8px 0 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--pk-color-text-secondary);
+  text-wrap: pretty;
+}
+
+/* ── hero actions ──────────────────────────────────────────────────────── */
+
+.cta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: center;
+  align-self: center;
+  justify-content: center;
+  width: 100%;
+  max-width: 640px;
+}
+
+.cta-primary {
+  display: inline-flex;
+  align-items: center;
+  padding: 11px 22px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--pk-color-cta-text);
+  text-decoration: none;
+  cursor: pointer;
+  background: var(--pk-color-cta-bg);
+  border: none;
+  border-radius: var(--pk-radius-pill);
+  transition:
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.cta-primary:hover,
+.cta-primary:focus-visible {
+  background: var(--pk-color-cta-hover);
+}
+
+.cta-primary:active {
+  transform: scale(0.97);
+  transition:
+    background 150ms ease,
+    transform 100ms ease-out;
+}
+
+.cta-primary:focus-visible {
+  outline-offset: 3px;
+}
+
+/* The secondary action is bare text, not a button: it is a thing to copy, and
+   giving it a border would make the page look like it has two primary actions. */
+.hero-install {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 0;
+  font-family: inherit;
+  cursor: pointer;
+  background: none;
+  border: none;
+  transition: transform 150ms ease;
+}
+
+.hero-install:active {
+  transform: scale(0.97);
+  transition: transform 100ms ease-out;
+}
+
+.hero-install-cmd {
+  font-family: var(--pk-font-mono);
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--pk-color-text-secondary);
+  transition: color 150ms ease;
+}
+
+.hero-install-icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  color: var(--pk-color-text-secondary);
+  transition: color 150ms ease;
+}
+
+.hero-install:hover .hero-install-cmd,
+.hero-install:focus-visible .hero-install-cmd,
+.hero-install:hover .hero-install-icon,
+.hero-install:focus-visible .hero-install-icon {
+  color: var(--pk-color-text-primary);
+}
+
+/* "How it works" is the one section that is not a stack of prose. Its cards and
+   the two figures they carry live in cards.css. */
+
+/* ── agent context block ───────────────────────────────────────────────── */
+
+.output-block {
+  margin-top: 32px;
+  overflow: hidden;
+  border: 1px solid var(--pk-color-border-faint);
+  border-radius: var(--pk-radius-xl);
+}
+
+.output-chrome {
+  padding: 10px 16px;
+  font-size: 11px;
+  color: var(--pk-color-text-muted);
+  background: var(--pk-color-surface-chrome);
+}
+
+/* `white-space: pre` and a scroller, not wrapping: the alignment of the `→`
+   column is the whole reason this reads as a payload rather than as prose. */
+.output-body {
+  padding: 20px 24px;
+  overflow-x: auto;
+  font-family: var(--pk-font-mono);
+  font-size: 12.5px;
+  line-height: 1.8;
+  color: var(--pk-color-text-muted);
+  white-space: pre;
+  background: var(--pk-color-surface-panel);
+}
+
+.output-heading {
+  font-weight: 500;
+  color: var(--pk-color-text-primary);
+}
+
+/*
+ * One step down from the payload body, and still 4.8:1 on white.
+ * `text-tertiary` measures 2.5:1 and is reserved for the aria-hidden hero
+ * illustration — see DESIGN.md § Character.
+ */
+.output-dim {
+  color: var(--pk-color-text-secondary);
+}
+
+.output-prop {
+  color: var(--pk-color-syntax-prop);
+}
+
+.output-old {
+  color: var(--pk-color-syntax-old);
+}
+
+.output-new {
+  color: var(--pk-color-syntax-new);
+}
+
+.output-hint {
+  font-style: italic;
+  color: var(--pk-color-syntax-new);
+}
+
+/* ── code blocks ───────────────────────────────────────────────────────── */
+
+.code-block {
+  position: relative;
+  padding: 20px 24px;
+  margin-top: 16px;
+  overflow-x: auto;
+  background: var(--pk-color-surface-panel);
+  border: 1px solid var(--pk-color-border-faint);
+  border-radius: var(--pk-radius-xl);
+}
+
+.code-line {
+  font-family: var(--pk-font-mono);
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--pk-color-text-muted);
+  white-space: pre;
+}
+
+.code-comment {
+  color: var(--pk-color-text-secondary);
+}
+
+.copy-btn {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--pk-color-text-secondary);
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: var(--pk-radius-md);
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    transform 150ms ease;
+}
+
+.copy-btn:hover,
+.copy-btn:focus-visible {
+  color: var(--pk-color-text-muted);
+  background: var(--pk-color-border-default);
+}
+
+.copy-btn:active {
+  transform: scale(0.92);
+  transition:
+    background 150ms ease,
+    color 150ms ease,
+    transform 100ms ease-out;
+}
+
+/* Hidden until the block is hovered — but always revealed on focus, or it would
+   be unreachable by keyboard. */
+.code-block .copy-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  opacity: 0;
+  transition:
+    opacity 150ms ease,
+    background 150ms ease,
+    color 150ms ease;
+}
+
+.code-block:hover .copy-btn,
+.code-block .copy-btn:focus-visible {
+  opacity: 1;
+}
+
+/* Both icons are stacked and cross-faded rather than swapped, so the button
+   never changes size mid-transition. */
+.copy-icon {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition:
+    opacity 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    transform 150ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.copy-icon-in {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.copy-icon-out {
+  opacity: 0;
+  transform: scale(0.75);
+}
+
+/* ── get started ───────────────────────────────────────────────────────── */
+
+.install-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  margin-top: 32px;
+}
+
+.install-step {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.install-step-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--pk-color-text-primary);
+}
+
+.install-note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--pk-color-text-secondary);
+  text-wrap: pretty;
+}
+
+.install-compat {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--pk-color-text-secondary);
+  text-wrap: pretty;
+}
+
+.install-note code,
+.faq-answer code {
+  padding: 2px 6px;
+  font-family: var(--pk-font-mono);
+  font-size: 12px;
+  background: var(--pk-color-surface-input);
+  border: 1px solid var(--pk-color-border-default);
+  border-radius: var(--pk-radius-sm);
+}
+
+/* ── FAQ ───────────────────────────────────────────────────────────────── */
+
+.faq-list {
+  margin-top: 20px;
+}
+
+.faq-item + .faq-item {
+  border-top: 1px solid var(--pk-color-border-subtle);
+}
+
+.faq-question {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 16px 0;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 22px;
+  color: var(--pk-color-text-secondary);
+  text-align: left;
+  cursor: pointer;
+  background: none;
+  border: none;
+}
+
+.faq-question:hover,
+.faq-question:focus-visible {
+  color: var(--pk-color-text-primary);
+}
+
+.faq-question:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--pk-radius-xs);
+}
+
+.faq-chevron {
+  flex-shrink: 0;
+  color: var(--pk-color-text-secondary);
+  transition: transform 300ms var(--pk-motion-ease-reveal);
+}
+
+.faq-item.open .faq-chevron {
+  transform: rotate(180deg);
+}
+
+/*
+ * `grid-template-rows: 0fr → 1fr` is the only way to animate to an unknown
+ * content height without measuring it in JS. The inner div must carry
+ * `overflow: hidden` and `min-height: 0` or the row will not actually collapse.
+ */
+.faq-answer {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 300ms var(--pk-motion-ease-reveal);
+}
+
+.faq-item.open .faq-answer {
+  grid-template-rows: 1fr;
+}
+
+/* Asymmetric on purpose: the answer fades out fast so the row can start
+   collapsing, and fades in late so it is not smeared across the expansion. */
+.faq-answer > div {
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  filter: blur(2px);
+  transition:
+    opacity 100ms ease-out,
+    filter 100ms ease-out;
+}
+
+.faq-item.open .faq-answer > div {
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity 200ms ease-out 80ms,
+    filter 200ms ease-out 80ms;
+}
+
+.faq-answer > div > p {
+  padding-bottom: 16px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--pk-color-text-secondary);
+  text-wrap: pretty;
+}
+
+/* ── footer ──────────────────────────────────────────────────────────── */
+
+.footer {
+  align-self: center;
+  width: 100%;
+  max-width: 1120px;
+  padding-top: 56px;
+  border-top: 1px solid var(--pk-color-border-faint);
+}
+
+/*
+ * Two ends rather than a grid of columns.
+ *
+ * It was `grid-template-columns: 2fr 1fr 1fr` when there were two link columns.
+ * With one left a fixed track count either strands it in the middle of the row
+ * or leaves an empty column, so the row is now "brand at one edge, links at the
+ * other" and does not care how many columns there are.
+ */
+.footer-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 36px 48px;
+  justify-content: space-between;
+}
+
+.footer-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 300px;
+}
+
+.footer-logo {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: var(--pk-color-text-primary);
+}
+
+.footer-brand-mark {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+.footer-brand-name {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.3px;
+}
+
+.footer-blurb {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--pk-color-text-secondary);
+  text-wrap: pretty;
+}
+
+.footer-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+/* Uppercase micro-type, the one place on the page it appears. It has to label a
+   column without competing with the links under it, and going smaller in the
+   same case would just read as more links. */
+.footer-col-title {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  color: var(--pk-color-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* `inline-flex`, not the default inline: the external links carry a trailing
+   arrow, and as an inline box that arrow wraps onto a line of its own the moment
+   the label fills the column. */
+.footer-col-link {
+  display: inline-flex;
+  align-items: center;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--pk-color-text-secondary);
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+
+.footer-col-link:hover,
+.footer-col-link:focus-visible {
+  color: var(--pk-color-text-primary);
+}
+
+/*
+ * The wordmark as art.
+ *
+ * Clipped rather than shrunk. The box is shorter than the line it contains, so
+ * the glyphs run off the bottom and only their top two thirds survive — which is
+ * what stops a 200px word from reading as a heading. `line-height: 0.75` pulls
+ * the letterforms up inside their own line box first, so the crop lands on the
+ * letters rather than on the leading under them.
+ *
+ * `surface-input` and not a text colour: this is a tint on the page, a shade off
+ * the background, and it must never approach reading contrast.
+ */
+.footer-art {
+  height: 0.5em;
+  margin: 56px 0 0;
+  overflow: hidden;
+  font-size: clamp(96px, 20vw, 268px);
+  line-height: 0.75;
+  text-align: center;
+  user-select: none;
+}
+
+.footer-art-word {
+  font-weight: 500;
+  color: var(--pk-color-surface-input);
+  letter-spacing: -0.045em;
+}
+
+/* ── the rail becomes a top bar ────────────────────────────────────────── */
+
+/* ── the column tightens ───────────────────────────────────────────────── */
+
+@media (max-width: 1240px) {
+  .header-inner {
+    padding: 14px 24px;
+  }
+
+  .content {
+    gap: 48px;
+    padding: 48px 24px 0;
+  }
+
+  .hero {
+    padding: 56px 24px 40px;
+  }
+
+  .hero-heading {
+    font-size: 24px;
+    line-height: 30px;
+  }
+
+  .section-heading {
+    font-size: 16px;
+    line-height: 24px;
+  }
+}
+
+/* ── the bar collapses ─────────────────────────────────────────────────── */
+
+/*
+ * Below this width the five inline links stop fitting beside the wordmark, so
+ * the nav folds onto a second row and collapses to zero height behind the
+ * hamburger. The wordmark and the hamburger itself stay on the first row and
+ * stay visible — a bar control you have to open a menu to reach is not a bar
+ * control.
+ */
+@media (max-width: 768px) {
+  .hamburger {
+    display: flex;
+  }
+
+  /*
+   * Explicit order, because DOM order is wrong here. `.toc` is between the logo
+   * and the controls in the markup — correct for tab order inline — but a
+   * full-basis flex item wraps everything after it, so left alone it would push
+   * the controls onto a third row of their own.
+   */
+  .header-actions {
+    order: 2;
+  }
+
+  .toc {
+    display: grid;
+    flex-basis: 100%;
+    grid-template-rows: 0fr;
+    justify-content: flex-start;
+    order: 3;
+    overflow: hidden;
+    /* Collapse waits for the items to finish fading out: the reverse stagger
+       spreads over ~90ms and each item fades for 100ms. */
+    transition: grid-template-rows 160ms var(--pk-motion-ease-reveal) 100ms;
+  }
+
+  .site-header.menu-open .toc {
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 250ms var(--pk-motion-ease-reveal);
+  }
+
+  /*
+   * `visibility` is what keeps the closed menu out of the tab order. Clipping it
+   * to zero height hides it from the eye but not from the keyboard, and tabbing
+   * into links nobody can see is worse than not having them. Delayed out by the
+   * full collapse duration (160ms + 100ms) so it lands after the animation
+   * rather than cutting it short, and restored with no delay on the way in.
+   */
+  .toc-inner {
+    visibility: hidden;
+    flex-direction: column;
+    align-items: flex-start;
+    align-self: stretch;
+    width: auto;
+    min-height: 0;
+    overflow: hidden;
+    transition: visibility 0s 260ms;
+  }
+
+  /*
+   * The menu's breathing room, as child margins rather than padding on
+   * `.toc-inner`.
+   *
+   * That distinction is load-bearing, not stylistic. Padding on a grid item
+   * cannot be compressed below its own size, even at `height: 0` with
+   * `box-sizing: border-box` — so `padding-top: 12px` here left the CLOSED menu
+   * as a 12px strip of dead space under the bar. That made the sticky header
+   * 72px on a phone, which cancelled the 72px of anchor clearance at the top of
+   * this file exactly: every jump landed flush against the chrome. Margins on
+   * the children sit inside the clipped box and go to nothing.
+   */
+  .toc-inner > :first-child {
+    margin-top: 12px;
+  }
+
+  .toc-inner > :last-child {
+    margin-bottom: 4px;
+  }
+
+  .site-header.menu-open .toc-inner {
+    visibility: visible;
+    transition: visibility 0s;
+  }
+
+  .toc-sep {
+    width: 32px;
+    height: 1px;
+    margin: 8px 0 8px 24px;
+  }
+
+  /*
+   * The stagger below is keyed to the number of children in `.toc-inner`, which
+   * is TOC_CHILD_COUNT in content/nav.ts — currently 5 (3 sections, a rule, and
+   * 1 external link). Rules run to :nth-child(8), so there is room to add links
+   * before this needs touching; past that a new link is simply un-animated,
+   * which is a quiet enough failure to be worth this comment.
+   */
+  .toc-link {
+    align-self: flex-start;
+    padding: 8px 0;
+    margin-left: 24px;
+    opacity: 0;
+    filter: blur(3px);
+    transition: opacity 100ms ease-out;
+  }
+
+  /* Exit: last item leaves first. */
+  .toc-inner > :nth-child(1) {
+    transition-delay: 90ms;
+  }
+  .toc-inner > :nth-child(2) {
+    transition-delay: 75ms;
+  }
+  .toc-inner > :nth-child(3) {
+    transition-delay: 60ms;
+  }
+  .toc-inner > :nth-child(4) {
+    transition-delay: 45ms;
+  }
+  .toc-inner > :nth-child(5) {
+    transition-delay: 30ms;
+  }
+  .toc-inner > :nth-child(6) {
+    transition-delay: 15ms;
+  }
+  .toc-inner > :nth-child(7) {
+    transition-delay: 0ms;
+  }
+  .toc-inner > :nth-child(8) {
+    transition-delay: 0ms;
+  }
+
+  .site-header.menu-open .toc-link {
+    opacity: 1;
+    filter: blur(0);
+    transition:
+      opacity 200ms ease-out,
+      filter 200ms ease-out;
+  }
+
+  /* Entry: first item arrives first, 30ms apart. */
+  .site-header.menu-open .toc-inner > :nth-child(1) {
+    transition-delay: 30ms;
+  }
+  .site-header.menu-open .toc-inner > :nth-child(2) {
+    transition-delay: 60ms;
+  }
+  .site-header.menu-open .toc-inner > :nth-child(3) {
+    transition-delay: 90ms;
+  }
+  .site-header.menu-open .toc-inner > :nth-child(4) {
+    transition-delay: 120ms;
+  }
+  .site-header.menu-open .toc-inner > :nth-child(5) {
+    transition-delay: 150ms;
+  }
+  .site-header.menu-open .toc-inner > :nth-child(6) {
+    transition-delay: 180ms;
+  }
+  .site-header.menu-open .toc-inner > :nth-child(7) {
+    transition-delay: 210ms;
+  }
+  .site-header.menu-open .toc-inner > :nth-child(8) {
+    transition-delay: 240ms;
+  }
+
+  .desktop-only {
+    display: none;
+  }
+
+  /* Brand and links stack rather than sitting at opposite edges: `space-between`
+     across a narrow row would strand the one link column against the right edge
+     with the blurb wrapping to four words beside it. */
+  .footer-top {
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  .footer-brand {
+    max-width: 420px;
+  }
+
+  .footer-art {
+    margin: 44px 0 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .header-inner {
+    padding: 12px 16px;
+  }
+
+  .hero-install {
+    display: none;
+  }
+
+  .content {
+    gap: 40px;
+    padding: 40px 16px 0;
+  }
+
+  .hero {
+    padding: 40px 16px 32px;
+  }
+
+  .hero-heading {
+    font-size: 22px;
+    line-height: 28px;
+  }
+
+  .hero-sub {
+    margin-bottom: 24px;
+    font-size: 13px;
+    line-height: 20px;
+  }
+
+  .section-heading {
+    font-size: 15px;
+    line-height: 22px;
+  }
+
+  .section-desc {
+    font-size: 13px;
+    line-height: 20px;
+  }
+
+  .code-block {
+    padding: 14px 16px;
+  }
+
+  .code-line {
+    font-size: 12px;
+  }
+
+  .output-body {
+    padding: 14px 16px;
+  }
+
+  .cta-primary {
+    padding: 10px 18px;
+    font-size: 12px;
+  }
+
+  .install-steps {
+    gap: 24px;
+  }
+
+  .faq-question {
+    padding: 14px 0;
+    font-size: 13px;
+  }
+
+  .faq-answer > div > p {
+    padding-bottom: 12px;
+    font-size: 13px;
+    line-height: 20px;
+  }
+
+  .footer {
+    padding-top: 36px;
+  }
+}
+
+/* ── reduced motion ────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  /*
+   * The FAQ keeps its grid-row animation off but must still expand, so the
+   * answer's opacity and blur are forced to their open values rather than left
+   * at the closed defaults — otherwise disabling the transition would leave the
+   * text permanently invisible.
+   */
+  .faq-answer,
+  .faq-chevron,
+  .hamburger-line,
+  .toc,
+  .cta-primary,
+  .footer-col-link,
+  .copy-btn,
+  .copy-icon,
+  .hero-install-cmd,
+  .hero-install-icon,
+  .toc-link,
+  .skip-link {
+    transition: none;
+  }
+
+  .faq-answer > div {
+    opacity: 1;
+    filter: none;
+    transition: none;
+  }
+}
+
+/* Smooth scrolling is opt-in for everyone else. The offset that clears the
+   sticky bar is not — it lives unconditionally at the top of this file. */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
