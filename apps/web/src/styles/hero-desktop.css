@@ -1,0 +1,316 @@
+/*
+ * The full-bleed band the hero sits on: wallpaper, the Safari window, the
+ * cursor, and the pause button.
+ *
+ * Static geometry only. Every `animation:` binding lives in hero-timeline.css,
+ * so this file can be read as "what it looks like" without also being "when".
+ *
+ * The band used to be an 800px rounded card carrying a menu bar and a dock as
+ * well, so that the three together read as a screenshot of a Mac. Edge to edge
+ * that conceit inverts: chrome authored at 8.5px to be legible inside a shrunken
+ * desktop is just small type at 1:1. The wallpaper now stands on its own, and
+ * the window it carries is ~1040px rather than 744px — which is the point of the
+ * change, because it takes the mock inside from `scale(0.62)` to ~0.87 and its
+ * composer prompt, the one line here anybody has to read, from 8px to ~11px.
+ *
+ * One structural fact is load-bearing and is enforced by the markup in
+ * components/hero/hero-stage.tsx rather than by anything here: `.mock-cursor` is
+ * a SIBLING of `.desktop-bg`, not a child, because its left/top are percentages
+ * and they must resolve against `.hero-visual`, whose box matches `.desktop-bg`
+ * exactly. Both are `width: 100%` with no margin, so that still holds.
+ */
+
+/* ── the stage ─────────────────────────────────────────────────────────── */
+
+.hero-visual {
+  /*
+   * Cursor targets, as percentages of this element. These are FALLBACKS — the
+   * measuring effect in hero-stage.tsx overwrites each one with a real measured
+   * position after mount. They are what the pre-hydration frame paints with, and
+   * what the loop runs against if a measurement ever fails.
+   *
+   * Transcribed from a real measurement at a 1440px viewport, where the window
+   * sits at its 1040px cap. They were previously a different set entirely, taken
+   * when this element was capped at 800px — once it went full-bleed the box these
+   * resolve against became the viewport, every number was wrong by 20–50 points,
+   * and the cursor teleported on hydration.
+   *
+   * Being percentages of a full-width box, they are only exact at 1440. That is
+   * the trade the full-bleed band costs: below the window's cap the true values
+   * drift with viewport width, and only the measurement knows them.
+   */
+  --sel-x: 20.94%;
+  --sel-y: 52%;
+  --prompt-x: 74.5%;
+  --prompt-y: 85.54%;
+  --send-x: 82.56%;
+  --send-y: 85.59%;
+  --tab-x: 72.89%;
+  --tab-y: 23.72%;
+  --radius-x: 79.46%;
+  --radius-y: 68.45%;
+  position: relative;
+  width: 100%;
+}
+
+/* ── the band ──────────────────────────────────────────────────────────── */
+
+.desktop-bg {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* Nothing overhangs any more — this is now purely the guarantee that a band
+     as wide as the viewport can never produce a horizontal scrollbar. */
+  overflow: clip;
+  overflow-clip-margin: 0;
+  width: 100%;
+  /*
+   * No `aspect-ratio`. At 800px wide, 16/10 was a 500px card. Kept at full
+   * width it would be a 900px-tall band on a 1440 display and taller still on a
+   * wide monitor — the band's height comes from the window it holds plus this
+   * padding instead.
+   */
+  padding: 56px 48px;
+  background:
+    url("/wallpaper-day.avif") center / cover no-repeat,
+    var(--pk-color-surface-input);
+}
+
+/* ── browser window ────────────────────────────────────────────────────── */
+
+/*
+ * Sized by its content, not by the space available.
+ *
+ * `flex: 1 0 0` was the obvious choice and is wrong: `.desktop-bg` no longer has
+ * an aspect-ratio, so the column has no definite height and a zero flex-basis
+ * would have nothing to resolve against. Letting `.browser-content` declare the
+ * mock's aspect ratio instead makes this element's height a function of its
+ * width at every breakpoint — which is also what lets the band be sized by the
+ * window rather than the other way round.
+ *
+ * 1040px is the cap, and it is the number that sets the whole band's proportion:
+ * at 1040 the content box is ~551px tall, so the band lands near 680px with its
+ * padding. It is also 1040/1200 of `.ap-mock`'s authored width, which puts
+ * `--ap-mock-scale` at ~0.87 — close enough to 1 that the mock renders at very
+ * nearly the size it was drawn at. Raising it much past here starts to cost more
+ * vertical fold than the extra legibility buys.
+ */
+.browser-window {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  width: 100%;
+  max-width: 1040px;
+  overflow: hidden;
+  border-radius: var(--pk-radius-lg);
+  box-shadow:
+    0 0 0 0.5px rgb(0 0 0 / 0.15),
+    0 6px 20px 4px rgb(0 0 0 / 0.15);
+}
+
+.browser-chrome {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 12px;
+  background: var(--pk-color-surface-chrome);
+  border-radius: var(--pk-radius-lg) var(--pk-radius-lg) 0 0;
+}
+
+.browser-dots {
+  display: flex;
+  gap: 6px;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
+.dot-red {
+  background: #f87171;
+}
+
+.dot-yellow {
+  background: #fbbf24;
+}
+
+.dot-green {
+  background: #4ade80;
+}
+
+.safari-pill {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  align-items: center;
+  padding: 3px 6px;
+  background: rgb(255 255 255 / 0.5);
+  border: 1px solid rgb(255 255 255 / 0.06);
+  border-radius: 100px;
+  box-shadow: 0 2px 4px rgb(0 0 0 / 0.03);
+}
+
+.safari-btn {
+  display: block;
+  color: var(--pk-color-text-primary);
+  opacity: 0.5;
+}
+
+.safari-back {
+  opacity: 0.26;
+}
+
+.safari-url-wrap {
+  display: flex;
+  flex: 1;
+  justify-content: center;
+}
+
+.browser-url {
+  position: relative;
+  justify-content: center;
+  width: 100%;
+  max-width: 280px;
+  padding: 3px 10px;
+  font-family: system-ui, sans-serif;
+  font-size: 8px;
+  color: var(--pk-color-text-muted);
+  background: var(--pk-color-surface-panel);
+  border-color: var(--pk-color-surface-panel);
+  box-shadow: 0 1px 5px rgb(0 0 0 / 0.02);
+}
+
+.safari-reload {
+  position: absolute;
+  right: 8px;
+  color: var(--pk-color-text-muted);
+  opacity: 0.4;
+}
+
+/*
+ * The viewport the app is served into. `.ap-mock` inside it is the only
+ * positioned coordinate space the overlay's docks resolve against — see
+ * hero-overlay.css.
+ */
+.browser-content {
+  position: relative;
+  /* `flex: 0 0 auto`, not `flex: 1`: this element's height comes from the
+     aspect-ratio below, and growing to fill would override it. */
+  flex: 0 0 auto;
+  width: 100%;
+  /*
+   * Matches `.ap-mock`'s authored 1200×636, so the scaled mock fills this box
+   * exactly at any width. Change one without the other and you get a gap along
+   * the bottom edge, or a clipped bottom bar.
+   *
+   * 636 is not arbitrary: it is a realistic browser viewport ratio (1.89,
+   * against ~1.85 for a maximised window on a 16:10 display). It used to be
+   * chosen to make the window's total height land in the 394px an 800px desktop
+   * had left over; now the band has no fixed height and this ratio is what sets
+   * one, so it is the cause rather than the consequence.
+   */
+  aspect-ratio: 1200 / 636;
+  overflow: hidden;
+  background: var(--pk-color-surface-page);
+  border-radius: 0 0 var(--pk-radius-lg) var(--pk-radius-lg);
+}
+
+/* ── cursor ────────────────────────────────────────────────────────────── */
+
+.mock-cursor {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 30;
+  width: 14px;
+  height: 14px;
+  color: #fff;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.4));
+  will-change: transform, left, top;
+}
+
+/* ── pause button ──────────────────────────────────────────────────────── */
+
+/*
+ * Bottom-left of the band, white on the wallpaper, at every width.
+ *
+ * This used to be two designs behind an 848px query: a tertiary-grey button
+ * parked below the card on narrow screens, because below 848 the wallpaper went
+ * away and there was nothing dark to sit on. The band keeps its wallpaper at
+ * every width now, so the corner treatment is simply always right and the
+ * fallback has nothing left to fall back to.
+ */
+.animation-pause-btn {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: #fff;
+  cursor: pointer;
+  background: transparent;
+  border: none;
+  border-radius: var(--pk-radius-lg);
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    transform 150ms ease;
+}
+
+.animation-pause-btn:hover,
+.animation-pause-btn:focus-visible {
+  color: #fff;
+  background: rgb(255 255 255 / 0.28);
+  backdrop-filter: blur(12px);
+}
+
+.animation-pause-btn:active {
+  transform: scale(0.92);
+  transition:
+    color 150ms ease,
+    background 150ms ease,
+    transform 100ms ease-out;
+}
+
+/* ── narrow ────────────────────────────────────────────────────────────── */
+
+/*
+ * The band survives narrow widths intact, which is new.
+ *
+ * When it was an 800px card the whole conceit was dropped below 848px — the
+ * wallpaper was thrown away and a bare window was left behind, because a
+ * shrunken desktop read as a bug. Full-bleed there is no desktop to shrink: the
+ * wallpaper is just a painting the width of the screen, and that works at 375px
+ * exactly as well as at 1440. Only the gutters come in.
+ *
+ * The cursor still goes at 847, though. Its targets are real measured elements
+ * inside a mock that is scaled down along with everything else, and past this
+ * point it is chasing controls too small to make sense of.
+ */
+@media (max-width: 847px) {
+  .desktop-bg {
+    padding: 32px 16px;
+  }
+
+  .mock-cursor {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .desktop-bg {
+    padding: 24px 12px;
+  }
+}

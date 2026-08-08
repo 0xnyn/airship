@@ -1,0 +1,1813 @@
+/*
+ * ════════════════════════════════════════════════════════════════════════════
+ *  The hero's 11.5-second loop.
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Every `animation:` binding on the page lives in this file; every piece of
+ * static geometry lives in hero-desktop.css and hero-overlay.css. Reading one
+ * file tells you WHEN, reading the others tells you WHAT. Mixing them is how a
+ * choreography this size stops being maintainable.
+ *
+ * ── Four rules, all load-bearing ─────────────────────────────────────────────
+ *
+ * 1. EVERY track is `var(--ap-loop) … infinite` with NO `animation-delay`. Some
+ *    fifty animation instances stay in sync only because they share one clock
+ *    anchored at zero. One track with a different duration desynchronises the
+ *    whole page, and the symptom — things drifting apart over minutes — is
+ *    horrible to diagnose. Exactly TWO tracks deliberately break this; they are
+ *    quarantined at the bottom with the reason written down. To audit: every
+ *    animation under `.hero-visual` should report 11500ms except those two.
+ *
+ * 2. 0% and 100% are written as LITERAL DUPLICATES, never left implicit. Any
+ *    element whose 0% and 100% differ snaps at the loop seam, and that snap is
+ *    nearly impossible to find by eye afterwards. There is a check for it: frame
+ *    0 and frame 99.999 must be pixel-identical.
+ *
+ * 3. Seeking is done through the Web Animations API (`?frame=N`), NOT by
+ *    overriding `animation-delay` here. See lib/use-frame-scrub.ts for why.
+ *
+ * 4. The percentages below are mirrored in content/timeline.ts. Nudge a stop
+ *    here, nudge it there.
+ *
+ * ── What the desktop does: nothing ──────────────────────────────────────────
+ *
+ * The wallpaper, the menu bar and the dock are set dressing. Not one track in
+ * this file touches them, and the browser window never changes focus, so its
+ * traffic lights are simply coloured in hero-desktop.css.
+ *
+ * There used to be an ACT 0: a CLI window opened the loop showing the real
+ * `npx airship --target 3000` banner, then minimised into the dock on a measured
+ * macOS genie warp while the menu bar and both sets of traffic lights swapped
+ * focus. It was the most intricate thing on the page and it was cut, because
+ * intricacy is not the same as usefulness. It spent nearly three seconds — a
+ * quarter of the loop, and the quarter a visitor is most likely to actually
+ * watch — establishing that the tool starts from a shell, which the install
+ * command sitting a few pixels above the animation already says in real,
+ * selectable copy. The loop now opens on the thing only the animation can show.
+ *
+ * ── Pacing ──────────────────────────────────────────────────────────────────
+ *
+ * 1% = 115ms. Easing is `--pk-motion-ease-chrome` unless noted.
+ *
+ * Two rules keep it from feeling either rushed or slack, and both were learned
+ * by getting them wrong:
+ *
+ *   - NOTHING ACTS ON A THING THAT HAS NOT FINISHED HAPPENING. The cursor does
+ *     not leave the composer until the sentence is complete, the send is not
+ *     pressed until the cursor has arrived, the transcript does not answer until
+ *     the composer has cleared, and the button does not change colour until the
+ *     diff that explains it has finished revealing. An earlier cut had the send
+ *     firing while the prompt typed on for another half second, which is what
+ *     made the whole act read as frantic — the eye was being asked to follow two
+ *     things that contradicted each other.
+ *
+ *   - EVERY COMPLETED ACTION GETS A HELD BEAT BEFORE THE NEXT ONE STARTS. The
+ *     finished sentence sits for ~460ms before the pointer moves; the diff sits
+ *     before the payoff; the payoff sits for ~1.3s before teardown. Those holds
+ *     are the difference between a demo and a flipbook, and they are also where
+ *     the animation is cheapest.
+ *
+ * ── The story ───────────────────────────────────────────────────────────────
+ *
+ * Two edits, made two different ways, because that is the product.
+ *
+ * The agent handles the thing that is awkward to say as a number — "make this
+ * warmer" is a judgement — and the inspector handles the thing that IS a number:
+ * the corner radius, scrubbed by hand. Splitting the work by mechanism is what
+ * stops the Edit tab from being scenery, and it is a truer picture than either
+ * half alone. An early draft had the inspector do everything and the agent
+ * merely "apply" it, which argued that airship is a visual CSS editor; the next
+ * had the agent do everything and left the inspector to be looked at.
+ *
+ * ACT 1 · select (0–17%)
+ *    0     The page, the dock's empty state, the cursor at rest in the middle.
+ *          Held ~290ms, so the loop opens on a still rather than mid-gesture.
+ *    2.5   cursor sets off for the CTA; arrives 6.5.
+ *    7.4   hover box fades in on it — 1.5px #0D99FF over a 15% wash. AFTER the
+ *          arrival, not during the approach: a box that blooms while the pointer
+ *          is still travelling reads as the page anticipating the cursor. It
+ *          holds ~265ms, which is what the `button.cta-primary` label beside it
+ *          needs to be read.
+ *   10     press.
+ *   10.4   hover box out, selection box in: 2px plus a white ring. Eight handles
+ *          pop 0.17% apart. Badge gains `· 122 × 45`.
+ *   11.6   the dock fills: empty state cross-fades to the panel and the
+ *          selection chip grows into the composer.
+ *   12–15.4  cursor travels to the composer.
+ *
+ * ACT 2 · the prompt (17–36%)
+ *   15.9   caret blinks on — OWN 1.2s clock, not the loop's.
+ *   16.5   the placeholder gives way and "Make this warmer." starts revealing by
+ *          clipping, in step-end stops 72ms apart.
+ *   17.13  send goes from 0.35 to full — on the FIRST keystroke, which is when a
+ *          composer with a non-empty value actually enables its button, not at
+ *          some staged moment of the animation's choosing.
+ *   26.58  the sentence is complete.
+ *   26.58–30.6  IT SITS THERE. The single most important hold in the loop: it is
+ *          the only window in which a visitor can actually read the prompt, and
+ *          everything after it is downstream of it.
+ *   30.6–33.5  only now does the cursor set off for send.
+ *   34.7   press. 35.4 the composer clears — the prompt unclips, the placeholder
+ *          returns, the caret goes, the chip stays.
+ *
+ * ACT 3 · the agent (36–56%)
+ *   35.5   user bubble pops in — blue, notched bottom-right. AFTER the composer
+ *          emptied, never before it.
+ *   36.6   assistant bubble fades in, holding a 7px dot pulsing on its OWN 1s
+ *          clock beside "Applying 1 edit…".
+ *   38.4–46.8  three tool calls, 3.4% apart, each in two beats — head, then its
+ *          ⎿ result 0.8% later:
+ *            38.4 ⏺ Read  hero-section.tsx    39.2 ⎿ Read 84 lines
+ *            41.8 ⏺ Grep  "cta-primary"       42.6 ⎿ Found 2 matches
+ *            45.2 ⏺ Edit  styles/shell.css    46.0 ⎿ 1 addition, 1 removal
+ *   47.6   diff card grows: max-height 0 → 110px. Head reads `shell.css  +1 −1`.
+ *          After the Edit call it is the result of.
+ *   49.2–51.96  four diff lines reveal 0.62% apart.
+ *   52.6 ★ the button turns #E2603A, on `--ease-overshoot`. Held back until the
+ *          diff has finished landing: the change is the diff's consequence, and
+ *          showing it first turns the diff into a footnote.
+ *   54.8   the dot collapses; status → "Done · 1 file changed".
+ *
+ * ACT 4 · the inspector (56–74%)
+ *          The other half, by hand.
+ *   57     cursor leaves the transcript for the Edit tab; arrives 60.5, presses
+ *          61.2.
+ *   62.9   panel switches to Edit and its rows rise 6px in sequence — SOURCE,
+ *          the align row, SIZE, APPEARANCE, FILL. Fill already reads E2603A: the
+ *          panel re-read the file the agent just changed.
+ *   62.5–66  cursor travels to the corner-radius field.
+ *   67.2   the field lights: hover surface, then the accent border.
+ *   67.9   radius 6 → 9999, and the button starts rounding in the SAME frame —
+ *          inspector edits apply optimistically, before any agent runs.
+ *   74     the pending-tweak badge grows onto the bottom bar reading "1".
+ *
+ * ACT 5 · breathing room (74–85.5%)
+ *          Nothing visible moves for ~1.3s. Selection up, the panel showing both
+ *          values, and the button carrying both edits — one described, one
+ *          scrubbed. This is the frame `prefers-reduced-motion` pins.
+ *
+ *          The transcript does clear underneath during this act (78.5–80.2), but
+ *          it is behind the Edit tab and nobody sees it. Doing the bookkeeping
+ *          here is what buys the teardown its unhurried pace.
+ *
+ * ACT 6 · teardown (85.5–100%)
+ *   85.5   the badge collapses.
+ *   86.5   panel returns to the Agent tab, now empty; the Edit tab's rows empty
+ *          in REVERSE order, bottom-up.
+ *   88     the dock returns to its empty state and the chip shrinks away.
+ *   88   ★ the button reverts — deliberately AFTER the panel starts clearing, so
+ *          it reads as the loop resetting rather than as an undo.
+ *   90.5   selection box and handles fade.
+ *   91.5–95.5  cursor returns to 50%/50%.
+ *   95.5–100 dead air. Every element sits at exactly its 0% declaration.
+ */
+
+/*
+ * The tempo, in one place.
+ *
+ * Every track below reads this rather than naming a duration, so the whole
+ * choreography can be sped up or slowed down without touching fifty
+ * declarations — and, more importantly, so it is impossible to change one of
+ * them and miss the other forty-nine. That failure mode is rule 1.
+ *
+ * It is deliberately NOT read inside any `@keyframes` block: Chrome tears down
+ * and restarts an animation when a custom property its keyframes reference
+ * changes, and this hero already has a measuring layer that has to work around
+ * exactly that (see lib/measure-hero.ts).
+ */
+.hero-visual {
+  --ap-loop: 11.5s;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Cursor
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.mock-cursor {
+  animation:
+    ap-cursor-move var(--ap-loop) var(--pk-motion-ease-chrome) infinite,
+    ap-cursor-press var(--ap-loop) var(--pk-motion-ease-chrome) infinite;
+}
+
+/*
+ * Every pair below is `arrive%, depart%` — the cursor is STILL for the whole
+ * span between them. The holds are load-bearing: a pointer that arrives and
+ * immediately leaves reads as a pointer being dragged past a target rather than
+ * one that stopped to click it.
+ */
+@keyframes ap-cursor-move {
+  0%,
+  2.5% {
+    top: 50%;
+    left: 50%;
+  }
+  /* the CTA in the page */
+  6.5%,
+  12% {
+    top: var(--sel-y);
+    left: var(--sel-x);
+  }
+  /* the composer — and it STAYS for the whole of the typing, plus the beat
+     afterwards in which the finished sentence can be read */
+  15.4%,
+  30.6% {
+    top: var(--prompt-y);
+    left: var(--prompt-x);
+  }
+  /* the send button */
+  33.5%,
+  36.5% {
+    top: var(--send-y);
+    left: var(--send-x);
+  }
+  /* drifts clear of the transcript while the agent works */
+  39.5%,
+  57% {
+    top: 60%;
+    left: 40%;
+  }
+  /* the Edit tab */
+  60.5%,
+  62.5% {
+    top: var(--tab-y);
+    left: var(--tab-x);
+  }
+  /* the corner-radius field, and stays there through the scrub and the whole
+     breathing beat */
+  66%,
+  91.5% {
+    top: var(--radius-y);
+    left: var(--radius-x);
+  }
+  95.5%,
+  100% {
+    top: 50%;
+    left: 50%;
+  }
+}
+
+/*
+ * Three presses, each 0.6% long (~70ms) and each landing at least 1% after the
+ * cursor has come to rest at that target. `scale` only — the move track owns
+ * left/top, so the two never fight over one property.
+ */
+@keyframes ap-cursor-press {
+  0%,
+  9.7% {
+    transform: scale(1);
+  }
+  10% {
+    transform: scale(0.82);
+  }
+  10.6%,
+  34.4% {
+    transform: scale(1);
+  }
+  34.7% {
+    transform: scale(0.82);
+  }
+  35.3%,
+  60.9% {
+    transform: scale(1);
+  }
+  61.2% {
+    transform: scale(0.82);
+  }
+  61.8%,
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ACT 1 · the picker
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.ap-hover-box,
+.ap-hover-box .ap-box-label {
+  animation: ap-hover-box var(--ap-loop) ease infinite;
+}
+
+@keyframes ap-hover-box {
+  0%,
+  6.3% {
+    opacity: 0;
+  }
+  7.4%,
+  9.7% {
+    opacity: 1;
+  }
+  /* Handed off to the selection box rather than cross-faded with it: two blue
+     outlines on one rectangle, even for a frame, reads as a doubled border. */
+  10.2%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.ap-sel-box,
+.ap-sel-box .ap-box-label {
+  animation: ap-sel-box var(--ap-loop) ease infinite;
+}
+
+@keyframes ap-sel-box {
+  0%,
+  10.2% {
+    opacity: 0;
+  }
+  10.6%,
+  90.5% {
+    opacity: 1;
+  }
+  91.9%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.ap-handle {
+  animation: ap-handle-pop-0 var(--ap-loop) var(--pk-motion-ease-overshoot)
+    infinite;
+}
+
+.ap-handle-nw {
+  animation-name: ap-handle-pop-0;
+}
+.ap-handle-n {
+  animation-name: ap-handle-pop-1;
+}
+.ap-handle-ne {
+  animation-name: ap-handle-pop-2;
+}
+.ap-handle-e {
+  animation-name: ap-handle-pop-3;
+}
+.ap-handle-se {
+  animation-name: ap-handle-pop-4;
+}
+.ap-handle-s {
+  animation-name: ap-handle-pop-5;
+}
+.ap-handle-sw {
+  animation-name: ap-handle-pop-6;
+}
+.ap-handle-w {
+  animation-name: ap-handle-pop-7;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ACT 1 · the dock fills
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.ap-insp-empty {
+  animation: ap-empty-out var(--ap-loop) ease infinite;
+}
+
+@keyframes ap-empty-out {
+  0%,
+  10.5% {
+    opacity: 1;
+  }
+  11.6%,
+  88% {
+    opacity: 0;
+  }
+  89.4%,
+  100% {
+    opacity: 1;
+  }
+}
+
+.ap-insp-filled {
+  animation: ap-filled-in var(--ap-loop) ease infinite;
+}
+
+@keyframes ap-filled-in {
+  0%,
+  10.5% {
+    opacity: 0;
+  }
+  11.6%,
+  88% {
+    opacity: 1;
+  }
+  89.4%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/*
+ * The inspector's rows rise with the TAB SWITCH, not with the selection.
+ *
+ * They used to stagger in alongside the dock filling — which was both invisible
+ * and wrong. Invisible because the Agent tab sits in front of the Edit tab until
+ * 62.9%, so nine staggered rises played to nobody; wrong because the moment a
+ * panel renders its rows is the moment you look at it.
+ *
+ * Nine blocks for the nine `.ap-insp-row` sections in design-dock.tsx. Adding a
+ * section there means adding a block here — an unmatched row would simply appear
+ * with no animation at all, which at least fails visibly.
+ */
+.ap-insp-row {
+  animation: ap-insp-row-0 var(--ap-loop) var(--pk-motion-ease-chrome) infinite;
+}
+
+.ap-insp-row:nth-child(1) {
+  animation-name: ap-insp-row-0;
+}
+.ap-insp-row:nth-child(2) {
+  animation-name: ap-insp-row-1;
+}
+.ap-insp-row:nth-child(3) {
+  animation-name: ap-insp-row-2;
+}
+.ap-insp-row:nth-child(4) {
+  animation-name: ap-insp-row-3;
+}
+.ap-insp-row:nth-child(5) {
+  animation-name: ap-insp-row-4;
+}
+.ap-insp-row:nth-child(6) {
+  animation-name: ap-insp-row-5;
+}
+.ap-insp-row:nth-child(7) {
+  animation-name: ap-insp-row-6;
+}
+.ap-insp-row:nth-child(8) {
+  animation-name: ap-insp-row-7;
+}
+.ap-insp-row:nth-child(9) {
+  animation-name: ap-insp-row-8;
+}
+
+/* The chip grows into the composer at the same moment the dock fills — one
+   pick, two panels, and the chip is what says the prompt is scoped. */
+.ap-sel-chip {
+  animation: ap-chip-grow var(--ap-loop) var(--pk-motion-ease-overshoot)
+    infinite;
+}
+
+@keyframes ap-chip-grow {
+  0%,
+  10.6% {
+    transform: scale(0);
+  }
+  11.9%,
+  88% {
+    transform: scale(1);
+  }
+  89.2%,
+  100% {
+    transform: scale(0);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ACT 2 · the prompt
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * The typing.
+ *
+ * `clip-path: inset(0 X 0 0)` stepped through 16 stops, rather than a JS timer
+ * assembling a string. The whole effect then obeys the pause button and
+ * `prefers-reduced-motion` for free, costs nothing when the hero is off screen,
+ * and stays seekable — `?frame=21` shows a half-typed prompt because the clip is
+ * a function of time, not of how many intervals have fired.
+ *
+ * `step-end` because typing is discrete. A smoothly interpolated clip reads as a
+ * wipe, which is the one thing typing does not look like.
+ *
+ * The stops are 0.63% apart: ~72ms per character, which is a brisk but human 200
+ * characters a minute. Faster and it stops reading as typing; slower and the
+ * seventeen characters of "Make this warmer." eat an act and a half.
+ *
+ * It finishes at 26.58% and the clip HOLDS at zero until 35.35%. That hold is
+ * the point — see the pacing note at the top of the file.
+ */
+.ap-typed {
+  animation: ap-type var(--ap-loop) step-end infinite;
+}
+
+@keyframes ap-type {
+  0%,
+  16.5% {
+    clip-path: inset(0 100% 0 0);
+  }
+  17.13% {
+    clip-path: inset(0 94% 0 0);
+  }
+  17.76% {
+    clip-path: inset(0 88% 0 0);
+  }
+  18.39% {
+    clip-path: inset(0 82% 0 0);
+  }
+  19.02% {
+    clip-path: inset(0 76% 0 0);
+  }
+  19.65% {
+    clip-path: inset(0 70% 0 0);
+  }
+  20.28% {
+    clip-path: inset(0 64% 0 0);
+  }
+  20.91% {
+    clip-path: inset(0 58% 0 0);
+  }
+  21.54% {
+    clip-path: inset(0 52% 0 0);
+  }
+  22.17% {
+    clip-path: inset(0 46% 0 0);
+  }
+  22.8% {
+    clip-path: inset(0 40% 0 0);
+  }
+  23.43% {
+    clip-path: inset(0 34% 0 0);
+  }
+  24.06% {
+    clip-path: inset(0 28% 0 0);
+  }
+  24.69% {
+    clip-path: inset(0 22% 0 0);
+  }
+  25.32% {
+    clip-path: inset(0 16% 0 0);
+  }
+  25.95% {
+    clip-path: inset(0 10% 0 0);
+  }
+  26.58%,
+  35.35% {
+    clip-path: inset(0 0 0 0);
+  }
+  /* Cleared on send, not faded — the composer empties the instant the turn
+     starts, as it does in the real overlay. */
+  35.4%,
+  100% {
+    clip-path: inset(0 100% 0 0);
+  }
+}
+
+.ap-placeholder {
+  animation: ap-placeholder var(--ap-loop) step-end infinite;
+}
+
+@keyframes ap-placeholder {
+  0% {
+    opacity: 1;
+  }
+  /* Goes exactly as the first character lands, not before: a field that is
+     visibly empty and unfocused for a beat looks broken rather than ready. */
+  16.5% {
+    opacity: 0;
+  }
+  35.4% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/*
+ * Send enables on the first keystroke.
+ *
+ * An earlier cut lit it at the end of typing and treated that as a beat, which
+ * is not what the real composer does — it enables the moment the value is
+ * non-empty. Doing it honestly costs nothing now that the act has a proper hold
+ * in it: the tension comes from the cursor travelling to a button that has been
+ * ready and waiting for a third of the act.
+ */
+.ap-send {
+  animation: ap-send-enable var(--ap-loop) ease infinite;
+}
+
+@keyframes ap-send-enable {
+  0%,
+  17.13% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  17.9%,
+  34.7% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  35% {
+    opacity: 1;
+    transform: scale(0.9);
+  }
+  35.6% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  35.9%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ACT 3 · the agent
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.ap-msg-user {
+  animation: ap-bubble-user var(--ap-loop) var(--pk-motion-ease-overshoot)
+    infinite;
+}
+
+@keyframes ap-bubble-user {
+  0%,
+  35.5% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  36.6%,
+  79% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  80.2%,
+  100% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+}
+
+.ap-msg-assistant {
+  animation: ap-bubble-assistant var(--ap-loop) ease infinite;
+}
+
+@keyframes ap-bubble-assistant {
+  0%,
+  36.6% {
+    opacity: 0;
+  }
+  37.7%,
+  78.8% {
+    opacity: 1;
+  }
+  80%,
+  100% {
+    opacity: 0;
+  }
+}
+
+.ap-tl-head-1 {
+  animation: ap-tl-head-1 var(--ap-loop) ease infinite;
+}
+.ap-tl-head-2 {
+  animation: ap-tl-head-2 var(--ap-loop) ease infinite;
+}
+.ap-tl-head-3 {
+  animation: ap-tl-head-3 var(--ap-loop) ease infinite;
+}
+.ap-tl-res-1 {
+  animation: ap-tl-res-1 var(--ap-loop) ease infinite;
+}
+.ap-tl-res-2 {
+  animation: ap-tl-res-2 var(--ap-loop) ease infinite;
+}
+.ap-tl-res-3 {
+  animation: ap-tl-res-3 var(--ap-loop) ease infinite;
+}
+
+/* The status line swaps at the moment the change lands. */
+.ap-status-working {
+  animation: ap-status-working var(--ap-loop) step-end infinite;
+}
+
+.ap-status-done {
+  animation: ap-status-done var(--ap-loop) step-end infinite;
+}
+
+@keyframes ap-status-working {
+  0% {
+    opacity: 1;
+  }
+  54.8% {
+    opacity: 0;
+  }
+  /* Reset while the whole bubble is already at opacity 0 — otherwise "Done"
+     visibly becomes "Applying…" again on the way out. */
+  80.5% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes ap-status-done {
+  0% {
+    opacity: 0;
+  }
+  54.8% {
+    opacity: 1;
+  }
+  80.5% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* The dot collapses rather than fading, so the status line closes up behind it. */
+.ap-dot {
+  animation:
+    ap-dot-hide var(--ap-loop) ease infinite,
+    ap-pulse 1s ease-in-out infinite;
+}
+
+@keyframes ap-dot-hide {
+  0%,
+  54.2% {
+    width: 7px;
+    margin-right: 0;
+  }
+  55.3%,
+  80.2% {
+    width: 0;
+    margin-right: -8px;
+  }
+  81.2%,
+  100% {
+    width: 7px;
+    margin-right: 0;
+  }
+}
+
+/*
+ * The diff card opens AFTER the Edit call it is the result of.
+ *
+ * An earlier cut grew it two tool calls before the edit had even been announced,
+ * and then revealed its lines long after the turn had already reported "Done".
+ * Read in order it claimed the agent produced a diff for work it had not done.
+ *
+ * 110px is the card's MEASURED height plus a little, not a round guess: a 28.5px
+ * header over a 78px body (6px padding either side, four lines at 11px/1.5 =
+ * 16.5px), 108px in `.ap-mock` author space. It was 76px, which cropped the last
+ * line and a half — including `+ background: #E2603A`, the one line in the whole
+ * card that explains the payoff that lands a moment later.
+ *
+ * The couple of pixels of slack are deliberate. The header has no explicit
+ * line-height, so its height is whatever `normal` resolves to for the loaded
+ * font, and that is not identical on every platform; being two pixels generous
+ * costs ~25ms of imperceptible dead tail on the growth and cannot clip.
+ *
+ * `max-height` must be a concrete length to animate at all, so this number
+ * cannot be derived and will NOT follow MOCK_DIFF. Add a line there, add 16.5px
+ * here.
+ */
+.ap-diff {
+  animation: ap-diff-grow var(--ap-loop) var(--pk-motion-ease-panel) infinite;
+}
+
+@keyframes ap-diff-grow {
+  0%,
+  47.6% {
+    max-height: 0;
+    opacity: 0;
+  }
+  49%,
+  78.2% {
+    max-height: 110px;
+    opacity: 1;
+  }
+  79.6%,
+  100% {
+    max-height: 0;
+    opacity: 0;
+  }
+}
+
+.ap-diff-line-1 {
+  animation: ap-diff-line-0 var(--ap-loop) ease infinite;
+}
+.ap-diff-line-2 {
+  animation: ap-diff-line-1 var(--ap-loop) ease infinite;
+}
+.ap-diff-line-3 {
+  animation: ap-diff-line-2 var(--ap-loop) ease infinite;
+}
+.ap-diff-line-4 {
+  animation: ap-diff-line-3 var(--ap-loop) ease infinite;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ACT 3 · ★ the payoff
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * TWO tracks, not one.
+ *
+ * The colour comes from the agent and the radius comes from a hand-scrub in the
+ * inspector — different means, fifteen percent of the loop apart. Binding them
+ * to one keyframe block would collapse that into a single event and lose the
+ * point the hero is making.
+ *
+ * Both are bound to `.ap-cta`, the class the button itself carries, so the page
+ * and the panel physically cannot disagree about what changed.
+ *
+ * `--ease-overshoot` is used here and NOWHERE else in the system. That is what
+ * makes these two moments land rather than merely happen.
+ *
+ * The colour waits until 52.6% — just after the last diff line — for the reason
+ * in the pacing note: the diff is the explanation, and an explanation that
+ * arrives after its conclusion is decoration.
+ */
+.ap-cta {
+  animation:
+    ap-cta-fill var(--ap-loop) var(--pk-motion-ease-overshoot) infinite,
+    ap-cta-radius var(--ap-loop) var(--pk-motion-ease-overshoot) infinite;
+}
+
+@keyframes ap-cta-fill {
+  0%,
+  52.6% {
+    background: #1c1917;
+  }
+  54.2%,
+  88% {
+    background: #e2603a;
+  }
+  89.4%,
+  100% {
+    background: #1c1917;
+  }
+}
+
+@keyframes ap-cta-radius {
+  0%,
+  67.9% {
+    border-radius: 6px;
+  }
+  70.6%,
+  88% {
+    border-radius: 9999px;
+  }
+  89.4%,
+  100% {
+    border-radius: 6px;
+  }
+}
+
+/*
+ * The inspector re-reads the element.
+ *
+ * Same frame as the button, and that simultaneity is the whole point — the panel
+ * is not the cause of the change, it is a view of a file that just changed under
+ * it. `step-end` because a number cross-fading between two readings is
+ * illegible for the length of the fade, and because a real value snaps.
+ *
+ * It swaps at 53.4% while the Agent tab is still in front, so nobody watches it
+ * happen; what they see is the Edit tab coming forward at 62.9% already agreeing
+ * with the page. That is the correct order of discovery.
+ */
+.ap-swap-from-fill {
+  animation: ap-swap-out var(--ap-loop) step-end infinite;
+}
+
+.ap-swap-to-fill {
+  animation: ap-swap-in var(--ap-loop) step-end infinite;
+}
+
+@keyframes ap-swap-out {
+  0% {
+    opacity: 1;
+  }
+  53.4% {
+    opacity: 0;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes ap-swap-in {
+  0% {
+    opacity: 0;
+  }
+  53.4% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.ap-swatch-fill {
+  animation: ap-swatch-fill var(--ap-loop) ease infinite;
+}
+
+@keyframes ap-swatch-fill {
+  0%,
+  52.6% {
+    background-color: #1c1917;
+  }
+  54.2%,
+  88% {
+    background-color: #e2603a;
+  }
+  89.4%,
+  100% {
+    background-color: #1c1917;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ACT 4 · the panel comes forward
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/*
+ * The only tab change in the loop, and it is placed in the calmest stretch on
+ * purpose: after the diff has landed and the button has changed, with nothing
+ * else moving. It pays off the idea the Agent tab cannot show on its own — that
+ * the inspector has re-read the element and now agrees with the file — without
+ * spending a single frame competing with the payoff itself.
+ */
+.ap-tab-body-agent {
+  animation: ap-tab-agent-out var(--ap-loop) ease infinite;
+}
+
+.ap-tab-body-edit {
+  animation: ap-tab-edit-in var(--ap-loop) ease infinite;
+}
+
+@keyframes ap-tab-agent-out {
+  0%,
+  61.5% {
+    opacity: 1;
+  }
+  62.9%,
+  86.5% {
+    opacity: 0;
+  }
+  87.9%,
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes ap-tab-edit-in {
+  0%,
+  61.5% {
+    opacity: 0;
+  }
+  62.9%,
+  86.5% {
+    opacity: 1;
+  }
+  87.9%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* The underline follows. */
+.ap-tab-agent {
+  animation: ap-tab-underline-agent var(--ap-loop) step-end infinite;
+}
+
+.ap-tab-edit {
+  animation: ap-tab-underline-edit var(--ap-loop) step-end infinite;
+}
+
+@keyframes ap-tab-underline-agent {
+  0% {
+    border-bottom-color: var(--ap-primary);
+    opacity: 1;
+  }
+  62.2% {
+    border-bottom-color: transparent;
+    opacity: 0.55;
+  }
+  87.1% {
+    border-bottom-color: var(--ap-primary);
+    opacity: 1;
+  }
+  100% {
+    border-bottom-color: var(--ap-primary);
+    opacity: 1;
+  }
+}
+
+@keyframes ap-tab-underline-edit {
+  0% {
+    border-bottom-color: transparent;
+    opacity: 0.55;
+  }
+  62.2% {
+    border-bottom-color: var(--ap-primary);
+    opacity: 1;
+  }
+  87.1% {
+    border-bottom-color: transparent;
+    opacity: 0.55;
+  }
+  100% {
+    border-bottom-color: transparent;
+    opacity: 0.55;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   ACT 4 · the hand-scrubbed edit
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* A field lights the way it does on focus in the real panel: the hover surface
+   first, then the accent border. It waits for the cursor to arrive at 66. */
+.ap-field-radius {
+  animation: ap-field-focus var(--ap-loop) ease infinite;
+}
+
+@keyframes ap-field-focus {
+  0%,
+  66.1% {
+    border-color: transparent;
+    background: transparent;
+  }
+  67.2%,
+  85% {
+    border-color: var(--ap-primary);
+    background: var(--ap-surface-active);
+  }
+  86.4%,
+  100% {
+    border-color: transparent;
+    background: transparent;
+  }
+}
+
+/*
+ * The number commits at 67.9% and the button starts rounding in the same frame.
+ *
+ * `step-end` on the readout because a real value snaps to what you dragged it
+ * to; an eased 2.7% on the button because a committed value still animates its
+ * way to the new shape. The two are not in conflict — one is the field, the
+ * other is the rendered result of the field.
+ */
+.ap-swap-from-radius {
+  animation: ap-swap-out-radius var(--ap-loop) step-end infinite;
+}
+
+.ap-swap-to-radius {
+  animation: ap-swap-in-radius var(--ap-loop) step-end infinite;
+}
+
+@keyframes ap-swap-out-radius {
+  0% {
+    opacity: 1;
+  }
+  67.9% {
+    opacity: 0;
+  }
+  90% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes ap-swap-in-radius {
+  0% {
+    opacity: 0;
+  }
+  67.9% {
+    opacity: 1;
+  }
+  90% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* The pending-tweak counter grows onto the bottom bar: one edit made by hand and
+   not yet sent. It is the only thing on that bar that ever moves, and its
+   arrival is what starts the breathing beat. */
+.ap-tweak-badge-wrap {
+  animation: ap-badge-space var(--ap-loop) var(--pk-motion-ease-chrome) infinite;
+}
+
+.ap-tweak-badge {
+  animation: ap-badge-pop var(--ap-loop) var(--pk-motion-ease-overshoot)
+    infinite;
+}
+
+@keyframes ap-badge-space {
+  0%,
+  72.5% {
+    width: 0;
+    margin-left: 0;
+  }
+  74%,
+  85.5% {
+    width: 20px;
+    margin-left: 2px;
+  }
+  86.9%,
+  100% {
+    width: 0;
+    margin-left: 0;
+  }
+}
+
+@keyframes ap-badge-pop {
+  0%,
+  72.5% {
+    opacity: 0;
+    transform: scale(0);
+  }
+  74%,
+  85.5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  86.9%,
+  100% {
+    opacity: 0;
+    transform: scale(0);
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Stagger families
+   ════════════════════════════════════════════════════════════════════════════
+   Four families of near-identical blocks, each one idea repeated at a fixed
+   offset. Generated arithmetic rather than hand-typed, and kept together at the
+   bottom so the hand-authored beats above stay readable.
+
+   Each family's COUNT is fixed by content/mock-page.ts and design-dock.tsx —
+   eight handles, nine inspector rows, three tool calls, four diff lines. There
+   are no spare blocks: an unused one is a lie about how many things the
+   transcript shows, and that is exactly how this file drifted before.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Eight handles, 0.17% apart — a sweep around the box, not eight things
+   appearing at once. */
+
+@keyframes ap-handle-pop-0 {
+  0%,
+  11.2% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  12.2%,
+  90.5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  91.7%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes ap-handle-pop-1 {
+  0%,
+  11.37% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  12.37%,
+  90.5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  91.7%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes ap-handle-pop-2 {
+  0%,
+  11.54% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  12.54%,
+  90.5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  91.7%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes ap-handle-pop-3 {
+  0%,
+  11.71% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  12.71%,
+  90.5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  91.7%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes ap-handle-pop-4 {
+  0%,
+  11.88% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  12.88%,
+  90.5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  91.7%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes ap-handle-pop-5 {
+  0%,
+  12.05% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  13.05%,
+  90.5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  91.7%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes ap-handle-pop-6 {
+  0%,
+  12.22% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  13.22%,
+  90.5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  91.7%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+@keyframes ap-handle-pop-7 {
+  0%,
+  12.39% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  13.39%,
+  90.5% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  91.7%,
+  100% {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+}
+
+/*
+ * Nine inspector rows, 0.28% apart, rising as the Edit tab comes forward.
+ *
+ * They clear in REVERSE order — row 9 first, row 1 last — which is a panel
+ * emptying from the bottom up rather than a list re-rendering. An earlier cut
+ * claimed to do this in a comment and then cleared them forwards.
+ */
+
+@keyframes ap-insp-row-0 {
+  0%,
+  62.5% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  63.5%,
+  87.46% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  88.76%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes ap-insp-row-1 {
+  0%,
+  62.78% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  63.78%,
+  87.34% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  88.64%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes ap-insp-row-2 {
+  0%,
+  63.06% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  64.06%,
+  87.22% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  88.52%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes ap-insp-row-3 {
+  0%,
+  63.34% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  64.34%,
+  87.1% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  88.4%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes ap-insp-row-4 {
+  0%,
+  63.62% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  64.62%,
+  86.98% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  88.28%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes ap-insp-row-5 {
+  0%,
+  63.9% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  64.9%,
+  86.86% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  88.16%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes ap-insp-row-6 {
+  0%,
+  64.18% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  65.18%,
+  86.74% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  88.04%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes ap-insp-row-7 {
+  0%,
+  64.46% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  65.46%,
+  86.62% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  87.92%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@keyframes ap-insp-row-8 {
+  0%,
+  64.74% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  65.74%,
+  86.5% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  87.8%,
+  100% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Three tool calls, 3.4% apart. Each result lands 0.8% after its own head, so
+   a row is always briefly a call with no answer yet — which is what streaming
+   actually looks like. All three clear together at 78.5%, behind the Edit tab.
+
+   3.4% is ~390ms per call: long enough that each row registers as a separate
+   thing the agent did, short enough that the turn does not feel padded. */
+
+@keyframes ap-tl-head-1 {
+  0%,
+  38.4% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  39.2%,
+  78.5% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  79.7%,
+  100% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+@keyframes ap-tl-head-2 {
+  0%,
+  41.8% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  42.6%,
+  78.5% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  79.7%,
+  100% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+@keyframes ap-tl-head-3 {
+  0%,
+  45.2% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+  46%,
+  78.5% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  79.7%,
+  100% {
+    opacity: 0;
+    transform: translateY(3px);
+  }
+}
+
+@keyframes ap-tl-res-1 {
+  0%,
+  39.2% {
+    opacity: 0;
+  }
+  40%,
+  78.5% {
+    opacity: 1;
+  }
+  79.7%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes ap-tl-res-2 {
+  0%,
+  42.6% {
+    opacity: 0;
+  }
+  43.4%,
+  78.5% {
+    opacity: 1;
+  }
+  79.7%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes ap-tl-res-3 {
+  0%,
+  46% {
+    opacity: 0;
+  }
+  46.8%,
+  78.5% {
+    opacity: 1;
+  }
+  79.7%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Four diff lines, 0.62% apart, starting once the card has finished opening. */
+
+@keyframes ap-diff-line-0 {
+  0%,
+  49.2% {
+    opacity: 0;
+  }
+  50.1%,
+  78.5% {
+    opacity: 1;
+  }
+  79.7%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes ap-diff-line-1 {
+  0%,
+  49.82% {
+    opacity: 0;
+  }
+  50.72%,
+  78.5% {
+    opacity: 1;
+  }
+  79.7%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes ap-diff-line-2 {
+  0%,
+  50.44% {
+    opacity: 0;
+  }
+  51.34%,
+  78.5% {
+    opacity: 1;
+  }
+  79.7%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes ap-diff-line-3 {
+  0%,
+  51.06% {
+    opacity: 0;
+  }
+  51.96%,
+  78.5% {
+    opacity: 1;
+  }
+  79.7%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Tracks that deliberately run on their OWN clock
+   ════════════════════════════════════════════════════════════════════════════
+   NOT `--ap-loop`, and that is the point: these represent things that tick at
+   their own rate regardless of where the story has got to. Locking them to the
+   loop would make a caret blink once every eleven and a half seconds.
+
+   Do not "fix" these. */
+
+/* Matches `@keyframes __airship-pulse` in the real overlay — same 1s, same
+   opacity floor — so the hero and the product breathe at the same rate. */
+@keyframes ap-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+/*
+ * A text caret, blinking at the rate a text caret blinks — but only while the
+ * composer is the thing you are looking at.
+ *
+ * It stays up for the whole of the act, including the beat where the finished
+ * sentence just sits there. An earlier cut hid it with eight characters still to
+ * type, so the prompt appeared to finish itself.
+ */
+.ap-caret {
+  animation:
+    ap-caret-show var(--ap-loop) step-end infinite,
+    ap-caret-blink 1.2s step-end infinite;
+}
+
+@keyframes ap-caret-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes ap-caret-show {
+  0% {
+    visibility: hidden;
+  }
+  15.9% {
+    visibility: visible;
+  }
+  35.4% {
+    visibility: hidden;
+  }
+  100% {
+    visibility: hidden;
+  }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   Pause, and reduced motion
+   ════════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  /*
+   * Everything stops, pinned at the breathing beat — around frame 77.
+   *
+   * That single frame is the whole story at rest: the element selected, the
+   * prompt sent and answered, the diff behind the panel, the Edit tab forward,
+   * and BOTH edits on the button — the agent's colour and the hand-scrubbed
+   * radius, with the pending-tweak badge on the bar to say the second one has
+   * not been sent yet.
+   *
+   * Pinning matters more than it looks. For a visitor who has asked their OS to
+   * stop animations this is the ONLY frame they will ever see, so it has to be
+   * the most explanatory one — not the idle frame that happens to sit at 0%.
+   */
+  .hero-visual * {
+    animation: none !important;
+  }
+
+  .animation-pause-btn {
+    display: none;
+  }
+
+  .ap-hover-box,
+  .ap-insp-empty,
+  .ap-tab-body-agent,
+  .ap-caret,
+  .ap-swap-from-radius,
+  .ap-swap-from-fill {
+    opacity: 0;
+  }
+
+  .ap-sel-box,
+  .ap-sel-box .ap-box-label,
+  .ap-handle,
+  .ap-insp-filled,
+  .ap-insp-row,
+  .ap-tab-body-edit,
+  .ap-msg-user,
+  .ap-msg-assistant,
+  .ap-tl-head,
+  .ap-tl-res,
+  .ap-diff,
+  .ap-diff-line,
+  .ap-placeholder,
+  .ap-swap-to-radius,
+  .ap-swap-to-fill,
+  .ap-tweak-badge {
+    opacity: 1;
+  }
+
+  .ap-insp-row {
+    transform: translateY(0);
+  }
+
+  .ap-handle,
+  .ap-sel-chip,
+  .ap-tweak-badge {
+    transform: scale(1);
+  }
+
+  .ap-diff {
+    max-height: 110px;
+  }
+
+  /* The prompt has been sent, so the composer is empty again. */
+  .ap-typed {
+    clip-path: inset(0 100% 0 0);
+  }
+
+  /* The turn is finished. */
+  .ap-dot {
+    width: 0;
+    margin-right: -8px;
+  }
+
+  .ap-status-working {
+    opacity: 0;
+  }
+
+  .ap-status-done {
+    opacity: 1;
+  }
+
+  /* The panel is on its Edit tab. */
+  .ap-tab-agent {
+    border-bottom-color: transparent;
+    opacity: 0.55;
+  }
+
+  .ap-tab-edit {
+    border-bottom-color: var(--ap-primary);
+    opacity: 1;
+  }
+
+  /* Both edits applied: the agent's colour, and the radius scrubbed by hand. */
+  .ap-cta {
+    background: #e2603a;
+    border-radius: 9999px;
+  }
+
+  .ap-swatch-fill {
+    background-color: #e2603a;
+  }
+
+  /* The field the radius was scrubbed in is still focused. */
+  .ap-field-radius {
+    background: var(--ap-surface-active);
+    border-color: var(--ap-primary);
+  }
+
+  /* One tweak made by hand and not yet sent. */
+  .ap-tweak-badge-wrap {
+    width: 20px;
+    margin-left: 2px;
+  }
+
+  /* A pointer frozen mid-gesture reads as a rendering bug. */
+  .mock-cursor {
+    display: none;
+  }
+}
+
+.hero-visual.is-paused * {
+  animation-play-state: paused !important;
+}

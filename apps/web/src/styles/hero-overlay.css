@@ -1,0 +1,1147 @@
+/*
+ * Airship's inline-mode overlay, recreated in miniature: the app's own page with
+ * the picker, the inspector dock and the bottom bar floating over it.
+ *
+ * ── The one rule for editing this file ───────────────────────────────────────
+ * Every number here is TRANSCRIBED from packages/overlay/src/styles/*.css.ts at
+ * 1:1. Nothing is pre-multiplied by a scale factor. The whole mock is authored
+ * at real pixels inside `.ap-mock` and then shrunk with a single `transform:
+ * scale()`, because the alternative — hand-shrinking ~120 distinct values, each
+ * one an opportunity to round differently — is how a mock stops looking like the
+ * product it is quoting.
+ *
+ * So: if the real editor says 24px, write 24px. If it says 10px mono uppercase
+ * with 0.6px tracking, write exactly that. The scale is somebody else's problem.
+ *
+ * Colours come from `--ap-*`, generated from packages/editor-tokens/EDITOR.md
+ * and scoped to `.ap-mock` by @airship/site-tokens' postbuild. They are dark and
+ * owe nothing to the light page around them, which is correct: airship's chrome
+ * is dark whatever the app it is injected into looks like. The `color-scheme:
+ * dark` below is the same statement made to the browser, and overrides the
+ * page's `color-scheme: light` for this subtree only.
+ *
+ * ── The one intentional deviation ────────────────────────────────────────────
+ * The real docks are `position: fixed`. Here they are `position: absolute`.
+ * A `transform` ancestor already makes `fixed` behave as `absolute`, so this
+ * changes nothing visually — but relying on that quirk would be fragile, and
+ * being explicit means `.ap-mock` is unambiguously the containing block.
+ */
+
+.ap-mock {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1200px;
+  height: 636px;
+  font-family: var(--ap-font-sans);
+  color-scheme: dark;
+  /* Overwritten after mount from the real measured width of .browser-content.
+     0.62 is 744/1200 — the width the desktop simulation gives it at 800px. */
+  /*
+   * The fallback is what the SSR'd frame paints at, because nothing has measured
+   * anything yet — so it must be the answer for the common case, not a
+   * placeholder. 1040/1200 is exact at every viewport wide enough for
+   * `.browser-window` to reach its 1040px cap, which is 1136px and up.
+   *
+   * It was 0.62 (744/1200) for the 800px stage that used to hold this, and
+   * leaving it there after the band went full-bleed made first paint render the
+   * mock 40% too small and then snap. If either 1040 in hero-desktop.css or the
+   * 1200 above changes, this changes with them.
+   */
+  transform: scale(var(--ap-mock-scale, 0.8667));
+  transform-origin: top left;
+}
+
+/* ── the app underneath ────────────────────────────────────────────────── */
+
+/*
+ * airship's own landing page, in miniature. Not a fictional product: `make run`
+ * points the CLI at this app, so this really is what you would be looking at.
+ *
+ * It uses `--pk-*`, not `--ap-*` — it is the page, not the chrome, so it is
+ * drawn from the same tokens as the page around it and cannot drift from them.
+ */
+.ap-page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--pk-font-sans);
+  color: var(--pk-color-text-primary);
+  background: var(--pk-color-surface-page);
+}
+
+/* Full-width, and partly behind the docks — which is exactly what a real page
+   looks like with the overlay open. */
+.ap-page-nav {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 40px;
+  border-bottom: 1px solid var(--pk-color-border-faint);
+}
+
+.ap-page-brand {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.4px;
+}
+
+.ap-page-brand svg {
+  width: 24px;
+  height: 24px;
+}
+
+.ap-page-links {
+  display: flex;
+  gap: 28px;
+  font-size: 15px;
+  color: var(--pk-color-text-secondary);
+}
+
+/*
+ * A normal left-aligned hero.
+ *
+ * With one dock (covering 820–1200) the whole left two-thirds of the page stays
+ * visible, so the layout needs no tricks: the CTA lands around x=56, nowhere
+ * near the panel. A two-dock draft had to centre this inside a 460px band to
+ * keep the selected element out from behind the chat — which worked, but made
+ * the page inside look like a page designed around its own editor.
+ */
+.ap-page-hero {
+  display: flex;
+  flex-direction: column;
+  max-width: 520px;
+  padding: 64px 56px 0;
+}
+
+.ap-page-heading {
+  margin: 0;
+  font-size: 36px;
+  font-weight: 500;
+  line-height: 1.14;
+  letter-spacing: -0.9px;
+}
+
+.ap-page-sub {
+  margin: 16px 0 0;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--pk-color-text-secondary);
+}
+
+.ap-page-actions {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  margin-top: 30px;
+}
+
+/*
+ * THE element. The picker selects it, the inspector edits it, and the payoff
+ * beat changes it — so its radius and background are custom properties the
+ * timeline animates, rather than literals it would have to override.
+ */
+.ap-cta {
+  display: inline-flex;
+  align-items: center;
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--ap-cta-fill, #1c1917);
+  border-radius: var(--ap-cta-radius, 6px);
+}
+
+.ap-cta-secondary {
+  font-family: var(--pk-font-mono);
+  font-size: 14px;
+  color: var(--pk-color-text-secondary);
+}
+
+.ap-page-cards {
+  display: flex;
+  gap: 14px;
+  max-width: 680px;
+  padding: 52px 56px 0;
+}
+
+.ap-page-card {
+  flex: 1;
+  padding: 16px 18px;
+  background: var(--pk-color-surface-panel);
+  border: 1px solid var(--pk-color-border-faint);
+  border-radius: 10px;
+}
+
+.ap-page-card-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.ap-page-card-body {
+  margin: 5px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--pk-color-text-secondary);
+}
+
+/* ── picker overlay ────────────────────────────────────────────────────── */
+
+/*
+ * Drawn on a layer that spans the whole mock and takes raw coordinates, exactly
+ * as the real overlay's `.chrome-layer` does — so a box is positioned by where
+ * the element IS, not by where its parent happens to be.
+ */
+.ap-chrome-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+/* Hover: 1.5px, over a 15% wash. Selection: 2px, no fill, plus a white ring so
+   the outline survives on a light UI. */
+.ap-hover-box {
+  position: absolute;
+  background: var(--ap-primary-bg-hover);
+  border: 1.5px solid var(--ap-primary);
+  border-radius: var(--ap-radius-xs);
+  opacity: 0;
+}
+
+.ap-sel-box {
+  position: absolute;
+  border: 2px solid var(--ap-primary);
+  border-radius: var(--ap-radius-xs);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / 0.16);
+  opacity: 0;
+}
+
+.ap-handle {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  background: var(--ap-selection-handle);
+  border: 1px solid var(--ap-primary);
+  border-radius: 1px;
+  opacity: 0;
+}
+
+.ap-handle-n,
+.ap-handle-nw,
+.ap-handle-ne {
+  top: -4px;
+}
+.ap-handle-s,
+.ap-handle-sw,
+.ap-handle-se {
+  bottom: -4px;
+}
+.ap-handle-w,
+.ap-handle-nw,
+.ap-handle-sw {
+  left: -4px;
+}
+.ap-handle-e,
+.ap-handle-ne,
+.ap-handle-se {
+  right: -4px;
+}
+.ap-handle-n,
+.ap-handle-s {
+  left: calc(50% - 3.5px);
+}
+.ap-handle-e,
+.ap-handle-w {
+  top: calc(50% - 3.5px);
+}
+
+/* The identity badge, above the box's top-left corner. */
+.ap-box-label {
+  position: absolute;
+  top: -3px;
+  left: -1px;
+  padding: 2px 5px;
+  font-family: var(--ap-font-mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: #fff;
+  white-space: nowrap;
+  background: var(--ap-primary);
+  border-radius: 3px;
+  opacity: 0;
+  transform: translateY(-100%);
+}
+
+.ap-box-label-dim {
+  opacity: 0.7;
+}
+
+/* ── docks ─────────────────────────────────────────────────────────────── */
+
+.ap-dock {
+  position: absolute;
+  top: 20px;
+  bottom: 20px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ap-surface-panel);
+  border: 1px solid var(--ap-border-default);
+  border-radius: var(--ap-radius-md);
+  /* A hairline ring, not a drop shadow. Panels in this system separate from
+     what is behind them with a border; only floated chrome casts. */
+  box-shadow: var(--ap-elevation-card);
+}
+
+/* 320, not the real editor's 360. At this render scale the wider panel took a
+   quarter of the window and read as the subject rather than as the tool. */
+.ap-dock-right {
+  right: 20px;
+  width: 320px;
+}
+
+.ap-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--ap-space-sm) var(--ap-space-lg);
+  border-bottom: 1px solid var(--ap-border-default);
+}
+
+.ap-brand {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--ap-text-primary);
+}
+
+.ap-brand-name {
+  font-size: 12px;
+  font-weight: 560;
+  letter-spacing: -0.1px;
+}
+
+.ap-head-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.ap-iconbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--ap-icon-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--ap-radius-xs);
+}
+
+/* ── inspector ─────────────────────────────────────────────────────────── */
+
+/*
+ * The empty state and the filled panel occupy the same box and cross-fade.
+ * Stacking them means neither ever changes the dock's layout, so the transition
+ * is a single compositor-friendly opacity change rather than a reflow of a
+ * 360px column.
+ *
+ * Idle is the base state: empty visible, panel hidden. The timeline moves it.
+ */
+.ap-insp-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.ap-insp-empty {
+  position: absolute;
+  inset: 0;
+}
+
+.ap-insp {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  opacity: 0;
+}
+
+.ap-insp-tabs {
+  display: flex;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--ap-border-default);
+}
+
+.ap-insp-tab {
+  display: inline-flex;
+  flex: 1;
+  /* 3px, not the 6px control gutter: four tabs in 320px is one more than the
+     real panel carries in 360, and the gutter is the first thing to give. */
+  gap: 3px;
+  align-items: center;
+  justify-content: center;
+  padding: var(--ap-space-xs) 3px;
+  font-family: inherit;
+  font-size: var(--ap-font-size-title);
+  color: var(--ap-text-primary);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  opacity: 0.55;
+}
+
+.ap-insp-tab-on {
+  border-bottom-color: var(--ap-primary);
+  opacity: 1;
+}
+
+/*
+ * The scrollbar is hidden, as it is in the real panel: this is chrome, and a
+ * scrollbar track inside a 360px dock is a stripe of noise beside every control.
+ * The timeline scrolls it by translating the inner column instead.
+ */
+.ap-insp-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.ap-insp-scroll {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Empty state — the brand mark over two lines, centred. */
+.ap-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 20px;
+  text-align: center;
+}
+
+.ap-empty-art {
+  width: 48px;
+  height: 48px;
+  color: var(--ap-icon-muted);
+  opacity: 0.55;
+}
+
+.ap-empty-title {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ap-text-secondary);
+}
+
+.ap-empty-body {
+  max-width: 32ch;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ap-text-tertiary);
+}
+
+/* Source chip — the file:line the selection resolved to. */
+.ap-src {
+  font-family: var(--ap-font-mono);
+  font-size: var(--ap-font-size-caption);
+  color: var(--ap-text-secondary);
+  opacity: 0.75;
+}
+
+/*
+ * Section header. Title first, chevron LAST — so every arrow in the panel lines
+ * up in one column down the right edge, whatever the header says.
+ */
+.ap-sect {
+  border-bottom: 1px solid var(--ap-border-default);
+}
+
+.ap-sect-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--ap-space-xs) var(--ap-space-lg);
+  font-family: var(--ap-font-mono);
+  font-size: var(--ap-font-size-caption);
+  color: var(--ap-text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  opacity: 0.6;
+}
+
+.ap-sect-chev {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--ap-icon-muted);
+}
+
+.ap-sect-body {
+  padding: var(--ap-control-group-gap) var(--ap-space-lg);
+}
+
+/* Two columns of glyph-fielded controls — NOT a label rail. The label rail only
+   appears on rows that span the full width. */
+.ap-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--ap-control-row-gap) var(--ap-control-gutter);
+  align-items: center;
+}
+
+.ap-span2 {
+  grid-column: 1 / -1;
+}
+
+.ap-row {
+  display: flex;
+  gap: var(--ap-control-gutter);
+  align-items: center;
+  margin: var(--ap-control-row-gap) 0;
+}
+
+.ap-row-label {
+  flex: 0 0 68px;
+  font-size: 12px;
+  color: var(--ap-text-tertiary);
+}
+
+/* The nine align cells, in three groups. */
+.ap-align-row {
+  display: flex;
+  gap: var(--ap-space-xs);
+  justify-content: space-between;
+  padding: var(--ap-space-sm) var(--ap-space-lg);
+  border-bottom: 1px solid var(--ap-border-default);
+}
+
+.ap-align-grp {
+  display: inline-flex;
+  gap: 1px;
+}
+
+.ap-align-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--ap-icon-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--ap-radius-xs);
+}
+
+/* ── controls ──────────────────────────────────────────────────────────── */
+
+/*
+ * The number field is borderless until touched — a panel of twenty bordered
+ * boxes reads as a form, and this is an instrument. The glyph doubles as the
+ * scrub handle, which is why it is 20px rather than 16px.
+ */
+.ap-ctl-num {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+  height: var(--ap-control-height);
+  padding-left: 2px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--ap-radius-sm);
+}
+
+.ap-ctl-glyph {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--ap-icon-muted);
+}
+
+.ap-ctl-glyph-txt {
+  font-family: var(--ap-font-mono);
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.ap-ctl-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0 2px;
+  font-family: var(--ap-font-mono);
+  font-size: 12px;
+  color: var(--ap-text-primary);
+  white-space: nowrap;
+}
+
+.ap-ctl-suffix {
+  font-family: var(--ap-font-mono);
+  font-size: 11px;
+  color: var(--ap-text-tertiary);
+}
+
+/* Unlike the number fields, the dropdown IS bordered at rest — it opens
+   something, and an affordance that opens something has to look like one. */
+.ap-select {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: var(--ap-control-height);
+  padding: 0 8px;
+  font-family: var(--ap-font-sans);
+  font-size: 12px;
+  color: var(--ap-text-primary);
+  text-align: left;
+  background: var(--ap-input-bg);
+  border: 1px solid var(--ap-input-border);
+  border-radius: var(--ap-radius-sm);
+}
+
+.ap-select svg {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: var(--ap-icon-secondary);
+}
+
+.ap-ctl-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--ap-surface-active);
+  border-radius: var(--ap-radius-sm);
+}
+
+.ap-ctl-seg-btn {
+  padding: 3px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--ap-text-primary);
+  background: transparent;
+  border: none;
+  border-radius: var(--ap-radius-xs);
+  opacity: 0.6;
+}
+
+.ap-ctl-seg-on {
+  background: var(--ap-primary);
+  opacity: 1;
+}
+
+/* An all-icon group becomes square cells rather than pills. */
+.ap-ctl-seg-icon {
+  flex-wrap: nowrap;
+}
+
+.ap-ctl-seg-icon .ap-ctl-seg-btn {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  padding: 0;
+}
+
+/* The conic checkerboard is what makes a semi-transparent fill readable. */
+.ap-ctl-swatch {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background-color: var(--ap-swatch-color, #1c1917);
+  background-size: 6px 6px;
+  border: 1px solid var(--ap-border-default);
+  border-radius: var(--ap-radius-sm);
+}
+
+.ap-paint-row {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+}
+
+.ap-paint-hex {
+  flex: 1 1 auto;
+}
+
+.ap-paint-pct {
+  flex: 0 0 72px;
+}
+
+.ap-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ap-rows-row {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.ap-rows-row > *:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ap-row-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--ap-icon-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--ap-radius-xs);
+  opacity: 0.55;
+}
+
+/* ── bottom bar ────────────────────────────────────────────────────────── */
+
+.ap-bar {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  z-index: 50;
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  padding: 4px;
+  background: var(--ap-surface-panel);
+  border: 1px solid var(--ap-border-default);
+  border-radius: var(--ap-radius-md);
+  box-shadow: var(--ap-elevation-card);
+  transform: translateX(-50%);
+}
+
+.ap-bar-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 4px 2px;
+  background: var(--ap-border-default);
+}
+
+.ap-tool-group {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+}
+
+/* 28px, not 24px: these are the only controls in the system you aim at rather
+   than read, and they sit on a floating bar with nothing to align to. */
+.ap-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--ap-icon-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: var(--ap-radius-xs);
+}
+
+.ap-tool-on {
+  color: var(--ap-text-primary);
+  background: var(--ap-primary);
+}
+
+.ap-seg-group {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  padding: 2px;
+  background: var(--ap-surface-active);
+  border: 1px solid var(--ap-border-default);
+  border-radius: var(--ap-radius-sm);
+}
+
+.ap-seg {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ap-text-primary);
+  background: transparent;
+  border: none;
+  border-radius: var(--ap-radius-xs);
+  opacity: 0.65;
+}
+
+.ap-seg svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ap-seg-on {
+  background: var(--ap-surface-panel);
+  box-shadow: var(--ap-elevation-card);
+  opacity: 1;
+}
+
+/*
+ * The pending-tweak counter. It rides on the bar because that is where the send
+ * affordance lives in inline mode — the count is "how much is waiting to go".
+ */
+.ap-tweak-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #fff;
+  background: var(--ap-primary);
+  border-radius: var(--ap-radius-pill);
+  transform: scale(0);
+}
+
+.ap-tweak-badge-wrap {
+  display: inline-flex;
+  align-items: center;
+  width: 0;
+  overflow: hidden;
+}
+
+/* ── the Agent tab ─────────────────────────────────────────────────────── */
+
+/*
+ * The two tab bodies stack in one box and cross-fade, so switching tabs never
+ * resizes the dock and both stay measurable — which the cursor's targets depend
+ * on.
+ */
+.ap-tab-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.ap-tab-body {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* Agent is the tab you land on; Edit gets one calm beat at the end. */
+.ap-tab-body-edit {
+  overflow: hidden;
+  opacity: 0;
+}
+
+.ap-tab-agent {
+  border-bottom-color: var(--ap-primary);
+  opacity: 1;
+}
+
+.ap-transcript {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--ap-space-md);
+  min-height: 0;
+  padding: var(--ap-space-md) var(--ap-space-lg);
+}
+
+.ap-msg-user {
+  align-self: flex-end;
+  max-width: 88%;
+  padding: 8px 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ap-text-primary);
+  background: var(--ap-surface-selected);
+  /* Notched on the corner nearest its author — bottom-right for the user,
+     bottom-left for the agent. The one asymmetry that makes a transcript
+     readable without avatars, and — since the bubble stopped being an accent
+     fill — the only thing that does. */
+  border-radius: 8px 8px 4px 8px;
+  opacity: 0;
+}
+
+.ap-msg-assistant {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-self: flex-start;
+  width: 96%;
+  padding: 10px 12px;
+  background: var(--ap-surface-active);
+  border: 1px solid var(--ap-border-default);
+  border-radius: 8px 8px 8px 4px;
+  opacity: 0;
+}
+
+/* The agent's timeline, in the same grammar Claude Code uses in a terminal:
+   a filled marker and a bold tool name, then an indented elbow for the result. */
+.ap-tl {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ap-tl-head {
+  display: flex;
+  gap: 5px;
+  align-items: baseline;
+  font-family: var(--ap-font-mono);
+  font-size: 12px;
+  color: var(--ap-text-primary);
+  white-space: nowrap;
+  opacity: 0;
+}
+
+.ap-tl-marker {
+  flex-shrink: 0;
+  color: var(--ap-text-tertiary);
+}
+
+.ap-tl-tool {
+  font-weight: 600;
+}
+
+.ap-tl-args {
+  color: var(--ap-text-tertiary);
+}
+
+.ap-tl-res {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  padding-left: 10px;
+  font-family: var(--ap-font-mono);
+  font-size: 11px;
+  color: var(--ap-text-secondary);
+  white-space: nowrap;
+  opacity: 0;
+}
+
+.ap-tl-elbow {
+  flex-shrink: 0;
+  color: var(--ap-text-tertiary);
+}
+
+.ap-turn-status {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--ap-text-tertiary);
+}
+
+/* Matches `@keyframes __airship-pulse` in the real overlay — same 7px, same 1s,
+   same opacity floor. */
+.ap-dot {
+  flex-shrink: 0;
+  width: 7px;
+  height: 7px;
+  background: var(--ap-text-tertiary);
+  border-radius: var(--ap-radius-pill);
+}
+
+.ap-status-label {
+  display: inline-grid;
+}
+
+.ap-status-label > span {
+  grid-area: 1 / 1;
+}
+
+/* The diff card. Its header names the file in blue mono and its stat in dimmed
+   mono — the two things you check before reading a single line of the body. */
+.ap-diff {
+  max-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--ap-border-default);
+  border-radius: var(--ap-radius-md);
+  opacity: 0;
+}
+
+.ap-diff-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--ap-text-primary);
+  background: var(--ap-surface-active);
+}
+
+.ap-diff-file {
+  font-family: var(--ap-font-mono);
+  font-weight: 600;
+  color: var(--ap-text-primary);
+}
+
+.ap-diff-stat {
+  font-family: var(--ap-font-mono);
+  opacity: 0.5;
+}
+
+.ap-diff-body {
+  padding: 6px 0;
+  font: 11px / 1.5 var(--ap-font-mono);
+  background: var(--ap-surface-panel);
+}
+
+.ap-diff-line {
+  padding: 0 10px;
+  white-space: pre;
+  opacity: 0;
+}
+
+.ap-diff-add {
+  color: var(--ap-semantic-success);
+  background: var(--ap-semantic-success-bg);
+}
+
+.ap-diff-del {
+  color: var(--ap-semantic-error);
+  background: var(--ap-semantic-error-bg);
+}
+
+.ap-diff-ctx {
+  opacity: 0.55;
+}
+
+/* ── composer ──────────────────────────────────────────────────────────── */
+
+.ap-composer {
+  flex: 0 0 auto;
+  padding: var(--ap-space-sm) var(--ap-space-md);
+  border-top: 1px solid var(--ap-border-default);
+}
+
+/*
+ * ONE bordered box holding the chips, the textarea and the send button. The
+ * right padding is what clears the absolutely-positioned send — without it the
+ * caret would run underneath the button on a long prompt.
+ */
+.ap-field {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 34px 6px 8px;
+  background: var(--ap-input-bg);
+  border: 1px solid var(--ap-input-border);
+  border-radius: var(--ap-radius-sm);
+}
+
+.ap-chips {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  overflow: hidden;
+}
+
+/* The selection chip — the one accented thing in the composer, because it is the
+   one thing that answers "what am I about to change?". */
+.ap-sel-chip {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  padding: 3px 6px 3px 8px;
+  font-family: var(--ap-font-mono);
+  font-size: 12px;
+  color: var(--ap-text-primary);
+  white-space: nowrap;
+  background: var(--ap-surface-active);
+  border: 1px solid var(--ap-border-default);
+  border-radius: var(--ap-radius-sm);
+  transform: scale(0);
+  transform-origin: left center;
+}
+
+.ap-chip-x {
+  color: var(--ap-text-tertiary);
+}
+
+.ap-input {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  min-height: 19px;
+  padding: 2px 0;
+  font-size: var(--ap-font-size-title);
+  line-height: 1.45;
+}
+
+.ap-placeholder {
+  position: absolute;
+  color: var(--ap-text-placeholder);
+}
+
+/*
+ * The typed prompt, revealed by clipping rather than by a JS timer.
+ *
+ * `clip-path: inset(0 var(--type-clip) 0 0)` stepped through the timeline means
+ * the typing obeys the pause button and `prefers-reduced-motion` for free. A
+ * `setInterval` would ignore both, and would keep running while the hero is
+ * scrolled off screen.
+ */
+.ap-typed {
+  color: var(--ap-text-primary);
+  white-space: nowrap;
+  clip-path: inset(0 100% 0 0);
+}
+
+.ap-caret {
+  align-self: center;
+  width: 1px;
+  height: 15px;
+  background: var(--ap-text-primary);
+  opacity: 0;
+}
+
+.ap-send {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--ap-text-primary);
+  background: var(--ap-surface-selected);
+  border: 1px solid var(--ap-border-strong);
+  border-radius: var(--ap-radius-sm);
+  opacity: 0.35;
+}
