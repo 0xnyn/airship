@@ -1,0 +1,160 @@
+/*
+ * The only stylesheet __root.tsx links. Everything else arrives through these
+ * imports, and the ORDER BELOW IS LOAD-BEARING in three separate ways.
+ */
+
+@import "tailwindcss";
+
+/*
+ * 1. Unlayered on purpose. `@font-face` is not subject to cascade layers, and
+ *    wrapping it in one is a no-op that reads as if it did something.
+ *
+ *    Note what is NOT here: `@airship/editor-tokens/fonts.css`. That package
+ *    declares the SAME family names ("Inter", "JetBrains Mono") pointing at its
+ *    own copies of the same binaries, so importing both downloads every face
+ *    twice. The hero needs the editor's *colours*, not its fonts — and it gets
+ *    them from editor-mock.css below.
+ */
+@import "@airship/site-tokens/fonts.css";
+
+/*
+ * 2. `layer(components)` is load-bearing. These files carry the `.pk-*`
+ *    typography role classes alongside the custom properties, and unlayered CSS
+ *    outranks every cascade layer — so without this, a bare `.pk-body` would beat
+ *    every Tailwind utility that tried to adjust it.
+ */
+@import "@airship/site-tokens/tokens.css" layer(components);
+
+/*
+ *    editor-mock.css is the visual editor's own `--ap-*` palette, generated from
+ *    packages/editor-tokens/EDITOR.md and scoped by this package's postbuild to
+ *    `.ap-mock` — the one wrapper inside the hero's browser window. Scoped, not
+ *    `:root`, because that palette is dark editor chrome and this is a light
+ *    marketing page.
+ */
+@import "@airship/site-tokens/editor-mock.css" layer(components);
+
+/*
+ * 3. These five are UNLAYERED, deliberately — the exact inverse of the reasoning
+ *    two blocks up, and the reason that reasoning is spelled out there.
+ *
+ *    This page is a near-literal port of a hand-written stylesheet: the geometry
+ *    was transcribed, not re-derived, and it has to win. Unlayered CSS outranks
+ *    preflight and every utility layer, which is precisely what a port needs.
+ *
+ *    The consequence is real and intended: a Tailwind utility can never override
+ *    a rule in these files. Do not "fix" this by wrapping them in a layer.
+ */
+@import "./shell.css";
+@import "./cards.css";
+@import "./hero-desktop.css";
+@import "./hero-overlay.css";
+@import "./hero-timeline.css";
+
+/*
+ * Tailwind 4 has no config file — content sources are declared here.
+ *
+ * Relative to THIS FILE, which lives in src/styles/ — hence `../`. Getting this
+ * wrong does not error: Tailwind scans a directory that does not exist, finds no
+ * class names, and silently emits no utilities at all. The symptom is a utility
+ * like `sr-only` having no effect, which reads as a specificity problem rather
+ * than a missing file.
+ */
+@source "../components";
+@source "../content";
+@source "../routes";
+
+/*
+ * The token spec, mapped into Tailwind's theme BY REFERENCE. `inline` means the
+ * utility resolves to `var(--pk-…)` rather than to the value it holds right now,
+ * so a token change flows through without a Tailwind rebuild — and, more to the
+ * point, so `bg-page` and `var(--pk-color-surface-page)` cannot disagree.
+ */
+@theme inline {
+  --font-sans: var(--pk-font-sans);
+  --font-mono: var(--pk-font-mono);
+
+  --color-primary: var(--pk-color-text-primary);
+  --color-secondary: var(--pk-color-text-secondary);
+  --color-tertiary: var(--pk-color-text-tertiary);
+  --color-muted: var(--pk-color-text-muted);
+  --color-faint: var(--pk-color-text-faint);
+
+  --color-page: var(--pk-color-surface-page);
+  --color-panel: var(--pk-color-surface-panel);
+  --color-shell: var(--pk-color-surface-shell);
+  --color-input: var(--pk-color-surface-input);
+  --color-chrome: var(--pk-color-surface-chrome);
+
+  --color-line: var(--pk-color-border-default);
+  --color-line-subtle: var(--pk-color-border-subtle);
+  --color-line-faint: var(--pk-color-border-faint);
+
+  --color-cta: var(--pk-color-cta-bg);
+  --color-on-cta: var(--pk-color-cta-text);
+  --color-cta-hover: var(--pk-color-cta-hover);
+
+  --radius-xs: var(--pk-radius-xs);
+  --radius-sm: var(--pk-radius-sm);
+  --radius-md: var(--pk-radius-md);
+  --radius-lg: var(--pk-radius-lg);
+  --radius-xl: var(--pk-radius-xl);
+  --radius-pill: var(--pk-radius-pill);
+
+  --ease-chrome: var(--pk-motion-ease-chrome);
+  --ease-panel: var(--pk-motion-ease-panel);
+  --ease-reveal: var(--pk-motion-ease-reveal);
+  --ease-overshoot: var(--pk-motion-ease-overshoot);
+}
+
+@layer base {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+
+  html {
+    /*
+     * The page is light and has no second palette, so this says so to the parts
+     * of the window the stylesheet below does not paint: scrollbars, form
+     * controls, and the canvas the browser shows before any of this arrives.
+     * Left unset, a visitor on a dark OS gets those in dark against a light
+     * page. `.ap-mock` re-declares it as `dark` for its own subtree, which is
+     * correct — that is the editor's chrome, not the page.
+     */
+    color-scheme: light;
+    /* Set on <html> rather than <body> so the overscroll gutter is the shell
+       colour too, not the browser's default canvas. */
+    background: var(--pk-color-surface-shell);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--pk-font-sans);
+    font-feature-settings:
+      "liga" 1,
+      "calt" 1;
+    -webkit-font-smoothing: antialiased;
+    color: var(--pk-color-text-primary);
+    /* Global, and every sans role in DESIGN.md restates it so applying a
+       `.pk-*` class never silently resets it to zero. */
+    letter-spacing: -0.045px;
+    background: var(--pk-color-surface-shell);
+  }
+
+  ::selection {
+    color: var(--pk-color-selection-text);
+    background: var(--pk-color-selection-bg);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--pk-color-focus-ring);
+    outline-offset: 2px;
+  }
+
+  a {
+    color: inherit;
+  }
+}

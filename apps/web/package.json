@@ -1,0 +1,36 @@
+{
+  "name": "@airship/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*"
+  },
+  "scripts": {
+    "build": "vite build",
+    "clean": "rm -rf dist .output .nitro .tanstack node_modules/.vite .turbo",
+    "dev": "vite dev",
+    "og": "node scripts/og.mjs",
+    "routes": "tsr generate",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@airship/site-tokens": "workspace:*",
+    "@tanstack/react-router": "^1.170.0",
+    "@tanstack/react-start": "^1.168.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.0",
+    "@tanstack/router-cli": "^1.167.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "playwright": "^1.62.1",
+    "tailwindcss": "^4.3.0",
+    "typescript": "^5.7.0",
+    "vite": "^7.3.0",
+    "wrangler": "^4.42.0"
+  }
+}
