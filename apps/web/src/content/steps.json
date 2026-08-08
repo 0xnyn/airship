@@ -1,0 +1,18 @@
+{
+  "heading": "How it works",
+  "desc": "A visual canvas connected to your codebase.",
+  "steps": [
+    {
+      "id": "proxy",
+      "figure": "proxy",
+      "title": "Wrap your dev server with a visual canvas.",
+      "body": "Airship brings your running app into a Figma-like visual workspace. Work directly with the real UI, explore layouts, and experiment across device sizes without rebuilding it in a separate design tool."
+    },
+    {
+      "id": "source",
+      "figure": "source",
+      "title": "Bring your coding agent into the canvas.",
+      "body": "Use Claude Code, Codex, or OpenCode directly from Airship. Select an element, describe the change, and get the resulting code diff without switching between tools."
+    }
+  ]
+}

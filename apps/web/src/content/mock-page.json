@@ -1,0 +1,75 @@
+{
+  "page": {
+    "brand": "airship",
+    "cards": [
+      {
+        "body": "A reverse proxy, not a build step.",
+        "title": "No plugin"
+      },
+      {
+        "body": "Frames report their own innerWidth.",
+        "title": "Real viewports"
+      },
+      {
+        "body": "Resolved back to file and line.",
+        "title": "Edits source"
+      }
+    ],
+    "ctaLabel": "Get started",
+    "heading": "Point at it, describe the change.",
+    "nav": ["Overview", "How it works", "FAQ"],
+    "secondaryLabel": "npx @airshiplabs/cli",
+    "sub": "An infinite design canvas in front of the dev server you already have."
+  },
+  "selection": {
+    "size": "122 × 45",
+    "sourceFile": "hero-section.tsx",
+    "sourceLine": 24,
+    "sourcePath": "src/components/sections/hero-section.tsx",
+    "tag": "button.cta-primary"
+  },
+  "prompt": "Make this warmer.",
+  "toolCalls": [
+    {
+      "args": "hero-section.tsx",
+      "result": "Read 84 lines",
+      "tool": "Read"
+    },
+    {
+      "args": "\"cta-primary\"",
+      "result": "Found 2 matches",
+      "tool": "Grep"
+    },
+    {
+      "args": "styles/shell.css",
+      "result": "1 addition, 1 removal",
+      "tool": "Edit"
+    }
+  ],
+  "diff": {
+    "file": "shell.css",
+    "lines": [
+      {
+        "kind": "ctx",
+        "text": "  .cta-primary {"
+      },
+      {
+        "kind": "del",
+        "text": "-   background: #1C1917;"
+      },
+      {
+        "kind": "add",
+        "text": "+   background: #E2603A;"
+      },
+      {
+        "kind": "ctx",
+        "text": "  }"
+      }
+    ],
+    "stat": "+1 −1"
+  },
+  "status": {
+    "done": "Done · 1 file changed",
+    "working": "Applying 1 edit…"
+  }
+}

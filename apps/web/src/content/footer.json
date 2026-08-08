@@ -1,0 +1,14 @@
+{
+  "blurb": "{{tagline}}",
+  "columns": [
+    {
+      "id": "project",
+      "title": "Project",
+      "links": [
+        { "link": "github", "label": "GitHub" },
+        { "link": "releases", "label": "Releases" },
+        { "link": "issues", "label": "Issues" }
+      ]
+    }
+  ]
+}

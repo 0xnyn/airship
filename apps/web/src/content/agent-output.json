@@ -1,0 +1,123 @@
+{
+  "heading": "Give your agent the full context.",
+  "desc": "Airship resolves your selection to its source file, including the exact changes you made.",
+  "chromeLabel": "airship → agent",
+  "lines": [
+    [
+      {
+        "kind": "heading",
+        "text": "## Selection"
+      }
+    ],
+    [
+      {
+        "kind": "plain",
+        "text": "button.cta-primary"
+      },
+      {
+        "kind": "dim",
+        "text": "  ·  122 × 45"
+      }
+    ],
+    [
+      {
+        "kind": "plain",
+        "text": "src/components/sections/hero-section.tsx:24"
+      },
+      {
+        "kind": "dim",
+        "text": "  ·  <CtaButton>"
+      }
+    ],
+    [],
+    [
+      {
+        "kind": "heading",
+        "text": "## Pending tweaks"
+      }
+    ],
+    [
+      {
+        "kind": "prop",
+        "text": "  border-radius  "
+      },
+      {
+        "kind": "old",
+        "text": "6px"
+      },
+      {
+        "kind": "dim",
+        "text": "  →  "
+      },
+      {
+        "kind": "new",
+        "text": "9999px"
+      },
+      {
+        "kind": "hint",
+        "text": "     scrubbed in the inspector"
+      }
+    ],
+    [],
+    [
+      {
+        "kind": "heading",
+        "text": "## Frames"
+      }
+    ],
+    [
+      {
+        "kind": "plain",
+        "text": "  Desktop  1440 × 900   /"
+      }
+    ],
+    [
+      {
+        "kind": "plain",
+        "text": "  Mobile    393 × 852   /"
+      },
+      {
+        "kind": "hint",
+        "text": "        ← selection made here"
+      }
+    ],
+    [],
+    [
+      {
+        "kind": "heading",
+        "text": "## Tools"
+      }
+    ],
+    [
+      {
+        "kind": "plain",
+        "text": "  get_element_context()"
+      },
+      {
+        "kind": "dim",
+        "text": "   re-read the selection at any point"
+      }
+    ],
+    [
+      {
+        "kind": "plain",
+        "text": "  Read · Grep · Edit"
+      },
+      {
+        "kind": "dim",
+        "text": "       rooted at --cwd"
+      }
+    ],
+    [],
+    [
+      {
+        "kind": "dim",
+        "text": "> "
+      },
+      {
+        "kind": "plain",
+        "text": "Make this warmer."
+      }
+    ]
+  ]
+}

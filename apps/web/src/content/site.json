@@ -1,0 +1,15 @@
+{
+  "name": "Airship",
+  "tagline": "Visual editor for your codebase.",
+  "description": "Airship puts an infinite design canvas in front of your dev server. Point at any element, describe the change in plain English, and Claude Code, Codex or OpenCode edits the source file — with streaming status, inline diffs, and undo.",
+  "origin": "https://airship.design",
+  "installCommand": "npx @airshiplabs/cli --target 3000",
+  "nodeVersion": "22.13",
+  "links": {
+    "github": "https://github.com/0xnyn/airship",
+    "issues": "https://github.com/0xnyn/airship/issues",
+    "license": "https://github.com/0xnyn/airship/blob/main/LICENSE",
+    "npm": "https://www.npmjs.com/package/@airshiplabs/cli",
+    "releases": "https://github.com/0xnyn/airship/releases"
+  }
+}

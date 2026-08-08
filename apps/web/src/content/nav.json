@@ -1,0 +1,8 @@
+{
+  "sections": [
+    { "id": "how-it-works", "label": "How it works" },
+    { "id": "get-started", "label": "Get started" },
+    { "id": "faq", "label": "FAQ" }
+  ],
+  "external": [{ "link": "github", "label": "GitHub" }]
+}

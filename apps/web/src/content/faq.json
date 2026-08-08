@@ -1,0 +1,56 @@
+{
+  "heading": "Questions",
+  "desc": "Including the ones with unflattering answers.",
+  "entries": [
+    {
+      "id": "plugin",
+      "question": "Do I need a plugin, or to change my build?",
+      "answer": "No. Airship runs as a reverse proxy in front of your existing dev server. Nothing is added to your dependencies, config, or bundle."
+    },
+    {
+      "id": "styling",
+      "question": "Does it work with Tailwind, CSS Modules or styled-components?",
+      "answer": "Yes. Airship works with the styling system already in your project. It works with the tokens and styling conventions already in your codebase, so visual changes can map back to the values your design system already uses."
+    },
+    {
+      "id": "resolution",
+      "question": "How does it know which file an element came from?",
+      "answer": "Your development build already carries information about where rendered elements came from. Airship uses those to resolve your selection to a source file, then passes them to the agent."
+    },
+    {
+      "id": "payload",
+      "question": "What exactly gets sent to the agent?",
+      "answer": "Airship makes your visual context visible to the agent. It passes along what you selected, where it lives in the code, which values you changed, and the frames you were working in."
+    },
+    {
+      "id": "agents",
+      "question": "Can I use my existing coding agent?",
+      "answer": "Yes. Airship works with Claude Code, Codex, and OpenCode, so you don't need to change your agent just to use the visual editor."
+    },
+    {
+      "id": "safety",
+      "question": "Is it safe to point at a real repository?",
+      "answer": "Airship runs locally and works directly with the repository you point it at. By default, your coding agent has the same filesystem and network access it normally has. Safe mode can restrict edits to your project and block potentially destructive commands."
+    },
+    {
+      "id": "undo",
+      "question": "How do I undo something?",
+      "answer": "Every edit can be undone directly in Airship. Airship keeps the previous version of the file, so you can revert a change instantly without needing Git."
+    },
+    {
+      "id": "frames",
+      "question": "Can I see how a change affects different devices?",
+      "answer": "Yes. Airship gives you real viewports running the same app side by side. Make a change once and see how it affects desktop, tablet, and mobile without resizing the frame."
+    },
+    {
+      "id": "git",
+      "question": "Can I use Airship without Git?",
+      "answer": "Yes. Git isn't required by Airship. Some agents may still use Git internally for their own diff and change tracking."
+    },
+    {
+      "id": "privacy",
+      "question": "Does my code leave my machine?",
+      "answer": "Airship runs entirely on localhost. It has no account, telemetry, or hosted service, and your code isn't sent to Airship. Your chosen coding agent handles requests using the same credentials and provider it would use from your terminal."
+    }
+  ]
+}

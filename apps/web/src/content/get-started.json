@@ -1,0 +1,28 @@
+{
+  "heading": "Get started",
+  "desc": "Airship runs alongside your project without adding anything to the codebase.",
+  "compat": "Airship uses the authentication you already have configured for Claude Code, Codex, or OpenCode",
+  "steps": [
+    {
+      "id": "run-your-app",
+      "title": "Start your app the way you always do.",
+      "code": "pnpm dev    # http://localhost:3000",
+      "copyable": false,
+      "note": "Works with Vite, Next, Remix, Rails, or anything that serves HTML over HTTP. No plugins required."
+    },
+    {
+      "id": "point-airship-at-it",
+      "title": "Point Airship at your dev server.",
+      "code": "{{installCommand}}",
+      "copyable": true,
+      "note": "Airship connects to the port you're already running and opens the visual editor."
+    },
+    {
+      "id": "pick-your-agent",
+      "title": "Bring your coding agent.",
+      "code": "{{installCommand}} --agent codex --safe",
+      "copyable": true,
+      "note": "Pick the agent you already use and start making changes without running a separate agent interface."
+    }
+  ]
+}
