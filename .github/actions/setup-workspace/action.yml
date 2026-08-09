@@ -1,0 +1,24 @@
+name: Setup workspace
+description: >-
+  Install pnpm and Node, then the workspace deps with a frozen lockfile. The
+  repo must already be checked out — a local action's files are not on disk
+  until actions/checkout has run, so callers check out first, then use this.
+
+inputs:
+  node-version-file:
+    description: File to read the Node version from
+    required: false
+    default: .nvmrc
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: ${{ inputs.node-version-file }}
+        cache: pnpm
+
+    - shell: bash
+      run: pnpm install --frozen-lockfile

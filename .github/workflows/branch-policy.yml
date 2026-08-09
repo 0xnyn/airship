@@ -1,0 +1,33 @@
+name: Branch policy
+
+run-name: "Branch policy · ${{ github.head_ref }}"
+
+# `main` takes merges only from the four branch shapes below. Releases are cut
+# from release/*, so this is what keeps the release lane legible — and what
+# makes `dependabot/*` an explicit exception rather than an accident.
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: branch-policy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only release/*, hotfix/*, security/* or dependabot/* may target main
+        # head_ref is untrusted — a branch name can contain shell metacharacters —
+        # so read it from the environment rather than interpolating ${{ }} into
+        # the script.
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          case "$HEAD_REF" in
+            release/*|hotfix/*|security/*|dependabot/*)
+              echo "OK: '$HEAD_REF' may merge into main." ;;
+            *)
+              echo "::error::Only release/*, hotfix/*, security/* or dependabot/* branches may merge into main (got '$HEAD_REF'). Branch from main as release/<name>, hotfix/<name>, or security/<name>."
+              exit 1 ;;
+          esac
