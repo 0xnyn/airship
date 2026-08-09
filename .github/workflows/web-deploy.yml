@@ -1,0 +1,48 @@
+name: Deploy site
+
+run-name: "Deploy site · ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}"
+
+# Ships apps/web to Cloudflare Workers. Production on a push to main, and a
+# preview environment for PRs that touch the site.
+#
+# Path-filtered rather than running on everything: the site depends on
+# @airship/site-tokens, so a token change has to redeploy too.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "packages/site-tokens/**"
+      - ".github/workflows/web-deploy.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "packages/site-tokens/**"
+  workflow_dispatch:
+
+concurrency:
+  # Not cancel-in-progress: a half-finished deploy is worse than a redundant one.
+  group: web-deploy-${{ github.event_name == 'pull_request' && github.ref || 'production' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup-workspace
+
+      # Through turbo so @airship/site-tokens#build runs first — Vite has no
+      # dist/tokens.css to import without it.
+      - name: Build
+        run: pnpm turbo run build --filter=@airship/web
+
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: apps/web
+          command: >-
+            deploy --env ${{ github.event_name == 'pull_request' && 'preview' || 'production' }}
