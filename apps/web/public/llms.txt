@@ -1,0 +1,63 @@
+# airship
+
+> A visual editor for the web app you are already running. Airship puts an
+> infinite design canvas in front of your dev server — no plugin, no config.
+> Point at any element, describe the change in plain English, and Claude Code,
+> OpenAI Codex or OpenCode edits the source file, with streaming status, inline
+> diffs and undo.
+
+## What it is
+
+A CLI. `npx @airshiplabs/cli --target 3000` starts a universal reverse proxy in
+front of the dev server you already have and opens the editor on the next port.
+Nothing is added to your dependencies, your config or your bundle.
+
+## How it works
+
+- **Reverse proxy, not a plugin.** Works with Vite, Next, Remix, Rails —
+  anything serving HTML over HTTP. `--target` is the only flag most projects
+  need, and it is detected from your package.json when you leave it off.
+- **Frames are real viewports.** Each frame is a same-origin iframe at a device
+  size, so a 393px frame reports `innerWidth === 393` at any zoom. Media and
+  container queries fire per frame.
+- **Edits go to source.** A picked element resolves back to the file and line
+  that rendered it. Your prompt, the selection and any inspector tweaks reach
+  the agent, which edits the file; you get the diff and an undo.
+- **Inline mode.** `?__airship=inline` injects the overlay straight into the
+  app's own page instead of the canvas shell.
+
+## Agents
+
+Selected with `--agent`, or switched per turn from the composer. They are not
+equivalent:
+
+- **claude** (default) — token-level streaming, hook-based diff capture,
+  `--max-turns` and `--max-budget` enforced, native file checkpointing.
+- **codex** — the only backend that confines writes at the OS level under
+  `--safe`. Whole-message streaming; diffs reconstructed from the git HEAD blob.
+- **opencode** — native session fork and snapshot-backed revert; ignores
+  `--effort`. A separate install, found on PATH.
+
+## Safety
+
+By default there is no sandbox: the agent can write anywhere you can and reach
+the network. `--safe` confines edits to the project and screens destructive
+commands — but only `codex` enforces this at the OS level. On claude and
+opencode the screen matches paths and command patterns rather than parsing
+shell, so a write redirected out of the project is not caught.
+
+## Privacy
+
+Airship runs entirely on localhost and adds no service of its own: no account,
+no telemetry, no server. Whatever your chosen agent sends to its provider is
+what it would send from your terminal, under credentials you already gave it.
+
+## Requirements
+
+Node 22.13 or later, and one of Claude Code, OpenAI Codex or OpenCode.
+
+## Links
+
+- Source: https://github.com/0xnyn/airship
+- Issues: https://github.com/0xnyn/airship/issues
+- Releases: https://github.com/0xnyn/airship/releases

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  One page, one URL. Written by hand rather than generated: a sitemap route
+  would be a server function, a build step and a cache-header decision, all to
+  emit eleven lines that only change when a second page appears.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://airship.design/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>
