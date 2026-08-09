@@ -1,0 +1,112 @@
+name: Publish (CI)
+
+run-name: "Publish · ${{ inputs.version || inputs.bump }}${{ inputs.dry_run && ' (dry-run)' || '' }}"
+
+# All-in-CI release for @airshiplabs/cli: pick a bump (or an explicit version)
+# and this bumps apps/cli/package.json, commits, tags cli-vX.Y.Z, pushes, and
+# publishes — the CI equivalent of `make release` plus pushing the tag, with no
+# local steps.
+#
+# Run it from your release/* branch: the version-bump commit lands there and
+# reaches main through the normal release PR. branch-policy.yml is what makes
+# that the only route in.
+#
+# Note: the cli-v* tag is pushed with GITHUB_TOKEN, which by design does NOT
+# trigger release.yml — so this workflow publishes here, and the two lanes can
+# never double-publish.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump (ignored if a version is given)"
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: "Explicit version, e.g. 1.4.0 (overrides bump)"
+        type: string
+        default: ""
+      dry_run:
+        description: "Dry run — validate packaging only; no commit, tag, push or publish"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write # push the release commit + tag
+  id-token: write # npm provenance attestation
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      # Not the setup-workspace composite: this job needs registry-url, which
+      # is what writes the .npmrc that NODE_AUTH_TOKEN binds to.
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Compute the next version
+        id: ver
+        env:
+          BUMP: ${{ inputs.bump }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [ -n "$VERSION" ]; then
+            NEXT=$(node scripts/next-version.mjs --version "$VERSION")
+          else
+            NEXT=$(node scripts/next-version.mjs --bump "$BUMP")
+          fi
+          echo "next=$NEXT" >> "$GITHUB_OUTPUT"
+          echo "tag=cli-v$NEXT" >> "$GITHUB_OUTPUT"
+          echo "::notice::Releasing @airshiplabs/cli v$NEXT (tag cli-v$NEXT)"
+
+      - name: Guard against an existing tag
+        run: |
+          if git rev-parse -q --verify "refs/tags/${{ steps.ver.outputs.tag }}" >/dev/null; then
+            echo "::error::Tag ${{ steps.ver.outputs.tag }} already exists."
+            exit 1
+          fi
+
+      - name: Bump apps/cli/package.json
+        run: |
+          node -e "const f='apps/cli/package.json';const p=require('./'+f);p.version='${{ steps.ver.outputs.next }}';require('fs').writeFileSync(f, JSON.stringify(p,null,2)+'\n');"
+          pnpm install --lockfile-only
+
+      # Builds the CLI (tsup + the vendor step) and validates the tarball
+      # without publishing it. Catches a missing vendored asset here rather
+      # than in someone's npx.
+      - name: Validate packaging (build + pack dry-run)
+        run: pnpm --filter @airshiplabs/cli publish --dry-run --no-git-checks --access public
+
+      - name: Commit, tag and push
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          # --no-verify skips the husky commit-msg and pre-push hooks. The
+          # pre-push hook blocks pushes to main, and commit-msg would reject
+          # nothing here, but both are pointless in CI.
+          git commit --no-verify -m "chore(release): cli v${{ steps.ver.outputs.next }}"
+          git tag -a "${{ steps.ver.outputs.tag }}" -m "${{ steps.ver.outputs.tag }}"
+          git push --no-verify origin "HEAD:${{ github.ref_name }}" --follow-tags
+
+      - name: Publish to npm
+        if: ${{ inputs.dry_run == false }}
+        run: pnpm --filter @airshiplabs/cli publish --access public --no-git-checks --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

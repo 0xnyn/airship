@@ -1,0 +1,52 @@
+name: Release
+
+run-name: "Release · ${{ github.ref_name }}"
+
+# Publishes @airshiplabs/cli to npm when a cli-v* tag is pushed. Cut the release
+# with `make release` (bumps apps/cli/package.json, commits, tags) then push the
+# tag — see scripts/release.sh.
+#
+# This lane is for locally-cut releases only. publish.yml pushes its tag with
+# GITHUB_TOKEN, and GitHub does not fire workflows from GITHUB_TOKEN-authored
+# pushes, so a CI-cut release never lands here and the two never both publish.
+on:
+  push:
+    tags: ["cli-v*"]
+
+permissions:
+  contents: read
+  id-token: write # npm provenance attestation
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: "https://registry.npmjs.org"
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Verify the tag matches apps/cli's version
+        run: |
+          TAG="${GITHUB_REF_NAME#cli-v}"
+          PKG=$(node -p "require('./apps/cli/package.json').version")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::Tag cli-v$TAG does not match @airshiplabs/cli version $PKG (cut releases with 'make release')"
+            exit 1
+          fi
+
+      # `pnpm publish` runs the package's build first, which is tsup plus
+      # scripts/vendor-assets.mjs — the step that puts the overlay bundles and
+      # the editor fonts inside the tarball. Without it the published CLI 404s
+      # on its own overlay.
+      - name: Publish to npm
+        run: pnpm --filter @airshiplabs/cli publish --access public --no-git-checks --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
