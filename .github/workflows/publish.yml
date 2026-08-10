@@ -86,11 +86,16 @@ jobs:
           node -e "const f='apps/cli/package.json';const p=require('./'+f);p.version='${{ steps.ver.outputs.next }}';require('fs').writeFileSync(f, JSON.stringify(p,null,2)+'\n');"
           pnpm install --lockfile-only
 
-      # Builds the CLI (tsup + the vendor step) and validates the tarball
-      # without publishing it. Catches a missing vendored asset here rather
-      # than in someone's npx.
-      - name: Validate packaging (build + pack dry-run)
-        run: pnpm --filter @airshiplabs/cli publish --dry-run --no-git-checks --access public
+      # This step used to be `publish --dry-run`, which validated nothing:
+      # `pnpm publish` does not build the package (apps/cli has no prepack or
+      # prepare hook), so the dry run packed an empty tarball and exited 0.
+      # That is how v0.2.0 shipped with no dist/. Build explicitly, then pack
+      # for real and look inside.
+      - name: Build the CLI
+        run: pnpm turbo run build --filter=@airshiplabs/cli
+
+      - name: Validate packaging
+        run: bash scripts/verify-tarball.sh
 
       - name: Commit, tag and push
         if: ${{ inputs.dry_run == false }}

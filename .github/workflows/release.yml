@@ -42,10 +42,20 @@ jobs:
             exit 1
           fi
 
-      # `pnpm publish` runs the package's build first, which is tsup plus
-      # scripts/vendor-assets.mjs — the step that puts the overlay bundles and
-      # the editor fonts inside the tarball. Without it the published CLI 404s
-      # on its own overlay.
+      # `pnpm publish` does NOT build the package. apps/cli has no prepack,
+      # prepare or prepublishOnly hook, and the npm lifecycle never invokes a
+      # plain `build` script — so nothing here builds unless this step does.
+      # Skip it and `files: ["dist"]` matches an empty directory, npm reports a
+      # clean publish, and the tarball ships a package.json and a LICENSE.
+      # v0.2.0 went out exactly that way.
+      - name: Build the CLI
+        run: pnpm turbo run build --filter=@airshiplabs/cli
+
+      # Packs for real and looks inside. `publish --dry-run` cannot stand in
+      # here — it packs the same empty tarball and exits 0.
+      - name: Verify the tarball is complete
+        run: bash scripts/verify-tarball.sh
+
       - name: Publish to npm
         run: pnpm --filter @airshiplabs/cli publish --access public --no-git-checks --provenance
         env:
