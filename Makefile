@@ -183,7 +183,7 @@ preflight\:fix: ## preflight, but autofix first (ultracite fix + regenerate rout
 ##@ Site (apps/web)
 
 .PHONY: web\:dev web\:build web\:preview web\:tokens web\:og web\:routes
-.PHONY: web\:deploy web\:deploy\:preview
+.PHONY: web\:deploy
 
 web\:dev: ## Start apps/web's dev server (see TARGET below)
 	# Through turbo, not `pnpm --filter … dev`: @airship/web#dev depends on
@@ -214,16 +214,17 @@ web\:routes: ## Scaffold apps/web's route tree after adding a route (build is au
 	# a new route mid-edit, but build before you commit.
 	@pnpm --filter @airship/web routes
 
-web\:deploy: ## Deploy apps/web to Cloudflare Workers (production)
+web\:deploy: ## Deploy apps/web to Cloudflare Workers (break-glass; CI normally does this)
+	# Cloudflare Workers Builds deploys the site on every push to main, so this
+	# target is the manual override — a hotfix when the build lane is down or a
+	# first deploy before the repo is connected. It authenticates as *you*
+	# (`wrangler login`), not as CI, and there is only one worker to hit: no
+	# --env, because wrangler.jsonc no longer declares any.
 	$(confirm_shared)
 	@printf "$(BLUE)Deploying apps/web to Cloudflare...$(RESET)\n"
 	@$(MAKE) "web:build"
-	@pnpm --filter @airship/web exec wrangler deploy --env production
+	@pnpm --filter @airship/web exec wrangler deploy
 	@printf "$(GREEN)Deployed!$(RESET)\n"
-
-web\:deploy\:preview: ## Deploy apps/web to the Cloudflare preview environment
-	@$(MAKE) "web:build"
-	@pnpm --filter @airship/web exec wrangler deploy --env preview
 
 ##@ Overlay (storybook)
 

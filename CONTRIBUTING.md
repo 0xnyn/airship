@@ -288,7 +288,17 @@ Every PR into `main` runs:
   release lane legible, and what makes `dependabot/*` an explicit exception rather than an
   accident.
 
-`web-deploy.yml` deploys `apps/web` to Cloudflare Workers.
+**The site's deploy is not in this repo.** `apps/web` ships through Cloudflare Workers Builds,
+configured in the Cloudflare dashboard and wired to GitHub by the *Cloudflare Workers & Pages*
+GitHub App — so there is no `web-deploy.yml` to find, and no `CLOUDFLARE_*` secret on the repo.
+A push to `main` touching `apps/web/`, `packages/site-tokens/` or `packages/editor-tokens/`
+runs `pnpm -w run build:web` and then `wrangler deploy`, updating the `airship-web` worker. Any
+other branch runs `wrangler versions upload` instead, which publishes a *version* rather than
+promoting it: the app posts that version's preview URL onto the PR, and production is untouched
+until the merge. Build logs live in the dashboard, not in the Actions tab.
+
+This is why `apps/web/wrangler.jsonc` declares no `env` block — one worker, and the branch
+decides the command. `make web:deploy` remains as a manual override that authenticates as you.
 
 ## Releases
 

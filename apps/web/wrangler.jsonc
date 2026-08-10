@@ -17,18 +17,11 @@
   },
   "observability": {
     "enabled": true
-  },
-  // Both lanes name their target explicitly. Production could ride the
-  // top-level config instead, but once any env exists wrangler warns on an
-  // unqualified deploy — and `--env=""` is an awkward thing to thread through a
-  // GitHub Action's command string. Two named envs keeps both calls symmetric.
-  // main, compatibility_*, and assets are inherited from above.
-  "env": {
-    "production": {
-      "name": "airship-web"
-    },
-    "preview": {
-      "name": "airship-web-preview"
-    }
   }
+  // No `env` block, deliberately. Cloudflare Workers Builds deploys this repo
+  // (see CONTRIBUTING.md § CI), and it runs a bare `wrangler deploy` on main and
+  // `wrangler versions upload` on every other branch — the preview URL comes from
+  // a version of this same worker, not a second one. Adding a named env would
+  // reintroduce the warning on unqualified deploys that the flag-less default
+  // relies on not hitting.
 }
