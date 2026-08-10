@@ -36,17 +36,17 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.196",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.224",
     "@clack/prompts": "^1.7.0",
     "@jridgewell/trace-mapping": "^0.3.31",
-    "@openai/codex-sdk": "^0.146.0",
-    "@opencode-ai/sdk": "^1.18.13",
-    "bippy": "^0.5.32",
+    "@openai/codex-sdk": "^0.147.0",
+    "@opencode-ai/sdk": "^1.18.15",
+    "bippy": "^0.6.1",
     "citty": "^0.2.2",
     "diff": "^9.0.0",
     "element-source": "^0.0.5",
     "picocolors": "^1.1.1",
-    "ws": "^8.21.0",
+    "ws": "^8.21.3",
     "zod": "^4.0.0"
   },
   "devDependencies": {

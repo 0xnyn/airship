@@ -27,7 +27,7 @@
   "dependencies": {
     "@airship/protocol": "workspace:*",
     "@jridgewell/trace-mapping": "^0.3.31",
-    "bippy": "^0.5.32",
+    "bippy": "^0.6.1",
     "element-source": "^0.0.5"
   },
   "devDependencies": {

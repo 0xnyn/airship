@@ -12,6 +12,12 @@
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
+    // tsup's .d.ts build injects `baseUrl: "."` unconditionally (see
+    // tsup/dist/rollup.js — `baseUrl: compilerOptions.baseUrl || "."`), and
+    // TypeScript 6 made the deprecated option a hard error. Nothing here sets
+    // baseUrl, so this only silences tsup's own injection. Drop it once tsup
+    // ships a build that stops setting it — it stops working in TypeScript 7.
+    "ignoreDeprecations": "6.0",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
