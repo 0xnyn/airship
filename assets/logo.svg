@@ -1,0 +1,44 @@
+<!--
+  Airship's brand mark. The canonical copy, and the geometry of record.
+
+  The overlay does NOT load this file — it carries the same path inline in
+  `packages/overlay/src/icons.ts` (as `logo`), because it inlines every glyph
+  rather than fetching any. The two must be changed together, and that file is
+  where the construction is explained.
+
+  Paint: `fill="currentColor"` with a `<style>` that supplies the colour, so the
+  same file works in a README, a docs page or a dark terminal preview. The
+  presentation attribute alone would resolve to black when this is loaded
+  standalone or via <img>, which is invisible on exactly the dark backgrounds
+  this mark spends most of its life on.
+
+  If you ever inline this file's markup into an HTML document, drop the <style>
+  block: its `svg { color }` rule would reach every other svg on the page, and
+  inline is the one context where inheriting the surrounding text colour is
+  what you want anyway.
+-->
+<svg
+  aria-label="Airship"
+  fill="none"
+  height="24"
+  role="img"
+  viewBox="0 0 24 24"
+  width="24"
+  xmlns="http://www.w3.org/2000/svg"
+>
+  <style>
+  svg {
+    color: #1b1f24;
+  }
+  @media (prefers-color-scheme: dark) {
+    svg {
+      color: #ffffff;
+    }
+  }
+  </style>
+  <path
+    d="M12 5.1L20 18.9H15.47L9.73 9.01ZM7.47 12.92H12L8.53 18.9H4Z"
+    fill="currentColor"
+    fill-opacity="0.9"
+  />
+</svg>
