@@ -57,7 +57,7 @@
     "@airship/protocol": "workspace:*",
     "@airship/server": "workspace:*",
     "@airship/source": "workspace:*",
-    "@types/node": "^22.10.0"
+    "@types/node": "^26.2.0"
   },
   "engines": {
     "node": ">=22.13.0"
