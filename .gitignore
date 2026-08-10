@@ -16,6 +16,10 @@ dist/
 .nitro/
 .tanstack/
 
+# Wrangler's local state and scratch dirs, written by `make web:preview`
+# (wrangler dev). Machine-local simulation of the Cloudflare runtime.
+.wrangler/
+
 # Turbo
 .turbo/
 

@@ -300,6 +300,18 @@ until the merge. Build logs live in the dashboard, not in the Actions tab.
 This is why `apps/web/wrangler.jsonc` declares no `env` block — one worker, and the branch
 decides the command. `make web:deploy` remains as a manual override that authenticates as you.
 
+**What gets deployed is prerendered, not server-rendered.** `vite.config.ts` passes
+`prerender: { enabled: true }` to `tanstackStart()`, so the build runs the server bundle once and
+writes `dist/client/index.html` — which is the worker's assets directory, so Cloudflare serves
+the page as a static file and the worker is never invoked for a normal view. It is still built
+and still deployed: it answers whatever the assets do not match, which is what renders the 404.
+
+That has a consequence worth knowing before you reach for one. **A server function or route
+loader added to this app will run at build time, not per request** — its result gets baked into
+the HTML. That is correct for this site, which has one route and imports all of its copy from
+`src/content/*.json`, but the day the page genuinely needs request-dependent output, turning
+prerendering off is the change to make, not working around it.
+
 ## Releases
 
 `@airshiplabs/cli` is the only package published to npm. Everything else in the workspace is
