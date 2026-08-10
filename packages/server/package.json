@@ -25,7 +25,7 @@
     "@airship/overlay": "workspace:*",
     "@airship/protocol": "workspace:*",
     "@airship/source": "workspace:*",
-    "ws": "^8.21.0"
+    "ws": "^8.21.3"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

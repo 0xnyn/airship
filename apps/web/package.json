@@ -16,21 +16,21 @@
   },
   "dependencies": {
     "@airship/site-tokens": "workspace:*",
-    "@tanstack/react-router": "^1.170.0",
-    "@tanstack/react-start": "^1.168.0",
+    "@tanstack/react-router": "^1.170.23",
+    "@tanstack/react-start": "^1.168.40",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.0",
-    "@tanstack/router-cli": "^1.167.0",
+    "@tanstack/router-cli": "^1.167.25",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@vitejs/plugin-react": "^5.2.0",
+    "@vitejs/plugin-react": "^6.0.5",
     "playwright": "^1.62.1",
     "tailwindcss": "^4.3.0",
-    "typescript": "^5.7.0",
-    "vite": "^7.3.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.2.1",
     "wrangler": "^4.42.0"
   }
 }
