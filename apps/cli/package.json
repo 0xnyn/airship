@@ -1,6 +1,6 @@
 {
   "name": "@airshiplabs/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Airship — a visual editor for your running web app, driven by Claude Code, Codex or OpenCode",
   "keywords": [
     "ai",
