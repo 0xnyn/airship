@@ -125,3 +125,59 @@ describe("DiffCapture on the Codex path", () => {
     expect(diff.before).toBe("one\ntwo\nthree\n");
   });
 });
+
+/**
+ * The Windows shape, reproducible anywhere: `core.autocrlf=true` leaves a CRLF
+ * working tree, every agent's edit tool writes LF, and the HEAD blob the Codex
+ * path reads back is LF too. Comparing those byte-for-byte makes every line
+ * differ by its terminator, so a one-line edit reports as a whole-file rewrite.
+ */
+describe("DiffCapture with CRLF line endings", () => {
+  it("diffs only the line that changed, not every line", () => {
+    write("crlf.txt", "one\r\ntwo\r\nthree\r\n");
+    const dc = new DiffCapture(repo);
+    dc.recordBefore("crlf.txt");
+    // The agent rewrites the file with LF, changing exactly one line.
+    write("crlf.txt", "one\nTWO\nthree\n");
+
+    const [diff] = dc.finalize();
+    expect(diff.additions).toBe(1);
+    expect(diff.deletions).toBe(1);
+  });
+
+  it("keeps the bytes on disk in before/after so undo round-trips exactly", () => {
+    // The patch is normalized for display; `restoreFiles` writes `before` back
+    // verbatim, so it has to carry the CRLF the file actually had.
+    write("crlf.txt", "one\r\ntwo\r\n");
+    const dc = new DiffCapture(repo);
+    dc.recordBefore("crlf.txt");
+    write("crlf.txt", "one\nCHANGED\n");
+
+    const [diff] = dc.finalize();
+    expect(diff.before).toBe("one\r\ntwo\r\n");
+    expect(diff.after).toBe("one\nCHANGED\n");
+  });
+
+  it("does not report a first-line change when only the BOM was dropped", () => {
+    // Visual Studio writes a BOM; agent edit tools generally do not put it
+    // back, and readFileSync surfaces it as a real character.
+    write("bom.txt", "﻿one\ntwo\n");
+    const dc = new DiffCapture(repo);
+    dc.recordBefore("bom.txt");
+    write("bom.txt", "one\nCHANGED\n");
+
+    const [diff] = dc.finalize();
+    expect(diff.additions).toBe(1);
+    expect(diff.deletions).toBe(1);
+  });
+
+  it("reports no change when only the line endings were rewritten", () => {
+    write("crlf.txt", "one\r\ntwo\r\n");
+    const dc = new DiffCapture(repo);
+    dc.recordBefore("crlf.txt");
+    write("crlf.txt", "one\ntwo\n");
+
+    expect(dc.finalize()).toEqual([]);
+    expect(dc.pairFor("crlf.txt")).toBeNull();
+  });
+});

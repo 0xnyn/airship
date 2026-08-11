@@ -30,8 +30,9 @@ import {
   type AgentRunOutcome,
   failureText,
 } from "../agent";
+import { isPathInside } from "../paths";
 import { systemPrompt } from "../prompt";
-import { EDIT_TOOLS, isPathInside, makeSandboxHook } from "../sandbox";
+import { EDIT_TOOLS, makeSandboxHook } from "../sandbox";
 import type { TimelineRecorder } from "../timeline";
 import { describeTool } from "../tool-summary";
 import { buildAirshipMcpServer } from "../tools";

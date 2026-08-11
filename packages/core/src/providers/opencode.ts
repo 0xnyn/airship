@@ -50,8 +50,9 @@ import {
   type AgentRunOutcome,
   failureText,
 } from "../agent";
+import { isPathInside } from "../paths";
 import { systemPrompt } from "../prompt";
-import { isPathInside, screenBash, screenEdit } from "../sandbox";
+import { screenBash, screenEdit } from "../sandbox";
 import { modelRefFor, sessionIdOf } from "./opencode-events";
 import {
   finishBlocks,
@@ -579,11 +580,27 @@ const PROVIDER_ENV = [
   "AWS_ACCESS_KEY_ID",
 ];
 
+/**
+ * Where opencode keeps its state, per platform.
+ *
+ * Windows gets `%LOCALAPPDATA%` / `%APPDATA%` ahead of the XDG fallbacks: the
+ * XDG variables are almost never set there, so the fallback resolved to a
+ * `~/.local/share` that opencode has no reason to use. Both callers are the
+ * credential heuristic below, so getting this wrong only costs a spurious "no
+ * provider credentials" warning at launch — the run still proceeds — but that
+ * warning is indistinguishable from the real thing.
+ */
 function dataHome(): string {
+  if (process.platform === "win32" && process.env.LOCALAPPDATA) {
+    return process.env.LOCALAPPDATA;
+  }
   return process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
 }
 
 function configHome(): string {
+  if (process.platform === "win32" && process.env.APPDATA) {
+    return process.env.APPDATA;
+  }
   return process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
 }
 

@@ -50,6 +50,22 @@ export function clear(node: HTMLElement): void {
  * (first two classes). Shared by the selection/hover badges and the tree/DOM
  * views so they read identically.
  */
+/**
+ * Last segment of a source path — a chip has no room for
+ * `src/components/ui/Button.tsx`.
+ *
+ * Handles both separators. Diff paths arrive forward-slashed, but source
+ * locations come from the framework's own metadata, which on Windows is
+ * backslashed — and a `split("/")` on one of those returns the whole path, so
+ * the chip renders the full `src\components\ui\Button.tsx` it was meant to
+ * shorten.
+ */
+export function basename(path: string): string {
+  return path.slice(
+    Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1
+  );
+}
+
 export function elementLabel(node: Element): string {
   const tag = node.tagName.toLowerCase();
   const classes = Array.from(node.classList)

@@ -12,9 +12,9 @@
  * functions. Keeping the policy separate from the hook is what lets one set of
  * rules — and one set of tests — cover both.
  */
-import { realpathSync } from "node:fs";
-import { basename, dirname, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import type { HookCallback } from "@anthropic-ai/claude-agent-sdk";
+import { isPathInside } from "./paths";
 
 export const EDIT_TOOLS = new Set([
   "Write",
@@ -32,6 +32,26 @@ const DESTRUCTIVE = [
   />\s*\/dev\/(sd|disk)/,
   /\bsudo\b/,
   /:\(\)\s*\{/,
+  // The Windows half. Every pattern above except the two `git` ones is
+  // POSIX-shell shaped, and on Windows the backends run commands through
+  // cmd.exe or PowerShell — so without these the command screen was a no-op
+  // there while the launch banner still told the user it was on.
+  //
+  // Each names the flags the real command takes rather than matching the verb
+  // loosely. These run against every command on every platform, and `del` and
+  // `runas` are short enough to appear inside ordinary POSIX ones — a bare
+  // /\bdel\s+\// fires on `sed -i 's/del /x/'`. A false deny is not free: the
+  // model cannot see why it was refused, so it burns turns working around a
+  // guard that should not have fired.
+  /\bdel\s+\/[fsqap]\b/i,
+  /\brd\s+\/s\b/i,
+  /\brmdir\s+\/s\b/i,
+  /\bRemove-Item\b[^\n]*\s-(?:Recurse|Force)\b/i,
+  /\bformat\s+[a-z]:/i,
+  /\bdiskpart\b/i,
+  /\bClear-Disk\b/i,
+  /\brunas\s+\/user:/i,
+  /\bStart-Process\b[^\n]*\s-Verb\s+RunAs\b/i,
 ];
 
 function deny(reason: string) {
@@ -42,41 +62,6 @@ function deny(reason: string) {
       permissionDecisionReason: reason,
     },
   };
-}
-
-/**
- * Resolve symlinks so two spellings of the same path compare equal.
- *
- * Falls back to the containing directory for a file that does not exist yet,
- * which is the create case, and to the raw path when even that is missing.
- */
-function canonical(path: string): string {
-  try {
-    return realpathSync(path);
-  } catch {
-    try {
-      return resolve(realpathSync(dirname(path)), basename(path));
-    } catch {
-      return path;
-    }
-  }
-}
-
-/**
- * True if `target` resolves to a path at or under `root`.
- *
- * Both sides are canonicalized first. Comparing raw strings denies perfectly
- * legitimate in-project edits whenever the project sits under a symlink — on
- * macOS `/tmp` and `/var` both are, so `cwd` arrives as `/var/folders/…` while
- * the agent reports the file as `/private/var/folders/…`. The failure is
- * expensive rather than loud: the edit is refused, the model burns turns
- * probing with `pwd -P` and `realpath` to work out why, and eventually routes
- * around a guard that should never have fired.
- */
-export function isPathInside(root: string, target: string): boolean {
-  const absRoot = canonical(resolve(root));
-  const abs = canonical(resolve(resolve(root), target));
-  return abs === absRoot || abs.startsWith(absRoot + sep);
 }
 
 /** The verdict shape both screens return. `reason` is user-facing. */

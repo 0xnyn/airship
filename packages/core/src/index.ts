@@ -6,6 +6,13 @@ export type {
 } from "./agent";
 export { getAdapter } from "./agent";
 export { DiffCapture } from "./diff-capture";
+/** Path identity, shared so containment, diff keys and history keys agree. */
+export {
+  canonicalPath,
+  isPathInside,
+  pathKey,
+  toPosixPath,
+} from "./paths";
 export type { EditPromptInput } from "./prompt";
 export { buildEditPrompt, PIKA_SYSTEM_PROMPT, systemPrompt } from "./prompt";
 export type { CodexConfigValue, CodexSettings } from "./providers/codex";

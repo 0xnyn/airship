@@ -44,7 +44,7 @@ import {
   FEEDBACK,
   manager,
 } from "./dnd/manager";
-import { clear, cls, el, PREFIX } from "./dom";
+import { basename, clear, cls, el, PREFIX } from "./dom";
 import { emptyState } from "./empty";
 import { History } from "./history";
 import { createOpApplier } from "./history-ops";
@@ -3240,11 +3240,6 @@ function readPx(node: HTMLElement, name: string, fallback: number): number {
 /** A chip's label for an element: its component name, else its tag. */
 function chipLabel(e: ElementContext): string {
   return e.displayName || `<${e.tagName}>`;
-}
-
-/** Last path segment — a chip has no room for `src/components/ui/Button.tsx`. */
-function basename(path: string): string {
-  return path.split("/").pop() || path;
 }
 
 function changeSummary(
