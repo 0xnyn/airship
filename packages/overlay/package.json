@@ -11,7 +11,7 @@
     "build": "node scripts/check-css.mjs && tsup",
     "build-storybook": "storybook build",
     "check:css": "node scripts/check-css.mjs",
-    "clean": "rm -rf dist .turbo storybook-static",
+    "clean": "node ../../scripts/clean.mjs dist .turbo storybook-static",
     "dev": "tsup --watch",
     "storybook": "storybook dev -p 6006 --no-open",
     "test": "vitest run",

@@ -8,11 +8,14 @@
  * a column and are awkward to detect. So: try the binary, fall back to the
  * scheme.
  */
-import { spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { platform } from "node:os";
-import { resolve, sep } from "node:path";
+import { resolve } from "node:path";
+import { isPathInside, toPosixPath } from "@airship/core";
 import type { Editor } from "@airship/protocol";
+
+const WIN32 = platform() === "win32";
 
 export interface OpenRequest {
   column?: number;
@@ -48,8 +51,10 @@ const LAUNCHERS: Record<Editor, Launcher> = {
 const PREFERENCE: Editor[] = ["vscode", "cursor", "windsurf", "zed"];
 
 /** Vite serves out-of-root files under `/@fs/<abs path>`. */
-const VITE_FS_PREFIX = /^\/@fs(\/.*)$/;
+const VITE_FS_PREFIX = /^\/@fs\/(.*)$/;
 const LEADING_SLASHES = /^\/+/;
+/** `C:` — a Windows path that is already rooted at a drive. */
+const WIN32_DRIVE = /^[a-zA-Z]:/;
 
 export function openInEditor(cwd: string, req: OpenRequest): OpenResult {
   const root = resolve(cwd);
@@ -57,7 +62,12 @@ export function openInEditor(cwd: string, req: OpenRequest): OpenResult {
   // This socket is unauthenticated and local, and this handler spawns
   // processes — without the containment check any page the browser loads could
   // ask the daemon to open arbitrary files on disk.
-  if (abs !== root && !abs.startsWith(root + sep)) {
+  //
+  // isPathInside rather than a bare startsWith: the two sides reach here by
+  // different routes and can disagree on symlinks (macOS `/tmp`, `/var`) or on
+  // case (Windows, including the drive letter), and a false "outside the
+  // project" on the user's own file is indistinguishable from a real refusal.
+  if (!isPathInside(root, abs)) {
     return { error: "path is outside the project", ok: false };
   }
   if (!existsSync(abs)) {
@@ -73,22 +83,13 @@ export function openInEditor(cwd: string, req: OpenRequest): OpenResult {
     if (!onPath(launcher.bin)) {
       continue;
     }
-    try {
-      // Detached and unref'd: the editor outlives the daemon, and inheriting
-      // stdio would wire its output into ours. Never `shell: true` — argv
-      // arrays mean a path with a space or a quote is just a path.
-      spawn(launcher.bin, launcher.args(target), {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
+    if (launch(launcher.bin, launcher.args(target))) {
       return { editor, ok: true };
-    } catch {
-      // Fall through to the next candidate, then to the URL scheme.
     }
   }
 
   const wanted = req.editor ?? PREFERENCE[0];
-  if (openUrl(`${LAUNCHERS[wanted].scheme}://file/${abs}:${line}:${column}`)) {
+  if (openUrl(editorUrl(LAUNCHERS[wanted].scheme, abs, line, column))) {
     return { editor: wanted, ok: true };
   }
   return {
@@ -111,14 +112,81 @@ export function openInEditor(cwd: string, req: OpenRequest): OpenResult {
 function projectPath(file: string): string {
   const fs = file.match(VITE_FS_PREFIX);
   if (fs?.[1]) {
-    return fs[1];
+    // The remainder is already absolute. On POSIX it needs the slash the
+    // capture dropped; on Windows it opens with a drive letter and must NOT
+    // get one, because `resolve` reads a leading slash as rooted-but-
+    // deviceless and inherits the device from cwd — turning
+    // `/@fs/C:/Users/me/x.tsx` into `C:\C:\Users\me\x.tsx`.
+    return WIN32_DRIVE.test(fs[1]) ? fs[1] : `/${fs[1]}`;
   }
   // A real absolute path exists on disk; a URL path like `/src/App.tsx` does
-  // not, and is meant to be read relative to the project root.
-  if (file.startsWith("/") && !existsSync(file)) {
+  // not, and is meant to be read relative to the project root. On Windows the
+  // probe is skipped: a leading slash with no drive letter is never an absolute
+  // path there, so `existsSync` would only ever be answering about a different
+  // file — `<cwd's drive>:\src\App.tsx`, which routinely exists.
+  if (file.startsWith("/") && (WIN32 || !existsSync(file))) {
     return file.replace(LEADING_SLASHES, "");
   }
   return file;
+}
+
+/**
+ * Start a detached child, or report that it could not start.
+ *
+ * `shell` on Windows because every one of these editors ships as a `.cmd` shim
+ * (`code.cmd`, `cursor.cmd`, …) and libuv's PATH search only ever tries `.com`
+ * and `.exe`. `where code` finds the shim, so `onPath` says yes, and the bare
+ * spawn then fails with ENOENT — which is how this managed to be 100% broken on
+ * Windows while looking fine. Node applies cmd-specific argument escaping when
+ * `shell` is set, so a path with a space in it survives.
+ *
+ * The `error` listener is not optional. spawn reports a failure to start
+ * asynchronously, so the `try` here never sees it; an EventEmitter that emits
+ * `error` with nobody listening throws, and this runs in the daemon, so one
+ * click on a file it cannot open took the whole server down.
+ *
+ * `pid` is undefined when the spawn failed outright, which is the only
+ * synchronous signal available — and it is what lets the caller fall through to
+ * the URL scheme instead of reporting a success that never happened.
+ */
+function launch(bin: string, args: string[]): boolean {
+  try {
+    const child = spawn(bin, args, {
+      detached: true,
+      shell: WIN32,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    detach(child);
+    return child.pid !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/** Let the child outlive us, and never let its `error` reach the top level. */
+function detach(child: ChildProcess): void {
+  child.on("error", () => {
+    // No editor, no PATH entry, no display. The caller reports it; the daemon
+    // must not die of it.
+  });
+  child.unref();
+}
+
+/**
+ * `vscode://file/...` for the fallback path.
+ *
+ * Backslashes are not legal in a URI path, so a Windows path has to be
+ * rewritten or the scheme handler simply ignores it. POSIX paths already open
+ * with `/`, which is why there is only one after `file` in the template.
+ */
+function editorUrl(
+  scheme: string,
+  abs: string,
+  line: number,
+  column: number
+): string {
+  return `${scheme}://file/${toPosixPath(abs)}:${line}:${column}`;
 }
 
 function candidates(explicit?: Editor): Editor[] {
@@ -140,10 +208,12 @@ function onPath(bin: string): boolean {
   if (hit !== undefined) {
     return hit;
   }
-  const probe = platform() === "win32" ? "where" : "which";
+  const probe = WIN32 ? "where" : "which";
   let found = false;
   try {
-    found = spawnSync(probe, [bin], { stdio: "ignore" }).status === 0;
+    found =
+      spawnSync(probe, [bin], { stdio: "ignore", windowsHide: true }).status ===
+      0;
   } catch {
     found = false;
   }
@@ -158,12 +228,20 @@ function openUrl(url: string): boolean {
   if (os === "darwin") {
     bin = "open";
   } else if (os === "win32") {
+    // `cmd /c start "" <url>` rather than `shell: true`: `start` takes a window
+    // title as its first quoted argument, so the empty string is what stops it
+    // swallowing the URL as one. cmd.exe is a real .exe, so no shell needed.
     bin = "cmd";
     args = ["/c", "start", "", url];
   }
   try {
-    spawn(bin, args, { detached: true, stdio: "ignore" }).unref();
-    return true;
+    const child = spawn(bin, args, {
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    detach(child);
+    return child.pid !== undefined;
   } catch {
     return false;
   }

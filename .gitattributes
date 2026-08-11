@@ -1,0 +1,4 @@
+# Check out everything with LF, even on Windows (core.autocrlf=true would
+# otherwise write CRLF, which breaks the front-matter regexes in the
+# editor-tokens/editor-icons/site-tokens gen scripts).
+* text=auto eol=lf

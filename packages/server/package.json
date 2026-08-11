@@ -13,7 +13,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --sourcemap --clean",
-    "clean": "rm -rf dist .turbo",
+    "clean": "node ../../scripts/clean.mjs dist .turbo",
     "dev": "tsup src/index.ts --format esm --dts --sourcemap --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"

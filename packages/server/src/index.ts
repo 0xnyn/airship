@@ -524,8 +524,17 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     socket.on("close", () => tunnelled.delete(socket as Socket));
   });
 
-  await new Promise<void>((resolve) => {
-    server.listen(opts.port, () => resolve());
+  // The `error` listener is what makes this rejectable. Without it an
+  // EADDRINUSE — or, on Windows, the EACCES you get from a port inside a
+  // Hyper-V/WSL2 reserved range — is emitted with nobody listening, becomes an
+  // uncaughtException, and escapes the caller's try/catch, so the dev server
+  // airship started with `--exec` is never stopped either.
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(opts.port, () => {
+      server.removeListener("error", reject);
+      resolve();
+    });
   });
 
   const addr = server.address() as AddressInfo | null;

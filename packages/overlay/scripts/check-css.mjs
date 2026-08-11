@@ -16,8 +16,14 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const DIR = new URL("../src/styles/", import.meta.url).pathname;
+// fileURLToPath, not `.pathname`. `.pathname` is a URL component, not a path:
+// on Windows it yields `/C:/…`, which readdirSync resolves against the current
+// drive as `C:\C:\…`, and on every platform it stays percent-encoded, so a
+// checkout under a directory with a space in it fails too. `join(DIR, file)`
+// below needs a string, so this cannot stay a URL.
+const DIR = fileURLToPath(new URL("../src/styles/", import.meta.url));
 const START = /export const css\s*=\s*`/;
 const problems = [];
 

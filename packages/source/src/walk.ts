@@ -9,7 +9,7 @@
  * daemon that appears to hang on startup.
  */
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 export const IGNORE_DIRS: ReadonlySet<string> = new Set([
   "node_modules",
@@ -33,6 +33,18 @@ export function safeReaddir(dir: string) {
   } catch {
     return [];
   }
+}
+
+/**
+ * Rewrite a native path to forward slashes.
+ *
+ * Every path this package hands out crosses a boundary that has no notion of a
+ * Windows separator: the edit prompt, the JSON an MCP tool returns (where each
+ * `\` arrives doubled), and the overlay, which uses these as display labels and
+ * map keys. A no-op off Windows.
+ */
+export function toPosix(path: string): string {
+  return sep === "/" ? path : path.split(sep).join("/");
 }
 
 export function extOf(name: string): string {

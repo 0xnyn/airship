@@ -20,7 +20,7 @@
   ],
   "scripts": {
     "build": "node scripts/gen.mjs && tsup src/index.ts --format esm --dts --sourcemap --clean && node scripts/postbuild.mjs",
-    "clean": "rm -rf dist .turbo",
+    "clean": "node ../../scripts/clean.mjs dist .turbo",
     "gen": "node scripts/gen.mjs",
     "typecheck": "tsc --noEmit"
   },

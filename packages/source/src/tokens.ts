@@ -29,7 +29,7 @@ import {
   isTokenizableValue,
   type TokenScanResult,
 } from "@airship/protocol/tokens";
-import { readCapped, walkFiles } from "./walk";
+import { readCapped, toPosix, walkFiles } from "./walk";
 
 const CSS_EXT: ReadonlySet<string> = new Set([
   ".css",
@@ -300,7 +300,7 @@ function scanUncached(cwd: string): TokenScanResult {
     const lines = lineIndex(text);
     // Relative to the scan root, which is what the agent's own cwd-relative
     // paths are resolved against.
-    const rel = relative(root, file) || file;
+    const rel = toPosix(relative(root, file)) || file;
     scanFile(text, lines, rel, { customProperties, usage, utilities });
   }
 

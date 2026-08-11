@@ -13,10 +13,15 @@
  * everything else from the file's HEAD blob. See the two methods for why that
  * covers every case.
  */
-import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { basename, dirname, relative, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
+import { canonicalPath } from "@airship/git";
 import type { FileDiff } from "@airship/protocol";
 import { createPatch } from "diff";
+import { toPosixPath } from "./paths";
+
+const CRLF = /\r\n/g;
+const BOM = /^﻿/;
 
 function readSafe(abs: string): string | null {
   try {
@@ -27,27 +32,50 @@ function readSafe(abs: string): string | null {
 }
 
 /**
+ * Line endings, flattened for comparison and diffing only.
+ *
+ * On Windows `core.autocrlf=true` is the Git-for-Windows default, so the
+ * working tree is CRLF while every agent's edit tool writes LF — and the HEAD
+ * blob `fileAtHead` returns for the Codex path is LF too. Comparing those
+ * directly makes every line of every file differ by its terminator, so a
+ * one-line edit renders as a whole-file rewrite with garbage `+N −M` counts and
+ * review comments that anchor to the wrong lines.
+ *
+ * Only the comparison and the patch are normalized. `FileDiff.before`/`after`
+ * keep the bytes actually on disk, because `restoreFiles` writes `before` back
+ * verbatim and undo has to round-trip exactly.
+ *
+ * The leading BOM goes the same way and for the same reason. Visual Studio and
+ * several Windows editors write one; agent edit tools generally do not preserve
+ * it, and `readFileSync(…, "utf8")` hands it back as a real `﻿` character
+ * rather than stripping it — so dropping it would otherwise show up as the
+ * first line having changed when its text is identical.
+ *
+ * One consequence worth knowing: an edit that changes *nothing but* line
+ * endings or the BOM now reads as no change at all, so it is neither shown nor
+ * committed. That is the intended trade — it is noise, not an edit.
+ */
+function forDiff(text: string | null): string {
+  return text === null ? "" : text.replace(BOM, "").replace(CRLF, "\n");
+}
+
+/**
  * Canonicalize a path so the same file always produces the same map key.
  *
  * Without this the two `before` sources silently fail to meet: git reports
  * paths through `rev-parse --show-toplevel`, which resolves symlinks, while
  * `cwd` arrives however the user typed it. On macOS that is the common case,
- * not an edge one — `/tmp` and `/var` are both symlinks. A mismatch here does
- * not throw; it just means `prime` records a baseline nobody ever reads, so the
- * user's own uncommitted edits get attributed to the agent and undone with it.
+ * not an edge one — `/tmp` and `/var` are both symlinks; on Windows it is any
+ * two spellings that differ in case, including the drive letter. A mismatch
+ * here does not throw; it just means `prime` records a baseline nobody ever
+ * reads, so the user's own uncommitted edits get attributed to the agent and
+ * undone with it.
  *
- * Resolves the directory rather than the file, because the file frequently does
- * not exist yet — that is precisely the create case.
+ * `canonicalPath` falls back to canonicalizing the containing directory when
+ * the file itself does not exist, which is precisely the create case.
  */
 function canonical(cwd: string, path: string): string {
-  const abs = resolve(cwd, path);
-  try {
-    return resolve(realpathSync(dirname(abs)), basename(abs));
-  } catch {
-    // A path whose parent does not exist yet cannot be canonicalized; the raw
-    // resolution is still a consistent key for it.
-    return abs;
-  }
+  return canonicalPath(resolve(cwd, path));
 }
 
 /** Reads a path's content as of git HEAD. Injected so core need not know how. */
@@ -127,7 +155,7 @@ export class DiffCapture {
     }
     const before = this.before.get(abs) ?? null;
     const after = readSafe(abs);
-    return (before ?? "") === (after ?? "") ? null : { after, before };
+    return forDiff(before) === forDiff(after) ? null : { after, before };
   }
 
   /** Net before→after diff for every file the agent touched. */
@@ -136,11 +164,15 @@ export class DiffCapture {
     for (const abs of this.touched) {
       const before = this.before.get(abs) ?? null;
       const after = readSafe(abs);
-      if ((before ?? "") === (after ?? "")) {
+      if (forDiff(before) === forDiff(after)) {
         continue;
       }
-      const rel = relative(this.root, abs);
-      const patch = createPatch(rel, before ?? "", after ?? "");
+      // Forward slashes from here on. This value is a git pathspec in
+      // `commitEdit` (where backslash is wildmatch's escape character), a key
+      // the browser splits on "/", and a string embedded in JSON headed for the
+      // model, where every backslash arrives doubled.
+      const rel = toPosixPath(relative(this.root, abs));
+      const patch = createPatch(rel, forDiff(before), forDiff(after));
       const { additions, deletions } = countChanges(patch);
       diffs.push({
         additions,

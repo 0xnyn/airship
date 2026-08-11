@@ -172,6 +172,25 @@ export async function detectTarget(
   return first ? { ...first, listening: false } : undefined;
 }
 
+/**
+ * Whether we can actually take this port, by taking it and letting go.
+ *
+ * `isListening` answers a different question — "is something accepting here" —
+ * and the two diverge on Windows, where Hyper-V, WSL2 and Docker Desktop
+ * reserve whole ranges of dynamic ports (`netsh interface ipv4 show
+ * excludedportrange tcp`). Nothing accepts on a reserved port, so a connect
+ * probe calls it free, and the bind then fails with EACCES.
+ */
+function canBind(port: number, host: string): Promise<boolean> {
+  return new Promise((resolvePromise) => {
+    const probe = net.createServer();
+    probe.once("error", () => resolvePromise(false));
+    probe.listen({ host, port }, () => {
+      probe.close(() => resolvePromise(true));
+    });
+  });
+}
+
 /** A port nothing is bound to, so the proxy does not collide on startup. */
 export async function firstFreePort(
   start: number,
@@ -182,7 +201,7 @@ export async function firstFreePort(
     // Also ordered: "the first free port at or after `start`" is the answer, so
     // the probes cannot be collapsed into one parallel batch.
     // biome-ignore lint/performance/noAwaitInLoops: ordered first-match search
-    if (!(await isListening(port, host))) {
+    if (await canBind(port, host)) {
       return port;
     }
   }

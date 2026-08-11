@@ -204,6 +204,28 @@ async function assertFree(port: number): Promise<void> {
   }
 }
 
+/**
+ * Turn a failure to bind the overlay's port into something actionable.
+ *
+ * EACCES is the Windows-specific one: Hyper-V, WSL2 and Docker Desktop reserve
+ * whole ranges of dynamic ports, and a port inside one accepts no connection
+ * yet refuses to be bound — so it looks free right up until it isn't.
+ */
+function asBindError(err: unknown, port: number): unknown {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  if (code === "EADDRINUSE") {
+    return new CliError(`Port ${port} is already in use`, {
+      hint: "Pass --port with a free one.",
+    });
+  }
+  if (code === "EACCES") {
+    return new CliError(`Not allowed to bind port ${port}`, {
+      hint: "On Windows this port may sit in a reserved range (see `netsh interface ipv4 show excludedportrange tcp`). Pass --port with one outside it.",
+    });
+  }
+  return err;
+}
+
 export const serve = defineCommand({
   args: argsFor(SERVE_FLAGS),
   meta: {
@@ -274,7 +296,7 @@ export const serve = defineCommand({
       // We started the dev server; if the proxy cannot come up it is ours to
       // clean up, or the user is left with a stray process holding the port.
       await dev?.stop();
-      throw err;
+      throw asBindError(err, port);
     }
 
     if (opts.json) {
@@ -332,5 +354,12 @@ export const serve = defineCommand({
     };
     process.on("SIGINT", onSignal);
     process.on("SIGTERM", onSignal);
+    // Windows never delivers SIGTERM — registering it is legal, it just never
+    // fires — so without SIGBREAK the only clean exit there is Ctrl-C. Ctrl-Break
+    // and a console close would otherwise skip shutdown entirely and strand the
+    // `opencode serve` child and any dev server we started.
+    if (process.platform === "win32") {
+      process.on("SIGBREAK", onSignal);
+    }
   },
 });

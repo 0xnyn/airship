@@ -10,10 +10,12 @@
  * first, and our own shutdown would be racing a corpse.
  */
 
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { isListening } from "./detect";
 import { CliError } from "./errors";
 import { style } from "./terminal";
+
+const WIN32 = process.platform === "win32";
 
 const READY_TIMEOUT_MS = 90_000;
 const POLL_INTERVAL_MS = 250;
@@ -33,9 +35,16 @@ function killTree(child: ChildProcess, signal: NodeJS.Signals): void {
     return;
   }
   try {
-    if (process.platform === "win32") {
-      // No process groups to negate; Node maps this to TerminateProcess.
-      child.kill(signal);
+    if (WIN32) {
+      // `child` here is cmd.exe, not the dev server — we spawn with `shell`,
+      // so the real tree is cmd.exe -> pnpm -> node -> Vite. `child.kill()`
+      // maps to TerminateProcess on cmd.exe alone and leaves that tree running,
+      // still holding the port, outliving airship and blocking the next launch.
+      // taskkill /T is the only way to take the descendants with it.
+      spawnSync("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
       return;
     }
     // Negative pid = the whole group, which is what actually stops a dev server
@@ -87,12 +96,25 @@ export async function startDevServer(opts: {
   child.once("exit", (code, signal) => {
     exited = { code, signal };
   });
+  // A shell that will not start emits `error` and never `exit`. Without this
+  // the readiness loop below would wait the full 90s for a process that was
+  // never running — and an unheard `error` event throws.
+  child.once("error", () => {
+    exited ??= { code: null, signal: null };
+  });
 
   const stop = async (): Promise<void> => {
     if (exited) {
       return;
     }
     killTree(child, "SIGTERM");
+    // Windows has no graceful signal — killTree already went straight to
+    // `taskkill /F`, so there is nothing to escalate to and nothing to wait
+    // for. Polling for three seconds before repeating the same forced kill
+    // would only delay shutdown.
+    if (WIN32) {
+      return;
+    }
     for (let waited = 0; waited < STOP_GRACE_MS; waited += POLL_INTERVAL_MS) {
       if (exited) {
         return;
@@ -134,26 +156,29 @@ export async function startDevServer(opts: {
   }
 }
 
-const BROWSER_OPENERS: Record<string, string> = {
-  darwin: "open",
-  win32: "start",
-};
-
 /** Open a URL in the default browser, best-effort. */
 export function openInBrowser(url: string): void {
-  const command = BROWSER_OPENERS[process.platform] ?? "xdg-open";
+  // `cmd /c start "" <url>` on Windows rather than `shell: true` + `start`.
+  // With a shell Node does no argument escaping, so a URL carrying `&` would be
+  // split by cmd.exe into two commands; and `start` reads its first quoted
+  // argument as a window title, which is what the empty string absorbs. Same
+  // form as openUrl in @airship/server's open-editor.
+  const [command, args] =
+    process.platform === "win32"
+      ? (["cmd", ["/c", "start", "", url]] as const)
+      : ([process.platform === "darwin" ? "open" : "xdg-open", [url]] as const);
   try {
     // Detached and fully ignored: the browser outliving airship is the point,
     // and its stdio would otherwise pollute the terminal.
-    const child = spawn(command, [url], {
+    const child = spawn(command, [...args], {
       detached: true,
-      shell: process.platform === "win32",
       stdio: "ignore",
+      windowsHide: true,
     });
-    child.unref();
     child.on("error", () => {
       // No browser, no display, no `open` — the URL is printed either way.
     });
+    child.unref();
   } catch {
     // Same: --open is a convenience, never a reason to fail a launch.
   }

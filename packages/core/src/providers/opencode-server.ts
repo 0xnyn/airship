@@ -96,7 +96,29 @@ export interface OpencodeHandle {
   url: string;
 }
 
-const BINARY = process.platform === "win32" ? "opencode.exe" : "opencode";
+/**
+ * The names `opencode` can go by on disk, most-specific first.
+ *
+ * Hardcoding `opencode.exe` on Windows found nothing for the install we
+ * ourselves recommend: `npm i -g opencode-ai` writes `opencode.cmd` and
+ * `opencode.ps1` shims, never a `.exe`. So a perfectly good opencode reported
+ * "No `opencode` binary found on PATH" and every edit through that backend
+ * failed. PATHEXT is the OS's own answer to which extensions are executable;
+ * the fallback matches its default.
+ */
+const BINARY_NAMES: string[] =
+  process.platform === "win32"
+    ? [
+        ...(process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+          .split(";")
+          .filter(Boolean)
+          .map((ext) => `opencode${ext.toLowerCase()}`),
+        // Extension-less last, so a real launcher always wins — but still
+        // present, because dropping it would be its own regression for anyone
+        // whose opencode is a bare binary on PATH.
+        "opencode",
+      ]
+    : ["opencode"];
 /** A cold first launch on a slow machine must not read as a broken install. */
 const START_TIMEOUT_MS = 30_000;
 
@@ -115,9 +137,11 @@ export function resolveOpencodeBinary(override?: string): string | null {
     if (!dir) {
       continue;
     }
-    const candidate = join(dir, BINARY);
-    if (existsSync(candidate)) {
-      return candidate;
+    for (const name of BINARY_NAMES) {
+      const candidate = join(dir, name);
+      if (existsSync(candidate)) {
+        return candidate;
+      }
     }
   }
   return null;
@@ -255,8 +279,15 @@ function registerExitHooks(): void {
     return;
   }
   hooksRegistered = true;
-  for (const signal of ["exit", "SIGINT", "SIGTERM"] as const) {
+  // SIGBREAK on Windows, where SIGTERM is accepted by `process.once` but never
+  // delivered — Ctrl-Break would otherwise leave this child holding its port.
+  // "exit" remains the backstop that catches everything else.
+  const signals = ["exit", "SIGINT", "SIGTERM"] as const;
+  for (const signal of signals) {
     process.once(signal, () => shutdownServer());
+  }
+  if (process.platform === "win32") {
+    process.once("SIGBREAK", () => shutdownServer());
   }
 }
 

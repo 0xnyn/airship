@@ -25,7 +25,7 @@ import {
   hit,
   manager,
 } from "../dnd/manager";
-import { clear, cls, el, elementLabel } from "../dom";
+import { basename, clear, cls, el, elementLabel } from "../dom";
 import { isEditorNode } from "../edit-guard";
 import { emptyState } from "../empty";
 import type { History } from "../history";
@@ -164,14 +164,6 @@ const NON_VISUAL = new Set([
 
 function isNonVisual(node: Element): boolean {
   return NON_VISUAL.has(node.tagName.toLowerCase());
-}
-
-/** Last segment of a source path. Handles both separators — the path comes from
- * the framework's own metadata, which on Windows is backslashed. */
-function basename(path: string): string {
-  return path.slice(
-    Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1
-  );
 }
 
 /**

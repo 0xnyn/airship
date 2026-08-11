@@ -13,11 +13,36 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { pathKey } from "@airship/core";
 import type { JobDiffBundle, JobHistorySummary } from "@airship/protocol";
 
-function repoDir(cwd: string): string {
-  const hash = createHash("sha1").update(cwd).digest("hex").slice(0, 12);
+function hashDir(key: string): string {
+  const hash = createHash("sha1").update(key).digest("hex").slice(0, 12);
   return join(homedir(), ".airship", "history", hash);
+}
+
+/**
+ * One directory per project, keyed by a hash of its canonical path.
+ *
+ * `pathKey` rather than the raw `cwd`: the string the user typed is not a
+ * stable identity for a directory. A symlinked project (macOS `/tmp`, `/var`)
+ * or two spellings that differ only in case (Windows, drive letter included)
+ * hash to different directories, and the whole store — history, undo,
+ * PR-from-session — silently comes back empty for the same project.
+ *
+ * The legacy fallback exists because that hash used to be taken over the raw
+ * `cwd`, so canonicalizing it moves the directory for any project reached
+ * through a symlink. Without this their existing history would simply vanish on
+ * upgrade. Only read from: once anything is written under the canonical key,
+ * that is the one directory in play.
+ */
+function repoDir(cwd: string): string {
+  const canonical = hashDir(pathKey(cwd));
+  if (existsSync(canonical)) {
+    return canonical;
+  }
+  const legacy = hashDir(cwd);
+  return existsSync(legacy) ? legacy : canonical;
 }
 
 export function writeBundle(cwd: string, bundle: JobDiffBundle): void {

@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { ElementContext, SourceLocation } from "@airship/protocol";
-import { readCapped, walkFiles } from "./walk";
+import { readCapped, toPosix, walkFiles } from "./walk";
 
 export interface ResolveInput {
   element?: ElementContext;
@@ -33,6 +33,11 @@ const LEADING_SLASHES = /^\/+/;
 /** Route-ish and component-ish directories, on either path separator. */
 const ROUTE_DIR = /[\\/](pages|app|routes)[\\/]/;
 const COMPONENT_DIR = /[\\/]components?[\\/]/;
+/** Vite serves files outside its root under `/@fs/<abs path>`. */
+const VITE_FS_PREFIX = /^\/@fs\/(.*)$/;
+/** `C:` — a path already rooted at a Windows drive. */
+const WIN32_DRIVE = /^[a-zA-Z]:/;
+const WIN32 = process.platform === "win32";
 
 export function resolveServerSource(
   cwd: string,
@@ -42,7 +47,10 @@ export function resolveServerSource(
     const abs = resolveExistingSource(cwd, input.source.file);
     // Normalize to a project-relative path so the agent gets a path it can
     // open; fall back to the reported path if we can't locate the file.
-    const file = abs ? relative(cwd, abs) : input.source.file;
+    // Forward slashes on the way out — this string is rendered into the prompt
+    // and into the JSON the MCP tool returns, where a Windows separator arrives
+    // doubled, and the overlay uses it as a display label.
+    const file = abs ? toPosix(relative(cwd, abs)) : input.source.file;
     const context = abs ? readContext(abs, input.source.line) : undefined;
     return { ...input.source, context: context ?? input.source.context, file };
   }
@@ -57,19 +65,49 @@ export function resolveServerSource(
  * would treat the leading slash as absolute and miss the file. Try the reported
  * path first, then a cwd-relative form. Returns the absolute path that exists,
  * or null.
+ *
+ * The ordering flips on Windows, and it matters. There `resolve(cwd, "/src/
+ * App.tsx")` does not fail — it resolves against cwd's *drive*, yielding
+ * `C:\src\App.tsx`. `C:\src` is an ordinary directory that may well exist, and
+ * if it does the wrong file is read, handed to the agent as context, and opened
+ * in the editor. On Windows a leading slash with no drive letter is never an
+ * absolute path, so the project-relative reading is the only correct one.
  */
 function resolveExistingSource(cwd: string, file: string): string | null {
-  const direct = resolve(cwd, file);
-  if (existsSync(direct)) {
-    return direct;
+  const rooted = viteFsPath(file);
+  if (rooted) {
+    return existsSync(rooted) ? rooted : null;
   }
-  if (file.startsWith("/")) {
+  const urlPath = file.startsWith("/");
+  if (urlPath) {
     const stripped = resolve(cwd, file.replace(LEADING_SLASHES, ""));
     if (existsSync(stripped)) {
       return stripped;
     }
+    if (WIN32) {
+      return null;
+    }
   }
-  return null;
+  const direct = resolve(cwd, file);
+  return existsSync(direct) ? direct : null;
+}
+
+/**
+ * The absolute path behind a `/@fs/` URL, or null if this is not one.
+ *
+ * Vite serves anything outside its root this way. Without handling it here the
+ * whole `/@fs/…` string fell through as an unresolvable path and went to the
+ * agent verbatim — and on Windows `/@fs/C:/Users/…` would resolve to
+ * `C:\C:\Users\…`, which cannot exist.
+ */
+function viteFsPath(file: string): string | null {
+  const match = file.match(VITE_FS_PREFIX);
+  if (!match?.[1]) {
+    return null;
+  }
+  // POSIX needs back the slash the capture dropped; a Windows path already
+  // starts with its drive and must not be given one.
+  return WIN32_DRIVE.test(match[1]) ? match[1] : `/${match[1]}`;
 }
 
 function readContext(absPath: string, line: number): string | undefined {
@@ -161,7 +199,7 @@ function searchByElement(
   }
   return {
     context: readContext(best.file, best.line),
-    file: relative(cwd, best.file),
+    file: toPosix(relative(cwd, best.file)),
     line: best.line,
   };
 }
