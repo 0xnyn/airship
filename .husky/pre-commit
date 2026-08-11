@@ -1,7 +1,8 @@
 #!/bin/sh
 # Block direct commits to main — branch first, then open a PR. This and the
-# pre-push guard are the only main protection there is until the repo has a
-# remote with branch protection turned on (see .github/README.md).
+# pre-push guard are the local half of that rule, and a hook is only ever a
+# courtesy: `--no-verify` skips it. The enforced half is
+# .github/workflows/branch-policy.yml, which decides what may target main.
 branch="$(git rev-parse --abbrev-ref HEAD)"
 if [ "$branch" = "main" ]; then
   echo "✖ Direct commits to 'main' are blocked — branch first: git switch -c <name>"

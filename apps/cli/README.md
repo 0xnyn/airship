@@ -1,8 +1,10 @@
+<!-- Generated from the root README.md by scripts/sync-readme.mjs. Do not edit. -->
+
 # Airship
 
 [![npm](https://img.shields.io/npm/v/@airshiplabs/cli)](https://www.npmjs.com/package/@airshiplabs/cli)
 [![node](https://img.shields.io/node/v/@airshiplabs/cli)](https://nodejs.org)
-[![license](https://img.shields.io/npm/l/@airshiplabs/cli)](LICENSE)
+[![license](https://img.shields.io/npm/l/@airshiplabs/cli)](https://github.com/0xnyn/airship/blob/main/LICENSE)
 
 **Visual editor for your codebase.**
 
@@ -10,7 +12,7 @@ Airship puts an infinite design canvas in front of your dev server. Select an el
 the change, and watch Claude Code, Codex or OpenCode update the source — without rebuilding your
 UI in a separate design tool.
 
-![Airship mid-edit: the prompt "Turn this into a github icon" streaming its reads, writes and edits, a desktop and an iPhone frame side by side on the canvas, and the Edit inspector open on the selection](media/inspector-edit.png)
+![Airship mid-edit: the prompt "Turn this into a github icon" streaming its reads, writes and edits, a desktop and an iPhone frame side by side on the canvas, and the Edit inspector open on the selection](https://raw.githubusercontent.com/0xnyn/airship/main/media/inspector-edit.png)
 
 ```bash
 npx @airshiplabs/cli --target 3000
@@ -24,7 +26,7 @@ No plugin. No config. Nothing added to your dependencies or your bundle.
 
 ## Quick start
 
-![The Airship landing page, with the editor overlay open on a running app at localhost:3000](media/cover.png)
+![The Airship landing page, with the editor overlay open on a running app at localhost:3000](https://raw.githubusercontent.com/0xnyn/airship/main/media/cover.png)
 
 **1. Start your app the way you always do.**
 
@@ -85,7 +87,7 @@ A CLI, and nothing else.
 - **Nothing leaves your machine.** No account, no telemetry, no service to sign up for.
 
 
-![The agent panel showing the diff of the file it just edited, with the element still selected on the canvas](media/agent.png)
+![The agent panel showing the diff of the file it just edited, with the element still selected on the canvas](https://raw.githubusercontent.com/0xnyn/airship/main/media/agent.png)
 
 ## Canvas or inline
 
@@ -93,11 +95,11 @@ Two ways to look at your app. Same editor either way.
 
 **`canvas`** (default) — your app on a pannable canvas, one live frame per device size.
 
-![The canvas, with a desktop frame and an iPhone frame side by side, the agent panel on the left and the inspector on the right](media/canvas.png)
+![The canvas, with a desktop frame and an iPhone frame side by side, the agent panel on the left and the inspector on the right](https://raw.githubusercontent.com/0xnyn/airship/main/media/canvas.png)
 
 **`inline`** — the editor on top of your own page, one window.
 
-![Inline mode, with the editor panels floating over the real page at localhost:3000](media/inline.png)
+![Inline mode, with the editor panels floating over the real page at localhost:3000](https://raw.githubusercontent.com/0xnyn/airship/main/media/inline.png)
 
 Pick one at launch with `airship --mode inline`, or switch any time from the bottom bar. Your
 choice sticks across reloads and as you click around your app. Add `?__airship=inline` to a URL
@@ -122,11 +124,11 @@ Click an element and it fills the inspector. Every tab is looking at the same th
 `Edit` is position, size, spacing and layout — the shot up in [Quick start](#quick-start). `CSS`
 is the box model, the rules that are actually hitting the element, and your own tweaks on top:
 
-![The CSS tab, showing the box model, an empty element.style block and the matched CSS rules for the selection](media/inspector-css.png)
+![The CSS tab, showing the box model, an empty element.style block and the matched CSS rules for the selection](https://raw.githubusercontent.com/0xnyn/airship/main/media/inspector-css.png)
 
 `DOM` is the tree. Click a node to select it, or drag one to move it somewhere else:
 
-![The DOM tab, showing the element tree with the selected text node highlighted](media/inspector-dom.png)
+![The DOM tab, showing the element tree with the selected text node highlighted](https://raw.githubusercontent.com/0xnyn/airship/main/media/inspector-dom.png)
 
 ## Agents
 
@@ -432,5 +434,5 @@ Node 22.13 or later, and one of Claude Code, OpenAI Codex or OpenCode.
 
 - [airship.design](https://airship.design)
 - [Issues](https://github.com/0xnyn/airship/issues) · [Releases](https://github.com/0xnyn/airship/releases)
-- [CONTRIBUTING.md](CONTRIBUTING.md) — architecture, the packages, Storybook, CI and releases
-- [MIT](LICENSE)
+- [CONTRIBUTING.md](https://github.com/0xnyn/airship/blob/main/CONTRIBUTING.md) — architecture, the packages, Storybook, CI and releases
+- [MIT](https://github.com/0xnyn/airship/blob/main/LICENSE)

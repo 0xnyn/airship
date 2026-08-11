@@ -51,12 +51,30 @@ jobs:
       - name: Build the CLI
         run: pnpm turbo run build --filter=@airshiplabs/cli
 
-      # Packs for real and looks inside. `publish --dry-run` cannot stand in
-      # here — it packs the same empty tarball and exits 0.
+      # Pack with pnpm, publish that exact tarball with npm. Neither tool does
+      # both halves: only `pnpm pack` rewrites the `workspace:*` devDependencies
+      # into real versions, and only `npm publish` sends the `readme` field —
+      # which is what npmjs.com renders the package page from. `pnpm publish`
+      # drops it, so v0.2.2 shipped a correct tarball behind a page that still
+      # read "This package does not have a README".
+      - name: Pack the tarball
+        id: pack
+        working-directory: apps/cli
+        run: |
+          TGZ="$RUNNER_TEMP/airshiplabs-cli.tgz"
+          pnpm pack --out "$TGZ"
+          echo "tgz=$TGZ" >> "$GITHUB_OUTPUT"
+
+      # Looks inside the tarball it is about to publish, not a second one packed
+      # for the check. `publish --dry-run` cannot stand in here — it packs the
+      # same empty tarball and exits 0.
       - name: Verify the tarball is complete
-        run: bash scripts/verify-tarball.sh
+        run: bash scripts/verify-tarball.sh "${{ steps.pack.outputs.tgz }}"
 
       - name: Publish to npm
-        run: pnpm --filter @airshiplabs/cli publish --access public --no-git-checks --provenance
+        run: npm publish "${{ steps.pack.outputs.tgz }}" --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: The npm page has a README
+        run: bash scripts/verify-published-readme.sh

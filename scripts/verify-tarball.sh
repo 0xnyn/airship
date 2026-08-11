@@ -9,7 +9,15 @@
 #
 # So: pack for real, look inside, and fail loudly on anything missing.
 #
-#   bash scripts/verify-tarball.sh
+#   bash scripts/verify-tarball.sh            # pack one, then inspect it
+#   bash scripts/verify-tarball.sh path.tgz   # inspect a tarball already packed
+#
+# CI passes the tarball it is about to publish, so the bytes asserted here are
+# the bytes that ship. Packing a second one just for the check would leave a
+# gap for exactly the kind of difference this script exists to catch.
+#
+# Packing uses `pnpm pack`, not `npm pack`: only pnpm rewrites the `workspace:*`
+# devDependencies into real versions, and npm would ship the literal protocol.
 #
 # Assumes the CLI is already built (`pnpm turbo run build --filter=@airshiplabs/cli`).
 set -euo pipefail
@@ -20,8 +28,14 @@ PKG_NAME="@airshiplabs/cli"
 # Every path the published CLI resolves at runtime but no bundler can inline.
 # dist/vendor/ is written by apps/cli/scripts/vendor-assets.mjs; without it the
 # installed CLI 404s on its own overlay and renders unstyled.
+#
+# README.md is generated from the root one by scripts/sync-readme.mjs and is the
+# only thing npmjs.com has to show for the package. Without it the page reads
+# "This package does not have a README" — which is how 0.2.1 shipped — and the
+# version number is spent, because npm never lets you republish one.
 REQUIRED=(
   "package/package.json"
+  "package/README.md"
   "package/dist/index.js"
   "package/dist/vendor/overlay.global.js"
   "package/dist/vendor/hook.global.js"
@@ -34,17 +48,28 @@ REQUIRED=(
 # shape of failure the per-file checks might miss if the layout ever changes.
 MIN_BYTES=200000
 
+# Resolve the argument before cd'ing, so a relative path still works.
+GIVEN=""
+if [ "$#" -gt 0 ] && [ -n "$1" ]; then
+  GIVEN="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+fi
+
 cd "$(git rev-parse --show-toplevel)"
 [ -d "$PKG_DIR" ] || { echo "verify-tarball: $PKG_DIR not found" >&2; exit 1; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "» packing $PKG_NAME"
-( cd "$PKG_DIR" && npm pack --pack-destination "$WORK" >/dev/null )
-
-TARBALL="$(find "$WORK" -name '*.tgz' -maxdepth 1 | head -1)"
-[ -n "$TARBALL" ] || { echo "verify-tarball: npm pack produced no tarball" >&2; exit 1; }
+if [ -n "$GIVEN" ]; then
+  [ -f "$GIVEN" ] || { echo "verify-tarball: $GIVEN not found" >&2; exit 1; }
+  TARBALL="$GIVEN"
+  echo "» inspecting $(basename "$TARBALL")"
+else
+  echo "» packing $PKG_NAME"
+  ( cd "$PKG_DIR" && pnpm pack --pack-destination "$WORK" >/dev/null )
+  TARBALL="$(find "$WORK" -name '*.tgz' -maxdepth 1 | head -1)"
+  [ -n "$TARBALL" ] || { echo "verify-tarball: pnpm pack produced no tarball" >&2; exit 1; }
+fi
 
 SIZE="$(wc -c < "$TARBALL" | tr -d ' ')"
 LISTING="$WORK/listing.txt"
