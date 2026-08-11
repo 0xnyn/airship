@@ -17,7 +17,7 @@
 
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
@@ -50,7 +50,7 @@ function resolve(specifier, what) {
 // serves `${bundle}.map` derived from whatever path it resolved, so the map has
 // to land beside its bundle here too.
 function copyWithMap(from, toDir) {
-  const name = from.split("/").pop();
+  const name = basename(from);
   copyFileSync(from, join(toDir, name));
   if (existsSync(`${from}.map`)) {
     copyFileSync(`${from}.map`, join(toDir, `${name}.map`));

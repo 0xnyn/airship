@@ -16,8 +16,9 @@
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const DIR = new URL("../src/styles/", import.meta.url).pathname;
+const DIR = fileURLToPath(new URL("../src/styles/", import.meta.url));
 const START = /export const css\s*=\s*`/;
 const problems = [];
 
