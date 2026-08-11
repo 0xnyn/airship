@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "vite build",
-    "clean": "rm -rf dist .output .nitro .tanstack node_modules/.vite .turbo",
+    "clean": "node ../../scripts/clean.mjs dist .output .nitro .tanstack node_modules/.vite .turbo",
     "dev": "vite dev",
     "og": "node scripts/og.mjs",
     "routes": "tsr generate",

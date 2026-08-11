@@ -31,7 +31,7 @@
   ],
   "scripts": {
     "build": "tsup && node scripts/vendor-assets.mjs",
-    "clean": "rm -rf dist .turbo",
+    "clean": "node ../../scripts/clean.mjs dist .turbo",
     "dev": "tsup --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
