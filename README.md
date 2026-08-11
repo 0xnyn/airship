@@ -1,5 +1,9 @@
 # Airship
 
+[![npm](https://img.shields.io/npm/v/@airshiplabs/cli)](https://www.npmjs.com/package/@airshiplabs/cli)
+[![node](https://img.shields.io/node/v/@airshiplabs/cli)](https://nodejs.org)
+[![license](https://img.shields.io/npm/l/@airshiplabs/cli)](LICENSE)
+
 **Visual editor for your codebase.**
 
 Airship puts an infinite design canvas in front of your dev server. Select an element, describe
@@ -97,7 +101,8 @@ Two ways to look at your app. Same editor either way.
 
 Pick one at launch with `airship --mode inline`, or switch any time from the bottom bar. Your
 choice sticks across reloads and as you click around your app. Add `?__airship=inline` to a URL
-to try the other one once, without changing your preference.
+to try the other one once, without changing your preference; `?__airship=shell` is the way back
+to the canvas — the parameter takes the internal mode name, so it is `shell`, not `canvas`.
 
 Open any route of your app in Airship — `/pricing`, `/settings` — and every frame opens there.
 
@@ -200,8 +205,9 @@ airship <command> [options]
 | `airship doctor` | Check your environment and report what is wrong. |
 
 Flags accept `--flag value` and `--flag=value`, a camelCase spelling of any kebab name
-(`--maxTurns` ≡ `--max-turns`), and `--no-<name>` to turn any boolean off. Anything after a bare
-`--` is passed through untouched.
+(`--maxTurns` ≡ `--max-turns`), and `--no-<name>` to turn any boolean off. A bare `--` stops flag
+parsing — airship takes no positional arguments, so anything after it is ignored rather than
+forwarded.
 
 ### Core
 
@@ -243,6 +249,10 @@ Flags accept `--flag value` and `--flag=value`, a camelCase spelling of any keba
 | `--opencode-url <url>` | Attach to a running `opencode serve` instead of starting one. | |
 | `--opencode-agent <name>` | Run as a named opencode agent. | its own |
 | `--opencode-config <file>` | JSON file merged into the opencode server config. | |
+
+`--codex-config` reads the shape of the value: `true`/`false` become TOML booleans and anything
+numeric becomes a number, so `--codex-config network_access=true` sends a boolean, not the string.
+Quote it — `--codex-config k='"true"'` — to keep a string a string.
 
 ### Global
 
