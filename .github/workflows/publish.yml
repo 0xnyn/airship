@@ -7,9 +7,17 @@ run-name: "Publish · ${{ inputs.version || inputs.bump }}${{ inputs.dry_run && 
 # cli-vX.Y.Z and pushes — the CI equivalent of `make release` plus pushing the
 # tag, with no local steps.
 #
-# Run it from your release/* branch: the version-bump commit lands there and
-# reaches main through the normal release PR. branch-policy.yml is what makes
-# that the only route in.
+# Run it from main. What goes to npm should be what was reviewed, merged and
+# checked — and the only way to guarantee that is to publish the tree main
+# actually has. This used to run from release/* so the version-bump commit
+# would reach main through a PR; that protected a package.json version field
+# and a lockfile while leaving the shipped tree ungated, and it showed: v0.2.2
+# and v0.2.3 both went out from release/cli-readme before that branch had a
+# pull request or a single Checks run, reaching users seven minutes before
+# they reached main.
+#
+# The bump commit this job pushes to main is mechanical and there is nothing in
+# it to review. branch-policy.yml still governs the route for everything else.
 #
 # Note: the cli-v* tag is pushed with GITHUB_TOKEN, which by design does NOT
 # trigger release.yml — so this workflow publishes here, and the two lanes can
@@ -47,6 +55,20 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      # First, and before the checkout, so a misdirected release costs three
+      # seconds instead of a version. Dry runs are exempt: they publish nothing
+      # and push nothing, and validating packaging from a branch before you
+      # merge it is exactly what they are for.
+      - name: Releases come from main
+        if: ${{ inputs.dry_run == false }}
+        run: |
+          if [ "$GITHUB_REF_NAME" != "main" ]; then
+            echo "::error::Publish runs on main, not '$GITHUB_REF_NAME' — this would ship code main does not have."
+            echo "  Merge the PR first, then dispatch this on main."
+            echo "  To validate packaging from this branch instead: make release:ci DRY=1"
+            exit 1
+          fi
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -165,6 +187,9 @@ jobs:
 
       - name: Commit, tag and push
         if: ${{ inputs.dry_run == false }}
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          NEXT: ${{ steps.ver.outputs.next }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -172,9 +197,22 @@ jobs:
           # --no-verify skips the husky commit-msg and pre-push hooks. The
           # pre-push hook blocks pushes to main, and commit-msg would reject
           # nothing here, but both are pointless in CI.
-          git commit --no-verify -m "chore(release): cli v${{ steps.ver.outputs.next }}"
-          git tag -a "${{ steps.ver.outputs.tag }}" -m "${{ steps.ver.outputs.tag }}"
-          git push --no-verify origin "HEAD:${{ github.ref_name }}" --follow-tags
+          git commit --no-verify -m "chore(release): cli v$NEXT"
+          git tag -a "$TAG" -m "$TAG"
+
+          # The tag goes first and on its own, rather than riding along on
+          # --follow-tags. It is the release record — it names the exact tree
+          # npm now has — and a tag ref cannot lose a race to a merge the way a
+          # branch ref can. Rebasing to win that race is not an option: it would
+          # move the commit off the tree that was actually published.
+          git push --no-verify origin "refs/tags/$TAG"
+
+          if ! git push --no-verify origin "HEAD:$GITHUB_REF_NAME"; then
+            echo "::error::v$NEXT is published and tagged, but main moved during the run and the bump commit did not land."
+            echo "  The release itself is complete — only the bookkeeping commit is missing."
+            echo "  Put it on main with: git cherry-pick $TAG"
+            exit 1
+          fi
 
       # Last, and after the push on purpose. This checks a release that npm has
       # already made permanent — it cannot prevent a bad one, only make it loud

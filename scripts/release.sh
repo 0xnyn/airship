@@ -55,9 +55,13 @@ done
 cd "$(git rev-parse --show-toplevel)" || die "not inside a git repository"
 [ -f "$PKG_JSON" ] || die "$PKG_JSON not found"
 
+# Releases go out from main, because what ships to npm should be what was
+# reviewed and merged. Cutting from a branch publishes the branch: v0.2.2 and
+# v0.2.3 both reached users from release/cli-readme before that branch had a
+# pull request, a Checks run, or a single reviewer.
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-if [ "$BRANCH" = "main" ]; then
-  warn "you are on main — releases normally go out from a release/* branch"
+if [ "$BRANCH" != "main" ]; then
+  warn "you are on '$BRANCH' — releases go out from main, so this would ship unmerged code"
 fi
 
 if [ -z "${ALLOW_DIRTY:-}" ] && [ -n "$(git status --porcelain)" ]; then
