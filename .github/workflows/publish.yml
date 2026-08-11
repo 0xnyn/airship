@@ -94,8 +94,24 @@ jobs:
       - name: Build the CLI
         run: pnpm turbo run build --filter=@airshiplabs/cli
 
+      # Pack with pnpm, publish that exact tarball with npm. Neither tool does
+      # both halves: only `pnpm pack` rewrites the `workspace:*` devDependencies
+      # into real versions, and only `npm publish` sends the `readme` field —
+      # which is what npmjs.com renders the package page from. `pnpm publish`
+      # drops it, so v0.2.2 shipped a correct tarball behind a page that still
+      # read "This package does not have a README".
+      - name: Pack the tarball
+        id: pack
+        working-directory: apps/cli
+        run: |
+          TGZ="$RUNNER_TEMP/airshiplabs-cli.tgz"
+          pnpm pack --out "$TGZ"
+          echo "tgz=$TGZ" >> "$GITHUB_OUTPUT"
+
+      # Looks inside the tarball it is about to publish, not a second one packed
+      # for the check.
       - name: Validate packaging
-        run: bash scripts/verify-tarball.sh
+        run: bash scripts/verify-tarball.sh "${{ steps.pack.outputs.tgz }}"
 
       - name: Commit, tag and push
         if: ${{ inputs.dry_run == false }}
@@ -110,8 +126,14 @@ jobs:
           git tag -a "${{ steps.ver.outputs.tag }}" -m "${{ steps.ver.outputs.tag }}"
           git push --no-verify origin "HEAD:${{ github.ref_name }}" --follow-tags
 
+      # The same tarball "Validate packaging" just looked inside — packed after
+      # the bump, so it already carries the released version.
       - name: Publish to npm
         if: ${{ inputs.dry_run == false }}
-        run: pnpm --filter @airshiplabs/cli publish --access public --no-git-checks --provenance
+        run: npm publish "${{ steps.pack.outputs.tgz }}" --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: The npm page has a README
+        if: ${{ inputs.dry_run == false }}
+        run: bash scripts/verify-published-readme.sh
