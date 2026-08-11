@@ -24,7 +24,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join, parse, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { canonicalPath, isPathInside, pathKey, toPosixPath } from "./paths";
 
@@ -67,13 +67,16 @@ describe("isPathInside", () => {
 
   it("allows an in-project path reached through a symlinked root", () => {
     const link = join(tmpdir(), `airship-paths-link-${process.pid}`);
-    rmSync(link, { force: true });
-    symlinkSync(root, link);
+    rmSync(link, { force: true, recursive: true });
+    // "junction" on Windows: Node's default link type is "file", which does not
+    // work for a directory, and unlike a real directory symlink a junction
+    // needs neither elevation nor Developer Mode.
+    symlinkSync(root, link, process.platform === "win32" ? "junction" : "dir");
     try {
       expect(isPathInside(link, join(root, "src", "app.ts"))).toBe(true);
       expect(isPathInside(root, join(link, "src", "app.ts"))).toBe(true);
     } finally {
-      rmSync(link, { force: true });
+      rmSync(link, { force: true, recursive: true });
     }
   });
 
@@ -103,7 +106,13 @@ describe("isPathInside", () => {
     // no real path starts with, and every file read as outside the root. The
     // same shape is far more reachable on Windows, where a project checked out
     // at `C:\` is ordinary.
-    expect(isPathInside(sep, join(root, "src", "app.ts"))).toBe(true);
+    //
+    // `parse(root).root` rather than a bare `sep`: on Windows that resolves
+    // against the *current* drive, and CI runs the checkout on D: while the
+    // temp directory lives on C:, so the two would be genuinely unrelated.
+    expect(isPathInside(parse(root).root, join(root, "src", "app.ts"))).toBe(
+      true
+    );
   });
 });
 

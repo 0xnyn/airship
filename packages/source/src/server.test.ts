@@ -12,6 +12,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveServerSource } from "./server";
 
+/** Native separators to URL ones, and the leading slash a URL path drops. */
+const BACKSLASH = /\\/g;
+const LEADING_SLASH = /^\//;
+
 let cwd: string;
 
 beforeEach(() => {
@@ -41,10 +45,13 @@ describe("resolveServerSource", () => {
   });
 
   it("resolves a /@fs/ path, which Vite uses for files outside its root", () => {
-    // Vite collapses `/@fs/` + `/abs/path` into `/@fs/abs/path`, so the
-    // remainder has lost its leading slash and has to get it back.
+    // Built the way Vite builds it — `/@fs/` followed by the absolute path in
+    // URL form: forward slashes, and no leading slash of its own. On POSIX that
+    // reads `/@fs/Users/…`, on Windows `/@fs/C:/Users/…`, so the remainder has
+    // a leading slash to restore in one case and a drive letter in the other.
     const abs = join(cwd, "src", "App.tsx");
-    expect(resolveFile(`/@fs${abs}`)).toBe("src/App.tsx");
+    const url = `/@fs/${abs.replace(BACKSLASH, "/").replace(LEADING_SLASH, "")}`;
+    expect(resolveFile(url)).toBe("src/App.tsx");
   });
 
   it("reports the path unchanged when the file cannot be located", () => {
