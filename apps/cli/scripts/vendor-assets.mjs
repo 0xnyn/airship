@@ -17,7 +17,7 @@
 
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
@@ -50,7 +50,10 @@ function resolve(specifier, what) {
 // serves `${bundle}.map` derived from whatever path it resolved, so the map has
 // to land beside its bundle here too.
 function copyWithMap(from, toDir) {
-  const name = from.split("/").pop();
+  // basename, not split("/"): require.resolve returns a native path, so on
+  // Windows there is no "/" to split on and `name` would come back as the whole
+  // absolute path — which join() then appends to the destination wholesale.
+  const name = basename(from);
   copyFileSync(from, join(toDir, name));
   if (existsSync(`${from}.map`)) {
     copyFileSync(`${from}.map`, join(toDir, `${name}.map`));
@@ -87,5 +90,5 @@ for (const name of expected) {
 }
 
 console.log(
-  `vendor-assets: ${expected.length} bundles + ${FONTS.length} fonts -> ${dirname(vendorDir)}/vendor`
+  `vendor-assets: ${expected.length} bundles + ${FONTS.length} fonts -> ${vendorDir}`
 );

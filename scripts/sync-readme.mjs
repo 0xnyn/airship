@@ -33,6 +33,10 @@ const LINK = /(!?)\[([^\]]*)\]\(([^)\s]+)\)/g;
 /** ``` or ~~~ opening or closing a fenced block, which is never rewritten. */
 const FENCE = /^\s*(?:```|~~~)/;
 /** A scheme, a protocol-relative host, or an anchor — already resolvable. */
+// Matches CRLF as readily as LF: a Windows working tree would otherwise leave a
+// trailing \r on every line, and the rejoin below emits LF, so the --check
+// comparison could never match the file on disk.
+const LINE_BREAK = /\r?\n/;
 const ABSOLUTE = /^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i;
 const LEADING_DOT_SLASH = /^\.\//;
 const REPO_URL = /github\.com[/:]([^/]+)\/([^/.]+)/;
@@ -94,7 +98,7 @@ function render(source, slug) {
         return `${bang}[${label}](${absolutize(target, bang === "!", slug)})`;
       });
 
-  for (const line of source.split("\n")) {
+  for (const line of source.split(LINE_BREAK)) {
     if (FENCE.test(line)) {
       inFence = !inFence;
       out.push(line);
@@ -115,7 +119,11 @@ if (process.argv.includes("--check")) {
   } catch {
     die("apps/cli/README.md is missing — run `node scripts/sync-readme.mjs`");
   }
-  if (current !== text) {
+  // Compare on content, not line endings. .gitattributes pins a fresh checkout
+  // to LF, but a file that arrived some other way — an existing clone, a zip, a
+  // patch, an editor configured for CRLF — would otherwise report as eternally
+  // stale with no way for the contributor to make it pass.
+  if (current.replace(/\r\n/g, "\n") !== text) {
     die(
       "apps/cli/README.md is stale — run `node scripts/sync-readme.mjs` and commit the result"
     );

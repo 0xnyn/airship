@@ -16,7 +16,9 @@ if (!existsSync(specPath)) {
 }
 
 const raw = readFileSync(specPath, "utf8");
-const match = raw.match(/^---\n([\s\S]*?)\n---/);
+// \r? because a Windows checkout with core.autocrlf=true hands us CRLF, and a
+// front-matter block that opens `---\r\n` would otherwise read as absent.
+const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---/);
 if (!match) {
   throw new Error("gen: EDITOR.md is missing its YAML front-matter block");
 }
