@@ -1,6 +1,6 @@
 name: Release
 
-run-name: "Release · ${{ github.ref_name }}"
+run-name: "Release · ${{ inputs.tag || github.ref_name }}"
 
 # Publishes @airshiplabs/cli to npm when a cli-v* tag is pushed. Cut the release
 # with `make release` (bumps apps/cli/package.json, commits, tags) then push the
@@ -9,19 +9,41 @@ run-name: "Release · ${{ github.ref_name }}"
 # This lane is for locally-cut releases only. publish.yml pushes its tag with
 # GITHUB_TOKEN, and GitHub does not fire workflows from GITHUB_TOKEN-authored
 # pushes, so a CI-cut release never lands here and the two never both publish.
+#
+# It is also the recovery lane, which is what workflow_dispatch is for: give it
+# an existing tag and it publishes that tag's commit. A release whose tag landed
+# but whose publish did not is finished from here — no deleting and re-pushing
+# the tag to fake a push event, and no version burned. That is the hole v0.2.4
+# fell into.
 on:
   push:
     tags: ["cli-v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing cli-v* tag to publish, e.g. cli-v1.4.0"
+        type: string
+        required: true
 
 permissions:
   contents: read
   id-token: write # npm provenance attestation
 
+# Shared with publish.yml: both lanes publish the same package, and now that
+# both can be triggered by hand they must not run at the same time.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      # On a tag push this is what checkout would pick anyway; on a dispatch it
+      # is what makes the run about the given tag rather than the default branch.
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
 
       - uses: pnpm/action-setup@v6
 
@@ -33,9 +55,22 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # This is what keeps the dispatch honest: whatever tag you hand it, the
+      # commit it points at has to already carry that version.
       - name: Verify the tag matches apps/cli's version
+        env:
+          # A dispatch input is untrusted text, so read it from the environment
+          # rather than interpolating ${{ }} into the script — same reason
+          # branch-policy.yml does that with head_ref.
+          TAG_REF: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG="${GITHUB_REF_NAME#cli-v}"
+          case "$TAG_REF" in
+            cli-v*) ;;
+            *)
+              echo "::error::'$TAG_REF' is not a cli-v* tag — pass one like cli-v1.4.0."
+              exit 1 ;;
+          esac
+          TAG="${TAG_REF#cli-v}"
           PKG=$(node -p "require('./apps/cli/package.json').version")
           if [ "$TAG" != "$PKG" ]; then
             echo "::error::Tag cli-v$TAG does not match @airshiplabs/cli version $PKG (cut releases with 'make release')"
@@ -72,7 +107,7 @@ jobs:
         run: bash scripts/verify-tarball.sh "${{ steps.pack.outputs.tgz }}"
 
       - name: Publish to npm
-        run: npm publish "${{ steps.pack.outputs.tgz }}" --access public --provenance
+        run: bash scripts/npm-publish.sh "${{ steps.pack.outputs.tgz }}"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
