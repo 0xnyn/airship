@@ -25,8 +25,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, parse, sep } from "node:path";
+import { canonicalPath } from "@airship/git";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { canonicalPath, isPathInside, pathKey, toPosixPath } from "./paths";
+import { isPathInside, pathKey, toPosixPath } from "./paths";
 
 let root: string;
 

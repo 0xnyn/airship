@@ -15,9 +15,10 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
+import { canonicalPath } from "@airship/git";
 import type { FileDiff } from "@airship/protocol";
 import { createPatch } from "diff";
-import { canonicalPath, toPosixPath } from "./paths";
+import { toPosixPath } from "./paths";
 
 const CRLF = /\r\n/g;
 const BOM = /^﻿/;

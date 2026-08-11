@@ -128,8 +128,8 @@ export function fileAtHead(cwd: string, path: string): string | null {
   // from mixed sources — some resolved through git, some as the user typed
   // them — and on macOS `/tmp` and `/var` are symlinks, so an uncanonicalized
   // comparison reads a perfectly normal path as escaping the project.
-  const root = realpathSafe(cwd);
-  const rel = relative(root, realpathSafe(resolve(cwd, path)));
+  const root = canonicalPath(cwd);
+  const rel = relative(root, canonicalPath(resolve(cwd, path)));
   // `..` means the path really does escape the working directory; `HEAD:./..`
   // is not valid git syntax and there is nothing sensible to return.
   if (!rel || rel.startsWith("..")) {
@@ -138,15 +138,35 @@ export function fileAtHead(cwd: string, path: string): string | null {
   return tryGitRaw(cwd, ["show", `HEAD:./${rel.split(sep).join("/")}`]);
 }
 
-/** Resolve symlinks where possible, falling back for paths that don't exist. */
-function realpathSafe(path: string): string {
+/**
+ * Resolve symlinks — and, on Windows, case and 8.3 short names — where
+ * possible, falling back for paths that don't exist.
+ *
+ * `.native` on Windows is not a detail. The JS implementation resolves links
+ * while preserving whatever spelling the caller passed, so `C:\Users\RUNNER~1`
+ * stays short while anything that went through `GetFinalPathNameByHandle`
+ * reads `C:\Users\runneradmin`. Two spellings of one directory make `relative`
+ * below return a `..` path, and `fileAtHead` then reports every file as absent
+ * from HEAD — which on the Codex path silently turns each edit into a
+ * whole-file diff with no baseline.
+ *
+ * Exported, and re-exported by @airship/core's ./paths rather than
+ * reimplemented there: core canonicalizes DiffCapture's map keys and hands the
+ * results straight to `fileAtHead`, so a second implementation is a second
+ * chance for the two to disagree. This package is the lowest one that touches
+ * the filesystem, which makes it the place that owns the rule.
+ */
+const realpath =
+  process.platform === "win32" ? realpathSync.native : realpathSync;
+
+export function canonicalPath(path: string): string {
   try {
-    return realpathSync(path);
+    return realpath(path);
   } catch {
     try {
-      return resolve(realpathSync(dirname(path)), basename(path));
+      return resolve(realpath(dirname(path)), basename(path));
     } catch {
-      return path;
+      return resolve(path);
     }
   }
 }

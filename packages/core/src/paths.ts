@@ -26,36 +26,18 @@
  * and undoes it with the turn, and the history store splits in two so undo and
  * PR-from-session silently find nothing.
  */
-import { realpathSync } from "node:fs";
-import { basename, dirname, resolve, sep } from "node:path";
+import { resolve, sep } from "node:path";
+import { canonicalPath } from "@airship/git";
 
 const WIN32 = process.platform === "win32";
 
-/**
- * `.native` on Windows for the case-folding above. Elsewhere the JS version is
- * the better choice — it is faster and does not go through the OS handle API.
- */
-const realpath = WIN32 ? realpathSync.native : realpathSync;
-
-/**
- * Resolve symlinks (and, on Windows, case) so two spellings of one path compare
- * equal.
- *
- * Falls back to the containing directory for a file that does not exist yet —
- * that is the create case, and it is the common one — and to the raw resolved
- * path when even the parent is missing.
- */
-export function canonicalPath(path: string): string {
-  try {
-    return realpath(path);
-  } catch {
-    try {
-      return resolve(realpath(dirname(path)), basename(path));
-    } catch {
-      return resolve(path);
-    }
-  }
-}
+// canonicalPath comes from @airship/git and is deliberately NOT re-exported
+// here: one implementation, one import path. That package needs the identical
+// rule for `fileAtHead`, which derives a repo-relative path from keys this
+// module produced, and when a second copy lived here the two drifted on
+// Windows — the JS realpathSync leaves an 8.3 short name (`RUNNER~1`) alone
+// while the native one expands it (`runneradmin`) — so `relative` returned a
+// `..` path and every file read as absent from HEAD.
 
 /**
  * A stable comparison key for a path.
