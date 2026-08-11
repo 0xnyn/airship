@@ -24,28 +24,37 @@ minimumReleaseAgeExclude:
   # a name pattern carrying a version union and enumerating all 25 for every
   # bump is not maintainable. They only ever publish in lockstep with the
   # version above, so the unpinned glob follows whatever it is pinned to.
+  #
+  # EVERY VERSION BELOW MUST MATCH THE LOCKFILE. A pin left behind at an older
+  # version does not fail loudly — it simply stops excluding anything, and the
+  # package silently falls back under the release-age gate, which is the
+  # esbuild failure above all over again. All of these but esbuild had drifted
+  # at once (turbo 2.10.1 vs 2.10.9, the Claude SDK 0.3.196 vs 0.3.226, both
+  # codex packages a minor behind), and every one of them ships per-platform
+  # optional deps including win32 — so the package most likely to go missing is
+  # the one for whichever platform is least represented in the team's machines.
+  # `pnpm why <pkg>` after a bump, and update the pin in the same commit.
   - 'esbuild@0.28.2'
   - '@esbuild/*'
-  - '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.196'
-  - '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.196'
-  - '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.196'
-  - '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.196'
-  - '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.196'
-  - '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.196'
-  - '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.196'
-  - '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.196'
-  - '@anthropic-ai/claude-agent-sdk@0.3.196'
-  - '@openai/codex-sdk@0.146.0'
+  - '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.226'
+  - '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.226'
+  - '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.226'
+  - '@anthropic-ai/claude-agent-sdk-linux-arm64@0.3.226'
+  - '@anthropic-ai/claude-agent-sdk-linux-x64-musl@0.3.226'
+  - '@anthropic-ai/claude-agent-sdk-linux-x64@0.3.226'
+  - '@anthropic-ai/claude-agent-sdk-win32-arm64@0.3.226'
+  - '@anthropic-ai/claude-agent-sdk-win32-x64@0.3.226'
+  - '@anthropic-ai/claude-agent-sdk@0.3.226'
+  - '@openai/codex-sdk@0.147.0'
   # Unlike the other two SDKs this bundles no binary — the `opencode` CLI is a
   # separate install, detected on PATH at runtime. See providers/opencode.ts.
-  - '@opencode-ai/sdk@1.18.13'
-  - '@openai/codex@0.146.0-darwin-arm64 || 0.146.0-darwin-x64 || 0.146.0-linux-arm64 || 0.146.0-linux-x64 || 0.146.0-win32-arm64 || 0.146.0-win32-x64 || 0.146.0'
-  - '@turbo/darwin-64@2.10.1'
-  - '@turbo/darwin-arm64@2.10.1'
-  - '@turbo/linux-64@2.10.1'
-  - '@turbo/linux-arm64@2.10.1'
-  - '@turbo/windows-64@2.10.1'
-  - '@turbo/windows-arm64@2.10.1'
-  - turbo@2.10.1
-  - ultracite@7.10.0
-  - '@opencode-ai/sdk@1.18.13'
+  - '@opencode-ai/sdk@1.18.15'
+  - '@openai/codex@0.147.0-darwin-arm64 || 0.147.0-darwin-x64 || 0.147.0-linux-arm64 || 0.147.0-linux-x64 || 0.147.0-win32-arm64 || 0.147.0-win32-x64 || 0.147.0'
+  - '@turbo/darwin-64@2.10.9'
+  - '@turbo/darwin-arm64@2.10.9'
+  - '@turbo/linux-64@2.10.9'
+  - '@turbo/linux-arm64@2.10.9'
+  - '@turbo/windows-64@2.10.9'
+  - '@turbo/windows-arm64@2.10.9'
+  - turbo@2.10.9
+  - ultracite@7.10.2

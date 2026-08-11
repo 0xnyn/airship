@@ -30,6 +30,43 @@ Open <http://localhost:5174> and you are looking at Airship, with Airship's own 
 inside it. Pick the hero's button, ask for a change, and the diff lands in `apps/web/src/`.
 `make run:solo` does both in one terminal via `--exec`.
 
+### On Windows
+
+Everything builds, tests and runs on Windows — `checks.yml` gates every PR on a
+`windows-latest` leg alongside Linux, so a break there fails the PR.
+
+`make` is the one thing that does not carry over: the Makefile declares
+`SHELL := /bin/bash` and a handful of targets genuinely need it (`help` is an `awk`
+program, `preflight` a shell conditional, `release` a bash script). It is a thin
+wrapper either way — every recipe is one `pnpm` or `node` call — so use those directly:
+
+| Instead of      | Run                                                        |
+| --------------- | ---------------------------------------------------------- |
+| `make demo`     | `pnpm install && pnpm build`                                 |
+| `make web:dev`  | `pnpm dev:web`                                               |
+| `make run`      | `node apps/cli/dist/index.js --target 5173 --cwd apps/web`   |
+| `make run:solo` | `node apps/cli/dist/index.js --cwd apps/web --exec "pnpm dev:web"` |
+| `make doctor`   | `node apps/cli/dist/index.js doctor --cwd apps/web`          |
+| `make check`    | `pnpm lint && pnpm typecheck && pnpm test`                    |
+| `make readme`   | `node scripts/sync-readme.mjs`                               |
+| `make storybook`| `pnpm turbo run storybook --filter=@airship/overlay`          |
+
+`pnpm dev:web` rather than a bare `vite dev`: the site cannot start until
+`@airship/site-tokens` has emitted `dist/tokens.css`, and only turbo knows that.
+
+Two things worth setting up once:
+
+- **Git Bash**, which ships with Git for Windows, runs the Husky hooks and the release
+  scripts. Without a POSIX `sh` on PATH the pre-commit formatter silently does not run.
+- **Developer Mode** (Settings → System → For developers), so pnpm can create the
+  symlinks its `node_modules` layout depends on without elevation.
+
+Line endings are pinned to LF by [`.gitattributes`](.gitattributes) — do not override it
+with `core.autocrlf`. Several generators parse their input with anchored regexes, and a
+CRLF checkout makes them report a missing front-matter block rather than a wrong one.
+If you cloned before that file existed, renormalize once with
+`git rm --cached -r . && git reset --hard`.
+
 ## Repo layout
 
 | Package | Role |

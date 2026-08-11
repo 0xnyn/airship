@@ -428,6 +428,8 @@ and provider it would use from your terminal.
 
 Node 22.13 or later, and one of Claude Code, OpenAI Codex or OpenCode.
 
+macOS, Linux and Windows. Every PR is built and tested on Linux and Windows.
+
 ## Links
 
 - [airship.design](https://airship.design)
