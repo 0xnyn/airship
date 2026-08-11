@@ -283,7 +283,7 @@ demo: ## One-shot: install + build, then print the two-terminal recipe
 
 ##@ Release (@airshiplabs/cli)
 
-.PHONY: readme release release\:ci release\:version
+.PHONY: readme release release\:ci release\:retry release\:version
 
 readme: ## Regenerate apps/cli/README.md from the root README.md
 	@node scripts/sync-readme.mjs
@@ -296,6 +296,11 @@ release\:ci: ## Trigger the CI publish workflow. BUMP=patch|minor|major, VERSION
 	@gh workflow run publish.yml --ref "$$(git rev-parse --abbrev-ref HEAD)" \
 		-f bump="$(or $(BUMP),patch)" -f version="$(VERSION)" -f dry_run="$(if $(DRY),true,false)"
 	@echo "Dispatched publish on $$(git rev-parse --abbrev-ref HEAD). Watch: gh run watch"
+
+release\:retry: ## Publish a tag that never reached npm. TAG=cli-vX.Y.Z
+	@test -n "$(TAG)" || { echo "release:retry needs TAG=cli-vX.Y.Z"; exit 1; }
+	@gh workflow run release.yml -f tag="$(TAG)"
+	@echo "Dispatched release for $(TAG). Watch: gh run watch"
 
 release\:version: ## Print the version the next release would get (BUMP=, VERSION=)
 	@node scripts/next-version.mjs $(if $(VERSION),--version "$(VERSION)",--bump "$(or $(BUMP),patch)")

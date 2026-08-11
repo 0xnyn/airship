@@ -3,9 +3,9 @@ name: Publish (CI)
 run-name: "Publish · ${{ inputs.version || inputs.bump }}${{ inputs.dry_run && ' (dry-run)' || '' }}"
 
 # All-in-CI release for @airshiplabs/cli: pick a bump (or an explicit version)
-# and this bumps apps/cli/package.json, commits, tags cli-vX.Y.Z, pushes, and
-# publishes — the CI equivalent of `make release` plus pushing the tag, with no
-# local steps.
+# and this bumps apps/cli/package.json, builds, publishes, then commits and tags
+# cli-vX.Y.Z and pushes — the CI equivalent of `make release` plus pushing the
+# tag, with no local steps.
 #
 # Run it from your release/* branch: the version-bump commit lands there and
 # reaches main through the normal release PR. branch-policy.yml is what makes
@@ -14,6 +14,10 @@ run-name: "Publish · ${{ inputs.version || inputs.bump }}${{ inputs.dry_run && 
 # Note: the cli-v* tag is pushed with GITHUB_TOKEN, which by design does NOT
 # trigger release.yml — so this workflow publishes here, and the two lanes can
 # never double-publish.
+#
+# Nothing reaches the remote until npm has the version, so a failed run is a
+# re-dispatch and nothing else. If a run ever does die between the publish and
+# the push, finish it from release.yml's workflow_dispatch — don't re-cut it.
 on:
   workflow_dispatch:
     inputs:
@@ -74,10 +78,41 @@ jobs:
           echo "tag=cli-v$NEXT" >> "$GITHUB_OUTPUT"
           echo "::notice::Releasing @airshiplabs/cli v$NEXT (tag cli-v$NEXT)"
 
-      - name: Guard against an existing tag
+      # Asks git AND npm, because those two can disagree — that is the whole
+      # failure this job is now built around. A bare "tag already exists" is
+      # what you got when v0.2.4 was tagged but never published, and it named
+      # the symptom while hiding both the cause and the way out.
+      #
+      # A network failure on `npm view` reads as "not published", which sends
+      # the job on to publish; npm rejects the duplicate there, before anything
+      # is pushed. So the ambiguous case fails on the npm side, never on git's.
+      - name: Guard against an existing release
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          NEXT: ${{ steps.ver.outputs.next }}
         run: |
-          if git rev-parse -q --verify "refs/tags/${{ steps.ver.outputs.tag }}" >/dev/null; then
-            echo "::error::Tag ${{ steps.ver.outputs.tag }} already exists."
+          tagged=0
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            tagged=1
+          fi
+          published=0
+          if npm view "@airshiplabs/cli@$NEXT" version >/dev/null 2>&1; then
+            published=1
+          fi
+
+          if [ "$tagged" = 1 ] && [ "$published" = 1 ]; then
+            echo "::error::v$NEXT is already released — tag $TAG exists and npm has it. Pick a different version."
+            exit 1
+          fi
+          if [ "$tagged" = 1 ] && [ "$published" = 0 ]; then
+            echo "::error::v$NEXT is half-released: tag $TAG exists but npm never got the package."
+            echo "  Finish it instead of re-cutting it — run the Release workflow with tag=$TAG."
+            echo "  gh workflow run release.yml -f tag=$TAG"
+            exit 1
+          fi
+          if [ "$tagged" = 0 ] && [ "$published" = 1 ]; then
+            echo "::error::npm already has v$NEXT but tag $TAG does not exist — npm ran ahead of git."
+            echo "  Push the tag for the commit that shipped it; do not re-publish."
             exit 1
           fi
 
@@ -113,6 +148,21 @@ jobs:
       - name: Validate packaging
         run: bash scripts/verify-tarball.sh "${{ steps.pack.outputs.tgz }}"
 
+      # Publishing comes BEFORE the push, and the order is the point. This used
+      # to push the release commit and the tag first, so when npm failed the
+      # run left git claiming a release npm had never seen — and the tag guard
+      # above then blocked every re-run of that same version. v0.2.4 stranded
+      # exactly that way. Nothing here writes to the remote until the version is
+      # actually on npm, so every failure up to this line is just a re-dispatch.
+      #
+      # The tarball is the one "Validate packaging" just looked inside — packed
+      # after the bump, so it already carries the released version.
+      - name: Publish to npm
+        if: ${{ inputs.dry_run == false }}
+        run: bash scripts/npm-publish.sh "${{ steps.pack.outputs.tgz }}"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Commit, tag and push
         if: ${{ inputs.dry_run == false }}
         run: |
@@ -126,14 +176,10 @@ jobs:
           git tag -a "${{ steps.ver.outputs.tag }}" -m "${{ steps.ver.outputs.tag }}"
           git push --no-verify origin "HEAD:${{ github.ref_name }}" --follow-tags
 
-      # The same tarball "Validate packaging" just looked inside — packed after
-      # the bump, so it already carries the released version.
-      - name: Publish to npm
-        if: ${{ inputs.dry_run == false }}
-        run: npm publish "${{ steps.pack.outputs.tgz }}" --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-
+      # Last, and after the push on purpose. This checks a release that npm has
+      # already made permanent — it cannot prevent a bad one, only make it loud
+      # (see the script's own header). Gating the push on it would strand a
+      # perfectly good release in the opposite direction.
       - name: The npm page has a README
         if: ${{ inputs.dry_run == false }}
         run: bash scripts/verify-published-readme.sh
