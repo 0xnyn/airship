@@ -20,8 +20,14 @@ PKG_NAME="@airshiplabs/cli"
 # Every path the published CLI resolves at runtime but no bundler can inline.
 # dist/vendor/ is written by apps/cli/scripts/vendor-assets.mjs; without it the
 # installed CLI 404s on its own overlay and renders unstyled.
+#
+# README.md is generated from the root one by scripts/sync-readme.mjs and is the
+# only thing npmjs.com has to show for the package. Without it the page reads
+# "This package does not have a README" — which is how 0.2.1 shipped — and the
+# version number is spent, because npm never lets you republish one.
 REQUIRED=(
   "package/package.json"
+  "package/README.md"
   "package/dist/index.js"
   "package/dist/vendor/overlay.global.js"
   "package/dist/vendor/hook.global.js"

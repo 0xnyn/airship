@@ -26,6 +26,7 @@
     "airship": "./dist/index.js"
   },
   "files": [
+    "README.md",
     "dist"
   ],
   "scripts": {

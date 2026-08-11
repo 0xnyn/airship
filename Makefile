@@ -283,7 +283,10 @@ demo: ## One-shot: install + build, then print the two-terminal recipe
 
 ##@ Release (@airshiplabs/cli)
 
-.PHONY: release release\:ci release\:version
+.PHONY: readme release release\:ci release\:version
+
+readme: ## Regenerate apps/cli/README.md from the root README.md
+	@node scripts/sync-readme.mjs
 
 release: ## Cut a release locally (bump + commit + tag; stops before push)
 	$(confirm_shared)
