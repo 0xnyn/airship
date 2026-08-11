@@ -163,7 +163,11 @@ describe("preparePromptInput — source backfill", () => {
         source: { file: "/src/App.tsx", line: 4 },
       })
     );
-    expect(input.source?.file).toBe(join("src", "App.tsx"));
+    // Forward slashes, not `join`: this value is separator-independent by
+    // design. It goes into the edit prompt, into the JSON an MCP tool returns
+    // (where a backslash arrives doubled), and into the overlay as a label, so
+    // the resolver normalizes it rather than emitting a native path.
+    expect(input.source?.file).toBe("src/App.tsx");
     expect(input.source?.context).toContain("Get Started");
   });
 });
