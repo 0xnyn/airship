@@ -12,6 +12,20 @@ allowBuilds:
   # `make web:preview` and the deploy lane need it to have run its install step.
   workerd: true
 minimumReleaseAgeExclude:
+  # esbuild ships its binary as ~25 per-platform packages listed as OPTIONAL
+  # dependencies, published minutes apart from the parent. When the parent is
+  # old enough to pass the release-age gate but the platform packages are not,
+  # pnpm drops them silently — optional deps that fail resolution are not an
+  # error — and installs an esbuild with no binary behind it. The postinstall
+  # then finds a different version's binary on the hoist path and fails with
+  # `Expected "0.28.2" but got "0.27.7"`.
+  #
+  # The parent is pinned; the platform packages cannot be, because pnpm rejects
+  # a name pattern carrying a version union and enumerating all 25 for every
+  # bump is not maintainable. They only ever publish in lockstep with the
+  # version above, so the unpinned glob follows whatever it is pinned to.
+  - 'esbuild@0.28.2'
+  - '@esbuild/*'
   - '@anthropic-ai/claude-agent-sdk-darwin-arm64@0.3.196'
   - '@anthropic-ai/claude-agent-sdk-darwin-x64@0.3.196'
   - '@anthropic-ai/claude-agent-sdk-linux-arm64-musl@0.3.196'
