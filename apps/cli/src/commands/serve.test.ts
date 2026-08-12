@@ -8,11 +8,19 @@
  * and a precedence order, and which no other layer re-checks.
  */
 
-import { describe, expect, it } from "vitest";
+import net from "node:net";
+import tls from "node:tls";
+import { afterEach, describe, expect, it } from "vitest";
 import { FLAGS } from "../lib/args";
 import { mergeSettings, type Settings } from "../lib/config";
 import { CliError } from "../lib/errors";
-import { SERVE_FLAGS, toServeOptions } from "./serve";
+import { tlsFixture } from "../lib/tls-fixture";
+import {
+  resolveTarget,
+  SERVE_FLAGS,
+  settleScheme,
+  toServeOptions,
+} from "./serve";
 
 const CWD = "/tmp/airship-serve-test";
 
@@ -216,5 +224,113 @@ describe("SERVE_FLAGS", () => {
     for (const spec of FLAGS.filter((flag) => flag.group !== "GLOBAL")) {
       expect(SERVE_FLAGS).toContain(spec.name);
     }
+  });
+});
+
+const TLS_OPTIONS = tlsFixture();
+const NOTHING_LISTENING = /Nothing is listening/;
+
+const servers: (net.Server | tls.Server)[] = [];
+
+function listen(server: net.Server | tls.Server): Promise<number> {
+  servers.push(server);
+  return new Promise((resolvePort) => {
+    server.listen(0, "localhost", () => {
+      resolvePort((server.address() as net.AddressInfo).port);
+    });
+  });
+}
+
+afterEach(async () => {
+  await Promise.all(
+    servers.splice(0).map(
+      (server) =>
+        new Promise<void>((done) => {
+          server.close(() => done());
+        })
+    )
+  );
+});
+
+/** Only the fields `resolveTarget` reads; the rest of ServeOptions is irrelevant here. */
+const opts = (over: Record<string, unknown>) =>
+  ({ cwd: process.cwd(), quiet: true, ...over }) as Parameters<
+    typeof resolveTarget
+  >[0];
+
+describe("resolveTarget", () => {
+  it("reports the scheme of an explicit --target that speaks TLS", async () => {
+    const port = await listen(tls.createServer(TLS_OPTIONS));
+    expect(await resolveTarget(opts({ target: port }))).toEqual({
+      port,
+      scheme: "https",
+    });
+  });
+
+  it("reports no scheme under --exec, because nothing is listening yet", async () => {
+    // A port we know is free: bind it, learn the number, release it.
+    const probe = net.createServer();
+    const port = await new Promise<number>((resolvePort) => {
+      probe.listen(0, "localhost", () => {
+        resolvePort((probe.address() as net.AddressInfo).port);
+      });
+    });
+    await new Promise<void>((done) => {
+      probe.close(() => done());
+    });
+
+    const resolved = await resolveTarget(
+      opts({ exec: "pnpm dev", target: port })
+    );
+    expect(resolved).toEqual({ port });
+    // The absent scheme is the whole point: the launch path must probe again
+    // after the dev server is up, or the proxy dials a TLS upstream in
+    // plaintext and 502s on every request. `settleScheme` is what does that,
+    // and its own tests cover it.
+    expect(resolved.scheme).toBeUndefined();
+  });
+
+  it("fails an explicit --target with nothing behind it", async () => {
+    const probe = net.createServer();
+    const port = await new Promise<number>((resolvePort) => {
+      probe.listen(0, "localhost", () => {
+        resolvePort((probe.address() as net.AddressInfo).port);
+      });
+    });
+    await new Promise<void>((done) => {
+      probe.close(() => done());
+    });
+
+    await expect(resolveTarget(opts({ target: port }))).rejects.toThrow(
+      NOTHING_LISTENING
+    );
+  });
+});
+
+describe("settleScheme", () => {
+  // This is the guard the previous `--exec` `resolveTarget` test could not
+  // provide: it exercises the exact post-spawn probe the launch path runs,
+  // against a listener that only ever answers TLS. A version that skips the
+  // probe (`known ?? "http"`) reports "http" here and this goes red.
+  it("probes when the scheme is not already known, and finds TLS", async () => {
+    const port = await listen(tls.createServer(TLS_OPTIONS));
+    expect(await settleScheme(undefined, port)).toBe("https");
+  });
+
+  it("trusts an already-known scheme without probing", async () => {
+    // Nothing is listening on this port at all; a probe would report
+    // "http" (via the plain-TCP fallback) or, if truly free, would time
+    // out. Getting "https" back proves the known value short-circuited.
+    const probe = net.createServer();
+    const port = await new Promise<number>((resolvePort) => {
+      probe.listen(0, "localhost", () => {
+        resolvePort((probe.address() as net.AddressInfo).port);
+      });
+    });
+    await new Promise<void>((done) => {
+      probe.close(() => done());
+    });
+
+    expect(await settleScheme("https", port)).toBe("https");
   });
 });
