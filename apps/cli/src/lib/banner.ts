@@ -8,6 +8,7 @@
 
 import type { AgentKind, AirshipSurface } from "@airship/server";
 import { gitStatus } from "@airship/server";
+import type { TargetScheme } from "./detect";
 import { style } from "./terminal";
 
 /** What `--safe` actually buys on this backend, stated where the user looks. */
@@ -138,6 +139,8 @@ export function launchBanner(info: {
   /** The dev server's hostname, already defaulted — what `--target-host` set. */
   targetHost: string;
   targetPort: number;
+  /** What the dev server speaks, as `probeScheme` found it. */
+  targetScheme: TargetScheme;
   url: string;
 }): string {
   // Four flags can name a model — `--model`, the three per-backend ones — and
@@ -149,7 +152,7 @@ export function launchBanner(info: {
   return (
     `\n  ${style.magenta("◆")} ${style.bold("airship")}  —  editing ${info.cwd} with ${info.agent}${on}\n` +
     `  → open ${style.cyan(info.url)}\n` +
-    `    ${style.dim(`(proxying your dev server at http://${info.targetHost}:${info.targetPort})`)}\n\n` +
+    `    ${style.dim(`(proxying your dev server at ${info.targetScheme}://${info.targetHost}:${info.targetPort})`)}\n\n` +
     exposureBanner(info.host) +
     // Stated at every launch, not just in --help: a tool that can write
     // anywhere on disk should say so where the user is actually looking.

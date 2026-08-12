@@ -21,7 +21,7 @@ import {
   requirePort,
 } from "../lib/args";
 import { asBoolean, asString, CONFIG_FILENAME } from "../lib/config";
-import { DEFAULT_TARGET_HOST, detectTarget, isListening } from "../lib/detect";
+import { DEFAULT_TARGET_HOST, detectTarget, probeScheme } from "../lib/detect";
 import { resolveSettings } from "../lib/settings";
 import {
   note,
@@ -234,13 +234,15 @@ async function checkDevServer(
     : DEFAULT_TARGET_HOST;
   if (targetFlag) {
     const port = requirePort(targetFlag, "target");
-    const live = await isListening(port, host);
+    const scheme = await probeScheme(port, host);
     return {
-      hint: live ? undefined : "Start it, or pass a different --target.",
+      hint: scheme ? undefined : "Start it, or pass a different --target.",
       label: "dev server",
-      level: live ? "ok" : "fail",
-      value: live
-        ? `listening on ${host}:${port}`
+      level: scheme ? "ok" : "fail",
+      // The scheme is part of the answer: an https dev server that the proxy
+      // dialled in plaintext was the bug `probeScheme` exists for.
+      value: scheme
+        ? `listening at ${scheme}://${host}:${port}`
         : `nothing on ${host}:${port}`,
     };
   }
@@ -260,7 +262,9 @@ async function checkDevServer(
       : "Start your dev server, or pass --target <port>.",
     label: "dev server",
     level: detected.listening ? "ok" : "warn",
-    value: `${detected.listening ? "listening on" : "nothing on"} ${host}:${detected.port} (${detected.reason})`,
+    value: detected.listening
+      ? `listening at ${detected.scheme}://${host}:${detected.port} (${detected.reason})`
+      : `nothing on ${host}:${detected.port} (${detected.reason})`,
   };
 }
 
