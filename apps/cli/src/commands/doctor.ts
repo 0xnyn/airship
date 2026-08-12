@@ -20,7 +20,7 @@ import {
   requirePort,
 } from "../lib/args";
 import { asBoolean, asString, CONFIG_FILENAME } from "../lib/config";
-import { detectTarget, isListening } from "../lib/detect";
+import { detectTarget, probeScheme } from "../lib/detect";
 import { resolveSettings } from "../lib/settings";
 import {
   note,
@@ -226,12 +226,12 @@ async function checkDevServer(
 ): Promise<Check> {
   if (targetFlag) {
     const port = requirePort(targetFlag, "target");
-    const live = await isListening(port);
+    const scheme = await probeScheme(port);
     return {
-      hint: live ? undefined : "Start it, or pass a different --target.",
+      hint: scheme ? undefined : "Start it, or pass a different --target.",
       label: "dev server",
-      level: live ? "ok" : "fail",
-      value: live ? `listening on ${port}` : `nothing on ${port}`,
+      level: scheme ? "ok" : "fail",
+      value: scheme ? `listening on ${port} (${scheme})` : `nothing on ${port}`,
     };
   }
 
@@ -250,7 +250,7 @@ async function checkDevServer(
       : "Start your dev server, or pass --target <port>.",
     label: "dev server",
     level: detected.listening ? "ok" : "warn",
-    value: `${detected.listening ? "listening on" : "nothing on"} ${detected.port} (${detected.reason})`,
+    value: `${detected.listening ? `${detected.scheme} on` : "nothing on"} ${detected.port} (${detected.reason})`,
   };
 }
 

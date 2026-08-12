@@ -1,8 +1,124 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
-import { candidatePorts } from "./detect";
+import tls from "node:tls";
+import { afterEach, describe, expect, it } from "vitest";
+import { candidatePorts, detectTarget, probeScheme } from "./detect";
+
+const FIXTURES = join(import.meta.dirname, "../../test-fixtures");
+const TLS_OPTIONS = {
+  cert: readFileSync(join(FIXTURES, "localhost.pem")),
+  key: readFileSync(join(FIXTURES, "localhost-key.pem")),
+};
+
+const servers: (net.Server | tls.Server)[] = [];
+
+/** Listen on an ephemeral port, and register for teardown. */
+function listen(server: net.Server | tls.Server): Promise<number> {
+  servers.push(server);
+  return new Promise((resolvePort) => {
+    server.listen(0, "localhost", () => {
+      resolvePort((server.address() as net.AddressInfo).port);
+    });
+  });
+}
+
+afterEach(async () => {
+  await Promise.all(
+    servers.splice(0).map(
+      (server) =>
+        new Promise<void>((done) => {
+          server.close(() => done());
+        })
+    )
+  );
+});
+
+describe("probeScheme", () => {
+  it("reports https for a TLS listener", async () => {
+    const port = await listen(tls.createServer(TLS_OPTIONS));
+    expect(await probeScheme(port)).toBe("https");
+  });
+
+  it("reports http for a plaintext listener", async () => {
+    // A bare net.Server never reads the ClientHello bytes (nothing resumes
+    // the stream), so it neither answers nor notices the client giving up —
+    // it just hangs. An http.Server has the real behavior probeScheme relies
+    // on: Node's HTTP parser recognizes the TLS record header and tears the
+    // connection down immediately, which is what a real plaintext dev server
+    // does too.
+    const port = await listen(http.createServer());
+    expect(await probeScheme(port)).toBe("http");
+  });
+
+  it("falls back to a TCP probe when the handshake times out twice", async () => {
+    // A server that accepts the connection and then never responds: the
+    // ClientHello is never answered, so the handshake neither completes nor
+    // errors — it only times out. `resume()` puts the accepted socket in
+    // flowing mode so it notices the probe's connections closing (otherwise
+    // the socket never notices the peer is gone and `server.close()` in
+    // `afterEach` hangs) without changing what's under test: the socket still
+    // never writes anything back, so the handshake still stalls. The explicit
+    // retry window keeps this test fast rather than waiting out
+    // TIMEOUT_RETRY_MS's real-world default.
+    const port = await listen(
+      net.createServer((socket) => {
+        socket.resume();
+      })
+    );
+    expect(await probeScheme(port, "localhost", 150, 100)).toBe("http");
+  });
+
+  it("retries a timed-out handshake and reports https once it completes", async () => {
+    // The bug this guards: a next dev --experimental-https process whose
+    // event loop is blocked mid-compile can miss a short probe window without
+    // being plaintext. This models "accepted the connection but was slow to
+    // actually answer it" — as opposed to the never-responds case above — by
+    // relaying to a real TLS listener only after a delay that blows the first
+    // probe's window but comfortably fits inside the retry's.
+    const backendPort = await listen(tls.createServer(TLS_OPTIONS));
+    const relayDelayMs = 150;
+    const port = await listen(
+      net.createServer((clientSocket) => {
+        let upstream: net.Socket | undefined;
+        const timer = setTimeout(() => {
+          upstream = net.connect(backendPort, "localhost", () => {
+            clientSocket.pipe(upstream as net.Socket);
+            (upstream as net.Socket).pipe(clientSocket);
+          });
+        }, relayDelayMs);
+        // However the connection ends, tear down the half we opened
+        // ourselves so `server.close()` in `afterEach` does not hang waiting
+        // on a socket nothing will ever close.
+        clientSocket.once("close", () => {
+          clearTimeout(timer);
+          upstream?.destroy();
+        });
+      })
+    );
+
+    // A first window shorter than the relay's delay, so it times out and
+    // forces the retry path; a retry window comfortably longer than it, so
+    // the second attempt lands on a real TLS listener.
+    expect(await probeScheme(port, "localhost", 40, 1000)).toBe("https");
+  });
+
+  it("reports null when nothing is listening", async () => {
+    // Bind and immediately release, so the port is known-free rather than guessed.
+    const server = net.createServer();
+    const port = await new Promise<number>((resolvePort) => {
+      server.listen(0, "localhost", () => {
+        resolvePort((server.address() as net.AddressInfo).port);
+      });
+    });
+    await new Promise<void>((done) => {
+      server.close(() => done());
+    });
+    expect(await probeScheme(port)).toBeNull();
+  });
+});
 
 function project(pkg: Record<string, unknown> | null): string {
   const root = mkdtempSync(join(tmpdir(), "airship-detect-"));
@@ -101,5 +217,14 @@ describe("candidatePorts", () => {
     expect(new Set(ports).size).toBe(ports.length);
     // The reason for the first sighting is kept — it is the more specific one.
     expect(candidatePorts(cwd)[0]?.reason).toBe("the port in your dev script");
+  });
+});
+
+describe("detectTarget", () => {
+  it("reports the scheme of the candidate it settles on", async () => {
+    const port = await listen(tls.createServer(TLS_OPTIONS));
+    const cwd = project({ scripts: { dev: `next dev --port ${port}` } });
+    const detected = await detectTarget(cwd);
+    expect(detected).toMatchObject({ listening: true, port, scheme: "https" });
   });
 });
