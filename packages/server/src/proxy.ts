@@ -32,6 +32,12 @@ const require = createRequire(import.meta.url);
 
 // Hop-by-hop headers must not be forwarded, and length/encoding are recomputed
 // when we rewrite the HTML body.
+//
+// Framing headers block *other* origins from embedding the app, but a surface
+// response is same-origin in our own canvas iframe — forwarding them just
+// blanks the frame we injected into, with no page-level error to explain why.
+// Some servers try to prevent iframing entirely; for a dev tool, bypassing
+// that restriction here is acceptable.
 const STRIP_ON_INJECT = new Set([
   "connection",
   "keep-alive",
@@ -43,6 +49,9 @@ const STRIP_ON_INJECT = new Set([
   "upgrade",
   "content-length",
   "content-encoding",
+  "x-frame-options",
+  "content-security-policy",
+  "content-security-policy-report-only",
 ]);
 
 const TUNNEL_TIMEOUT_MS = 60_000;
