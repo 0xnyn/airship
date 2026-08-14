@@ -49,6 +49,7 @@ describe("specimens", () => {
       "hero",
       "icon",
       "image",
+      "mixedBorder",
       "note",
       "paragraph",
       "path",

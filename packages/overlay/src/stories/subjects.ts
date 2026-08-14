@@ -389,6 +389,23 @@ const SPECIMENS = {
    * more common shape in a real app, and it is the arm that would silently stop
    * working if the scan were dropped.
    */
+  /**
+   * Four edges that disagree, which the Stroke section used to hide.
+   *
+   * Every read in that section asked `border-top-*` and answered for the whole
+   * box, so this element displayed as a uniform red 1px border — and the first
+   * edit imposed red on all four. Inline styles rather than a class, because
+   * what is under test is per-edge disagreement and a stylesheet rule would let
+   * a shorthand creep back in.
+   */
+  mixedBorder: {
+    covers:
+      "four differing border colours and widths on one element · the Mixed sentinel on a hand-built colour row · hasStroke",
+    label: "a box with four different edges",
+    markup: `<div data-subject style="padding:24px;border-style:solid;border-top-color:#e11d48;border-right-color:#0d9488;border-bottom-color:#2563eb;border-left-color:#ca8a04;border-top-width:1px;border-right-width:4px;border-bottom-width:1px;border-left-width:4px">Four edges, four colours.</div>`,
+    wrap: "block",
+  },
+
   note: {
     covers: "hasText via the text-node scan rather than the TEXTY tag set",
     label: "a note",
