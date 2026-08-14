@@ -1,15 +1,16 @@
-import type {
-  AgentKind,
-  AttrEditTarget,
-  ElementContext,
-  MoveEdit,
-  ReviewComment,
-  SourceLocation,
-  StructuralEdit,
-  StyleChange,
-  TextEditTarget,
-  TokenScanResult,
-  VisualEditTarget,
+import {
+  type AgentKind,
+  type AttrEditTarget,
+  EDIT_OUTPUT_JSON_SCHEMA,
+  type ElementContext,
+  type MoveEdit,
+  type ReviewComment,
+  type SourceLocation,
+  type StructuralEdit,
+  type StyleChange,
+  type TextEditTarget,
+  type TokenScanResult,
+  type VisualEditTarget,
 } from "@airship/protocol";
 import {
   categoryForProperty,
@@ -37,6 +38,45 @@ The user points at a UI element in their browser and either describes a change i
 - When done, return the structured result (a one-line summary, the files you changed, and up to 3 follow-up suggestions).`;
 }
 
+/** One field of the edit schema, worded from the schema itself. */
+function fieldLine(
+  name: keyof typeof EDIT_OUTPUT_JSON_SCHEMA.properties
+): string {
+  const prop = EDIT_OUTPUT_JSON_SCHEMA.properties[name];
+  const kind = prop.type === "array" ? "array of strings" : prop.type;
+  return `- "${name}" (${kind}): ${prop.description}`;
+}
+
+/**
+ * The structured-output contract, spelled as a prompt instruction.
+ *
+ * OpenCode's `format` option is implemented as a forced tool call, which some
+ * providers reject outright (see opencode.ts), so it cannot be relied on to
+ * carry the contract — and when it is dropped, nothing else tells the model
+ * what JSON to emit. The contract rides in the system prompt instead, and
+ * airship's own extractor (`splitStructured`) lifts the block back out of the
+ * prose.
+ *
+ * Derived from EDIT_OUTPUT_JSON_SCHEMA rather than restated, so a schema
+ * change cannot leave this text describing fields that no longer exist. It
+ * deliberately contains no filled-in example: a model that echoed an example
+ * verbatim would hand the extractor a payload that parses.
+ *
+ * The three rules are load-bearing, not style: the extractor treats prose as
+ * a strict prefix of the message, the schema is strict (one missing key loses
+ * the whole payload, summary included), and plain questions produce no edit
+ * yet still need the block.
+ */
+export function structuredOutputInstruction(): string {
+  const fields = EDIT_OUTPUT_JSON_SCHEMA.required.map(fieldLine).join("\n");
+  return `At the very end of your final message — after all prose, and exactly once — append a single JSON object wrapped in <structuredoutput></structuredoutput> tags, with exactly these keys:
+${fields}
+
+- Include every key every time; the object is rejected whole if one is missing.
+- Emit the block even when nothing was edited (an empty array for "filesChanged").
+- Never place the block mid-message or emit it twice; nothing may follow it.`;
+}
+
 /**
  * The system prompt for a given backend.
  *
@@ -49,13 +89,20 @@ The user points at a UI element in their browser and either describes a change i
  * The test is on `claude` rather than on each backend that lacks the tool, so
  * that a backend added later defaults to the honest branch instead of silently
  * advertising a tool it does not have.
+ *
+ * OpenCode alone also carries the structured-output contract: Claude and
+ * Codex constrain the decode natively (`outputFormat` / `outputSchema`), so
+ * telling them about wrapper tags would only invite stray tags in prose.
  */
 export function systemPrompt(agent: AgentKind): string {
-  return buildSystemPrompt(
+  const base = buildSystemPrompt(
     agent === "claude"
       ? "If you need the selection details again, call the `get_element_context` tool."
       : "The full selection details are included in the instruction below — re-read them there if you need them again."
   );
+  return agent === "opencode"
+    ? `${base}\n\n${structuredOutputInstruction()}`
+    : base;
 }
 
 /** @deprecated Prefer {@link systemPrompt}; retained as the Claude spelling. */

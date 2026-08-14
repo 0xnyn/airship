@@ -101,8 +101,21 @@ export interface OcTokens {
   total?: number;
 }
 
+/**
+ * The SDK's `ApiError` carries the provider's own HTTP signal — `statusCode`,
+ * `isRetryable`, the raw `responseBody` — under `data`, and its `name` literal
+ * is spelled `"APIError"`. Airship used to drop all of it, keeping only
+ * `message`; classifying a provider rejection (e.g. a forced-tool-choice 400)
+ * needs the structure, not just the words.
+ */
 export interface OcMessageError {
-  data?: { message?: string; retries?: number };
+  data?: {
+    isRetryable?: boolean;
+    message?: string;
+    responseBody?: string;
+    retries?: number;
+    statusCode?: number;
+  };
   name?: string;
 }
 
@@ -110,6 +123,9 @@ export interface OcMessageInfo {
   cost?: number;
   error?: OcMessageError;
   id: string;
+  /** Which model actually answered — required on the real `AssistantMessage`. */
+  modelID?: string;
+  providerID?: string;
   role: "assistant" | "user";
   sessionID: string;
   /** Populated only when opencode's own extractor succeeds — often it does not. */

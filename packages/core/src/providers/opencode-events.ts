@@ -6,9 +6,14 @@
  * The vocabulary itself, and the reason for translating into it, live in
  * `./shared`.
  */
-import type { Effort, TodoItem } from "@airship/protocol";
+import {
+  EditStructuredOutputSchema,
+  type Effort,
+  type TodoItem,
+} from "@airship/protocol";
 import type {
   OcEvent,
+  OcMessageError,
   OcPermissionAsked,
   OcToolPart,
   OcToolState,
@@ -18,11 +23,13 @@ import type { NormalizedTool } from "./shared";
 /**
  * The wrappers a structured payload actually arrives in.
  *
- * OpenCode asks for `<structuredoutput>` tags, but that is a *prompt
- * instruction*, not a constrained decode — so compliance varies by model. The
- * same model observed using the tags on one turn returned a ```json fence on
- * the next. Both are recognised, longest opener first so ```json wins over the
- * bare fence at the same offset.
+ * Both opencode's `format` option and airship's own system-prompt instruction
+ * ask for `<structuredoutput>` tags — either way the tags are a prompt-level
+ * convention in the text, so compliance varies by model. The same model
+ * observed using the tags on one turn returned a ```json fence on the next.
+ * Both are recognised, longest opener first so ```json wins over the bare
+ * fence at the same offset. (On the wire, `format` is additionally a forced
+ * tool call; see `isForcedToolChoiceRejection`.)
  */
 export const STRUCTURED_WRAPPERS: ReadonlyArray<{
   close: string;
@@ -36,69 +43,200 @@ export const STRUCTURED_WRAPPERS: ReadonlyArray<{
 /** Every opener, for the streaming holdback in the reducer. */
 export const STRUCTURED_OPENERS = STRUCTURED_WRAPPERS.map((w) => w.open);
 
+/** See `bareCandidates`. Global so every line-opening `{` is a candidate. */
+const BARE_OBJECT_ALL = /(?:^|\n)[ \t]*\{/g;
+
+/** See `isForcedToolChoiceRejection`. Matches `tool_choice` and `toolChoice`. */
+const TOOL_CHOICE = /tool[_ ]?choice/i;
+
+/** Where a candidate payload sits inside the text. `close: null` = bare object. */
+interface PayloadCandidate {
+  /** Where the wrapper (or brace) starts — the prose cut point. */
+  at: number;
+  close: string | null;
+  /** Where the payload text starts. */
+  from: number;
+}
+
+/**
+ * A bound on how many candidate regions one message is worth scanning. Real
+ * messages carry one payload and a handful of fences; a pathological wall of
+ * fences should not turn every render tick into a JSON-parse storm.
+ */
+const CANDIDATE_CAP = 32;
+
+/** Every wrapper occurrence, in text order; longer opener wins a tied start. */
+function wrapperCandidates(text: string): PayloadCandidate[] {
+  const out: PayloadCandidate[] = [];
+  for (const { close, open } of STRUCTURED_WRAPPERS) {
+    let at = text.indexOf(open);
+    while (at !== -1 && out.length < CANDIDATE_CAP) {
+      out.push({ at, close, from: at + open.length });
+      at = text.indexOf(open, at + open.length);
+    }
+  }
+  return out.sort((a, b) => a.at - b.at || b.from - a.from);
+}
+
 /**
  * A `{` opening its own line — the unwrapped form, which is what the model
  * emits when it ignores the wrapper instruction entirely (observed on a real
- * run). Anchored to a line start so a brace quoted mid-sentence is not mistaken
- * for the start of a payload.
+ * run). Anchored to a line start so a brace quoted mid-sentence is not
+ * mistaken for the start of a payload. Each candidate runs to end-of-text.
  */
-const BARE_OBJECT = /(?:^|\n)[ \t]*\{/;
+function bareCandidates(text: string): PayloadCandidate[] {
+  const out: PayloadCandidate[] = [];
+  BARE_OBJECT_ALL.lastIndex = 0;
+  let match = BARE_OBJECT_ALL.exec(text);
+  while (match && out.length < CANDIDATE_CAP) {
+    out.push({ at: match.index, close: null, from: match.index });
+    match = BARE_OBJECT_ALL.exec(text);
+  }
+  return out;
+}
+
+/** The candidate's contents, up to its close marker (or end-of-text). */
+function candidatePayload(text: string, c: PayloadCandidate): string {
+  if (c.close === null) {
+    return text.slice(c.from).trim();
+  }
+  const closeAt = text.indexOf(c.close, c.from);
+  // An unterminated wrapper means the block is still streaming; everything
+  // after the opener is payload-so-far.
+  const contents =
+    closeAt === -1 ? text.slice(c.from) : text.slice(c.from, closeAt);
+  return contents.trim();
+}
+
+/** Does this region parse *and* validate as the edit schema? */
+function validatesAsEdit(payload: string): boolean {
+  try {
+    return EditStructuredOutputSchema.safeParse(JSON.parse(payload)).success;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Strip the structured-output block out of assistant prose.
  *
- * OpenCode implements `format: { type: "json_schema" }` as a *prompt
- * convention* rather than a provider-native constrained decode: the model is
- * asked to append the JSON wrapped in `<structuredoutput>` tags, inside an
- * ordinary text part, after whatever prose it wanted to write. The server then
- * tries to extract it into `AssistantMessage.structured` — and on a real run it
- * failed to, reporting `StructuredOutputError` while the well-formed JSON sat
- * in the text part all along.
+ * The model is asked to append the JSON wrapped in `<structuredoutput>` tags,
+ * inside an ordinary text part, after whatever prose it wanted to write —
+ * opencode's `format` asks for the same convention, and airship's own prompt
+ * instruction asks for it when `format` is not sent. Either way the payload
+ * has to be lifted out here, and the prose it was appended to has to survive:
+ * unlike Codex, where the final message is *either* JSON or prose, on
+ * OpenCode it is routinely both.
  *
- * So the payload has to be lifted out here, and the prose it was appended to
- * has to survive: unlike Codex, where the final message is *either* JSON or
- * prose, on OpenCode it is routinely both.
+ * Selection is parse-aware: the winner is the first candidate region whose
+ * contents actually validate as the edit schema. "Earliest opener wins" alone
+ * was a real bug — prose like "Here's the change: ```css …``` <structuredoutput>
+ * {…}</structuredoutput>" split at the CSS fence, the fence contents failed to
+ * parse, and the whole message (raw JSON included) was released into the
+ * transcript while the payload sat unparsed after the fence.
+ *
+ * When nothing validates yet — the payload is still streaming, or there is
+ * none — the pre-validation semantics hold: split at the earliest wrapper
+ * (longer opener winning a tie), else at the first line-opening `{` as a
+ * deferral rather than a decision: the caller parses it, and releases it as
+ * ordinary prose if it does not validate. `prose` is always a strict *prefix*
+ * of `text`, never reassembled from both sides of the wrapper — that is what
+ * lets the reducer treat every render as an append, and the validating cut
+ * point can only sit at-or-after the fallback one, so the prefix only grows.
  */
 export function splitStructured(text: string): {
   payload: string | null;
   prose: string;
 } {
-  let best: { from: number; close: string; at: number } | null = null;
-  for (const { close, open } of STRUCTURED_WRAPPERS) {
-    const at = text.indexOf(open);
-    if (at === -1) {
-      continue;
-    }
-    // Earliest wins; at a tie the longer opener wins, which is the order the
-    // wrappers are declared in.
-    if (!best || at < best.at) {
-      best = { at, close, from: at + open.length };
+  const wrappers = wrapperCandidates(text);
+  const bare = bareCandidates(text);
+  const all = [...wrappers, ...bare].sort(
+    (a, b) => a.at - b.at || b.from - a.from
+  );
+  for (const c of all) {
+    const payload = candidatePayload(text, c);
+    if (validatesAsEdit(payload)) {
+      return { payload, prose: text.slice(0, c.at) };
     }
   }
-  if (!best) {
-    // No wrapper at all. Models routinely just append the bare object, so a
-    // run of text starting at a `{` is treated as a candidate payload running
-    // to the end. This is only a *deferral*, never a decision: the caller
-    // parses it, and releases it as ordinary prose if it does not validate.
-    // That is what makes sniffing for a brace safe here where it would not be
-    // if the sniff itself decided whether the text was structured output.
-    const brace = BARE_OBJECT.exec(text)?.index;
-    if (brace === undefined) {
-      return { payload: null, prose: text };
-    }
-    return { payload: text.slice(brace).trim(), prose: text.slice(0, brace) };
+  // Nothing validates (yet). Wrappers take precedence over the brace sniff,
+  // exactly as before validation-aware selection existed.
+  const fallback = wrappers[0] ?? bare[0];
+  if (!fallback) {
+    return { payload: null, prose: text };
   }
-  const closeAt = text.indexOf(best.close, best.from);
-  // An unterminated wrapper means the block is still streaming. Everything
-  // after the opener is payload-so-far and stays hidden, rather than letting a
-  // half-written `{"summary":"…` render into the transcript and then vanish.
-  const payload =
-    closeAt === -1 ? text.slice(best.from) : text.slice(best.from, closeAt);
-  // `prose` is deliberately a strict *prefix* of `text`, never reassembled from
-  // both sides of the wrapper. That is what lets the reducer treat every
-  // render as an append: if the payload turns out not to parse, it can emit
-  // the remainder and the two halves still line up.
-  return { payload: payload.trim(), prose: text.slice(0, best.at) };
+  return {
+    payload: candidatePayload(text, fallback),
+    prose: text.slice(0, fallback.at),
+  };
+}
+
+/**
+ * A provider rejecting opencode's forced tool choice.
+ *
+ * OpenCode implements `format: { type: "json_schema" }` by registering an
+ * internal StructuredOutput tool and forcing `toolChoice: "required"` for the
+ * prompt loop — and providers reject that request shape on thinking/reasoning
+ * models with an HTTP 400. Observed payload (DeepSeek, opencode 1.18.13):
+ *
+ *   {"error":{"message":"Error from provider (DeepSeek): Thinking mode does
+ *    not support this tool_choice","type":"invalid_request_error"}}
+ *   → name "APIError", statusCode 400, isRetryable false
+ *
+ * Also reported for Kimi K2.5, Qwen3.5, and Anthropic models with thinking
+ * enabled. Upstream declined the fix: anomalyco/opencode#15226 closed
+ * not_planned; the relax-to-`auto` PR #29565 was closed unmerged by a
+ * stale-bot.
+ *
+ * Matched on structure first, text second: a 400 when the status is present
+ * at all, plus `tool_choice`/`toolChoice` in the message or response body —
+ * the one invariant across every reported wording, and a string no
+ * airship-originated error contains. Deliberately NOT matched: "thinking"
+ * alone (it is also a step label in the reducer) or a bare 400.
+ */
+export function isForcedToolChoiceRejection(
+  err: OcMessageError | undefined
+): boolean {
+  const data = err?.data;
+  if (!data) {
+    return false;
+  }
+  if (data.statusCode !== undefined && data.statusCode !== 400) {
+    return false;
+  }
+  return TOOL_CHOICE.test(`${data.message ?? ""}\n${data.responseBody ?? ""}`);
+}
+
+/**
+ * Normalize an HTTP-level error payload into the message-error shape.
+ *
+ * The generated client is created without `throwOnError`, so a non-2xx
+ * response arrives as `{ error }` with no data — and the body of a rejected
+ * prompt is opencode's own NamedError serialization, which already matches
+ * `OcMessageError`. Anything else is folded down to a message so the caller
+ * always has something classifiable.
+ */
+export function toMessageError(err: unknown): OcMessageError {
+  if (typeof err === "string") {
+    return { data: { message: err } };
+  }
+  if (err && typeof err === "object") {
+    const e = err as {
+      data?: OcMessageError["data"];
+      message?: unknown;
+      name?: unknown;
+    };
+    if (e.data !== undefined || typeof e.name === "string") {
+      return {
+        data: e.data,
+        name: typeof e.name === "string" ? e.name : undefined,
+      };
+    }
+    if (typeof e.message === "string") {
+      return { data: { message: e.message } };
+    }
+  }
+  return { data: { message: "request failed" } };
 }
 
 /**

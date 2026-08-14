@@ -15,7 +15,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentRunContext } from "../agent";
 import { DiffCapture } from "../diff-capture";
 import { TimelineRecorder } from "../timeline";
-import { splitStructured, toolNameFor } from "./opencode-events";
+import {
+  isForcedToolChoiceRejection,
+  splitStructured,
+  toMessageError,
+  toolNameFor,
+} from "./opencode-events";
 import {
   finishBlocks,
   newReduceState,
@@ -607,5 +612,136 @@ describe("toolNameFor", () => {
     // would apply; falling through to `summarizeUnknown` is the honest outcome.
     expect(toolNameFor("task")).toBe("task");
     expect(toolNameFor("skill")).toBe("skill");
+  });
+});
+
+// A payload that satisfies EditStructuredOutputSchema, for the parse-aware
+// splitter below. Built by hand so a schema change fails these tests loudly.
+const VALID_PAYLOAD = JSON.stringify({
+  filesChanged: ["src/app.tsx"],
+  followUps: [],
+  summary: "Changed the button colour.",
+});
+
+describe("parse-aware extraction", () => {
+  it("finds the tag block behind an earlier code fence", () => {
+    // The regression that mattered: "earliest opener wins" split at the CSS
+    // fence, the fence contents failed to parse, and the raw JSON leaked into
+    // the transcript while the real payload sat unread after the fence.
+    const text = `Here is the change:\n\`\`\`css\n.button:hover { color: red; }\n\`\`\`\nDone.\n<structuredoutput>${VALID_PAYLOAD}</structuredoutput>`;
+    const { payload, prose } = splitStructured(text);
+    expect(payload).toBe(VALID_PAYLOAD);
+    expect(prose).toContain("```css");
+    expect(prose).toContain("Done.");
+    expect(prose).not.toContain("structuredoutput");
+  });
+
+  it("finds a ```json payload fence behind an earlier prose fence", () => {
+    const text = `Prose\n\`\`\`css\nbody { margin: 0 }\n\`\`\`\nmore\n\`\`\`json\n${VALID_PAYLOAD}\n\`\`\``;
+    const { payload, prose } = splitStructured(text);
+    expect(payload).toBe(VALID_PAYLOAD);
+    expect(prose).toContain("body { margin: 0 }");
+  });
+
+  it("finds a bare object payload behind an earlier prose fence", () => {
+    const text = `Prose\n\`\`\`css\nbody { margin: 0 }\n\`\`\`\n${VALID_PAYLOAD}`;
+    const { payload, prose } = splitStructured(text);
+    expect(payload).toBe(VALID_PAYLOAD);
+    expect(prose).toContain("```css");
+  });
+
+  it("still holds back from the earliest wrapper while nothing validates", () => {
+    // Mid-stream, the payload is half-written and validates nowhere; the
+    // pre-validation semantics hold so a partial block never renders.
+    const text = 'Prose\n<structuredoutput>{"summary":"half';
+    const { payload, prose } = splitStructured(text);
+    expect(prose).toBe("Prose\n");
+    expect(payload).toBe('{"summary":"half');
+  });
+});
+
+describe("isForcedToolChoiceRejection", () => {
+  it.each([
+    // The observed DeepSeek payload, verbatim.
+    {
+      data: {
+        isRetryable: false,
+        message:
+          "Error from provider (DeepSeek): Thinking mode does not support this tool_choice",
+        statusCode: 400,
+      },
+      name: "APIError",
+    },
+    // Status absent: classification must not depend on a field the SDK only
+    // sometimes carries.
+    {
+      data: {
+        message:
+          "Error from provider (Moonshot): tool_choice is not supported when thinking is enabled",
+      },
+      name: "APIError",
+    },
+    // The signal riding in the response body rather than the message.
+    {
+      data: {
+        message: "Upstream provider returned 400",
+        responseBody:
+          '{"error":{"message":"`tool_choice` cannot be \\"required\\" for reasoning models"}}',
+        statusCode: 400,
+      },
+      name: "APIError",
+    },
+    // The camel-case spelling.
+    {
+      data: {
+        message:
+          "invalid_request_error: toolChoice=required is incompatible with extended thinking",
+        statusCode: 400,
+      },
+      name: "APIError",
+    },
+  ])("classifies %j", (err) => {
+    expect(isForcedToolChoiceRejection(err)).toBe(true);
+  });
+
+  it.each([
+    { data: { message: "Upstream request failed" }, name: "APIError" },
+    { data: { message: "cancelled" } },
+    // "Thinking" alone is also a step label; it must never classify.
+    { data: { message: "Thinking" } },
+    { data: { message: "rate limit exceeded", statusCode: 429 } },
+    { data: { message: "context overflow" } },
+    // Right words, wrong status: a 500 mentioning tool_choice is not this bug.
+    { data: { message: "tool_choice broke", statusCode: 500 } },
+    undefined,
+  ])("does not classify %j", (err) => {
+    expect(isForcedToolChoiceRejection(err)).toBe(false);
+  });
+});
+
+describe("toMessageError", () => {
+  it("passes opencode's NamedError serialization through", () => {
+    const err = {
+      data: { message: "boom", statusCode: 400 },
+      name: "APIError",
+    };
+    expect(toMessageError(err)).toEqual(err);
+  });
+
+  it("folds a plain Error-like object down to its message", () => {
+    expect(toMessageError({ message: "fetch failed" })).toEqual({
+      data: { message: "fetch failed" },
+    });
+  });
+
+  it("wraps a bare string", () => {
+    expect(toMessageError("nope")).toEqual({ data: { message: "nope" } });
+  });
+
+  it("never returns something unclassifiable", () => {
+    for (const junk of [null, undefined, 42, [], {}]) {
+      const err = toMessageError(junk);
+      expect(typeof err.data?.message).toBe("string");
+    }
   });
 });
