@@ -12,9 +12,10 @@ import { clear, cls, el, PREFIX } from "../dom";
 import { type IconName, icon } from "../icons";
 import { keys } from "../keys";
 import { placePopover } from "../popover";
-import { createMenu, type MenuHandle } from "../popover-host";
+import { createMenu, type MenuEntry } from "../popover-host";
 import { isElement } from "../realm";
-import { toast } from "../toast";
+import { customSizeRow } from "./device-menu";
+import { deleteFrame, duplicateFrame, reloadFrame } from "./frame-verbs";
 import {
   type DevicePreset,
   type Frame,
@@ -23,7 +24,6 @@ import {
   groupOfPreset,
   MAX_FRAMES,
   PRESET_GROUPS,
-  type RemovedFrame,
 } from "./frames";
 import { frameScreenRect } from "./space";
 import type { CanvasViewport } from "./viewport";
@@ -119,7 +119,6 @@ export class FrameChrome {
   private readonly addMenu: HTMLElement;
   private readonly addBtn: HTMLElement;
   private readonly zoomLabel: HTMLElement;
-  private readonly zoomMenu: MenuHandle;
   /** The selection-contingent verb group — see `buildFrameTools`. */
   private readonly frameTools: HTMLElement;
   private readonly dimsMenu: HTMLElement;
@@ -158,31 +157,18 @@ export class FrameChrome {
     // The readout is a menu, not a reset button. "Click the percentage to go
     // back to 100%" is a hidden affordance; the list also surfaces zoom-to-
     // selection, which had no discoverable entry point at all.
-    this.zoomMenu = createMenu([
-      { hint: "⌘+", label: "Zoom in", run: () => this.zoomBy(1) },
-      { hint: "⌘−", label: "Zoom out", run: () => this.zoomBy(-1) },
-      {
-        hint: "⇧1",
-        label: "Zoom to fit",
-        run: () => this.runZoom(() => this.deps.viewport.zoomToFit()),
-      },
-      {
-        hint: "⇧2",
-        label: "Zoom to selection",
-        run: () => this.runZoom(() => this.deps.viewport.zoomToSelection()),
-      },
-      {
-        hint: "⌘0",
-        label: "Zoom to 100%",
-        run: () => this.runZoom(() => this.deps.viewport.zoomTo100()),
-      },
-    ]);
     this.zoomLabel = el("button", {
       class: cls("fbar-zoom"),
       "data-tip": "Zoom",
       onClick: (e: Event) => {
         e.stopPropagation();
-        this.zoomMenu.open(this.zoomLabel, "above");
+        // Built per open rather than once. It carried a minimap checkbox whose
+        // `on` was read at render time, so a menu built in the constructor
+        // showed that state forever; the checkbox is gone, but the rows still
+        // close over live viewport state and this costs nothing. Re-opening
+        // still toggles shut — that is keyed on the *anchor* in `openPopover`'s
+        // stack, not on the handle.
+        createMenu(this.zoomEntries()).open(this.zoomLabel, "above");
       },
       text: "100%",
       type: "button",
@@ -195,7 +181,11 @@ export class FrameChrome {
     this.toolbar = el("div", { class: cls("fbar") }, [
       this.addBtn,
       el("div", { class: cls("fbar-sep") }),
-      this.barButton("fit", "Zoom to fit (⇧1)", () => {
+      // "Zoom to fit", not "Zoom to fit (⇧1)". `barButton` uses the label as the
+      // tip, and `Tooltips.show` resolves the chord by matching that string
+      // against a binding's `label` — so spelling the chord into the text both
+      // duplicated it and stopped the real chip from ever being found.
+      this.barButton("fit", "Zoom to fit", () => {
         this.deps.viewport.zoomToFit();
         this.deps.viewport.save();
       }),
@@ -394,6 +384,42 @@ export class FrameChrome {
     this.frameTools.remove();
   }
 
+  /**
+   * The zoom readout's menu.
+   *
+   * A menu rather than a reset button: "click the percentage to go back to
+   * 100%" is a hidden affordance, and the list also surfaces zoom-to-selection,
+   * which had no discoverable entry point at all.
+   *
+   * It used to carry a "Show minimap" checkbox as its last row, and that row was
+   * the only way to bring the map back once its close button had been used —
+   * a control whose off switch sat on the card itself and whose on switch was
+   * buried under a percentage readout. The map does not hide any more, so
+   * neither the row nor the deps behind it exist. See `minimap.ts`.
+   */
+  private zoomEntries(): MenuEntry[] {
+    const entries: MenuEntry[] = [
+      { hint: "⌘+", label: "Zoom in", run: () => this.zoomBy(1) },
+      { hint: "⌘−", label: "Zoom out", run: () => this.zoomBy(-1) },
+      {
+        hint: "⇧1",
+        label: "Zoom to fit",
+        run: () => this.runZoom(() => this.deps.viewport.zoomToFit()),
+      },
+      {
+        hint: "⇧2",
+        label: "Zoom to selection",
+        run: () => this.runZoom(() => this.deps.viewport.zoomToSelection()),
+      },
+      {
+        hint: "⌘0",
+        label: "Zoom to 100%",
+        run: () => this.runZoom(() => this.deps.viewport.zoomTo100()),
+      },
+    ];
+    return entries;
+  }
+
   private runZoom(fn: () => void): void {
     fn();
     this.deps.viewport.save();
@@ -433,7 +459,7 @@ export class FrameChrome {
       "div",
       {
         class: cls("fc-label"),
-        "data-tip": "Drag to move · double-click to rename",
+        "data-tip": "Drag to move, double-click to rename",
         onClick: () => this.deps.frames.setActive(frame.id),
         onDblclick: () => this.renameFrame(frame),
       },
@@ -573,9 +599,14 @@ export class FrameChrome {
   /**
    * A width × height row that commits on Enter or on its button.
    *
-   * The fields start at the frame's *current* size, which is what makes this a
-   * nudge rather than a form: almost every custom size is an adjustment of the
-   * size you already have — 1440 wide but shorter, this phone but taller — and
+   * The form itself is `device-menu.ts`'s — the frame list's `+` grew one too,
+   * and two copies of a two-field form is two places for the minimum to drift.
+   * This wrapper is the part that is genuinely this file's: which closer to hand
+   * it, and where the fields start.
+   *
+   * They start at the frame's *current* size, which is what makes this a nudge
+   * rather than a form: almost every custom size is an adjustment of the size
+   * you already have — 1440 wide but shorter, this phone but taller — and
    * starting from a fixed 1280 × 800 meant retyping both numbers to change one.
    * `syncCustomRow` re-seeds them each time a menu opens, because the menu is
    * built once and the frame keeps changing under it.
@@ -585,97 +616,22 @@ export class FrameChrome {
    */
   private customRow(
     apply: (width: number, height: number) => void,
-    start: { width: number; height: number } = { height: 800, width: 1280 }
+    start?: { height: number; width: number }
   ): HTMLElement {
-    const num = (placeholder: string, value: number): HTMLInputElement =>
-      el("input", {
-        class: cls("fc-menu-num"),
-        min: "120",
-        placeholder,
-        type: "number",
-        value: String(Math.round(value)),
-      }) as HTMLInputElement;
-    const w = num("W", start.width);
-    const h = num("H", start.height);
-    const commit = (): void => {
-      const width = Number.parseInt(w.value, 10);
-      const height = Number.parseInt(h.value, 10);
-      if (width >= 120 && height >= 120) {
-        apply(width, height);
-        this.closeMenu();
-      }
-    };
-    for (const input of [w, h]) {
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit();
-          return;
-        }
-        // Escape has to be handled here, not by the menu's own binding.
-        // `Keys` skips every binding without `allowWhileTyping` while a field
-        // has focus, so with this field focused the menu's Escape never runs and
-        // the only way out would be the mouse. `keys.ts` prescribes exactly this
-        // — field-local commit and cancel — and `renameFrame` already does it.
-        if (e.key === "Escape") {
-          e.preventDefault();
-          e.stopPropagation();
-          this.closeMenu();
-        }
-      });
-      input.addEventListener("click", (e) => e.stopPropagation());
-    }
-    return el("div", { class: cls("fc-menu-custom") }, [
-      w,
-      el("span", { class: cls("fc-menu-dim"), text: "×" }),
-      h,
-      el("button", {
-        class: cls("fc-menu-go"),
-        onClick: (e: Event) => {
-          e.stopPropagation();
-          commit();
-        },
-        text: "Set",
-        type: "button",
-      }),
-    ]);
+    return customSizeRow(apply, () => this.closeMenu(), start);
   }
 
   // -- Verbs -------------------------------------------------------------------
 
   /*
-   * One closure per verb.
+   * The verbs themselves live in `frame-verbs.ts`, shared with the frame list.
    *
-   * These used to have two doors — the frame's own menu and the bar group — and
-   * the pairing exists because a verb whose receipt depends on which door you
-   * came through is a verb with two behaviours. The menu is gone; the split
-   * stays because the bar has no `Frame` in hand (it acts on whatever is
-   * selected) while `undo` and the keyboard paths do.
+   * What stays here is the *active-frame* half of each pair, and the split is
+   * the same one it has always been: the bar has no `Frame` in hand — it acts
+   * on whatever is selected — while the keyboard paths and the list do. Moving
+   * the bodies out is what stops a third door from growing its own wording, or
+   * its own missing undo; see the header of that file.
    */
-
-  private reloadFrame(frame: Frame): void {
-    this.deps.frames.reload(frame);
-    // A fast reload of a static route repaints identically, so without this
-    // there is no way to tell it happened.
-    toast(`Reloaded ${frame.name}`);
-  }
-
-  private duplicateFrame(frame: Frame): void {
-    const { name } = frame;
-    // `duplicate` → `add` returns null at the cap and nobody reads it. The `+`
-    // button has `fbar-off` to say so, and `syncFrameTools` gives the bar's
-    // Duplicate the same treatment; a menu row has nothing, so for that door the
-    // refusal has to be spoken.
-    const copy = this.deps.frames.duplicate(frame.id);
-    if (copy) {
-      // `placeNext` puts the copy right of the *rightmost* frame, which above
-      // roughly 60% zoom is off-screen — today this does its work entirely out
-      // of sight.
-      toast(`Duplicated ${name}`);
-    } else {
-      toast(`Frame limit reached (${MAX_FRAMES})`, { tone: "error" });
-    }
-  }
 
   private rotateActiveFrame(): void {
     const frame = this.deps.frames.active;
@@ -689,66 +645,22 @@ export class FrameChrome {
   private reloadActiveFrame(): void {
     const frame = this.deps.frames.active;
     if (frame) {
-      this.reloadFrame(frame);
+      reloadFrame(this.deps.frames, frame);
     }
   }
 
   private duplicateActiveFrame(): void {
     const frame = this.deps.frames.active;
     if (frame) {
-      this.duplicateFrame(frame);
+      duplicateFrame(this.deps.frames, frame);
     }
-  }
-
-  // -- Delete ------------------------------------------------------------------
-
-  /**
-   * Remove a frame, and offer it back.
-   *
-   * One closure behind three doors — this menu row, the bar group's `−`, and ⌫ —
-   * so neither the receipt nor the undo can depend on which one you reached for.
-   * That is the same arrangement `AirshipApp.undoEdit` has for ⌘Z and the bar's
-   * Undo button, and for the same reason.
-   *
-   * A deleted frame is obviously gone, so the toast is not here on the
-   * legibility clause; it is here because it *carries* the undo. `History`
-   * journals element ops only, and teaching it a frame op would put the model
-   * that replays DOM mutations in charge of rebuilding an iframe realm — so the
-   * affordance rides on the receipt instead. See the header of `toast.ts`.
-   *
-   * No confirmation, deliberately. A modal in front of a reversible act taxes
-   * the ninety-nine deletes you meant in order to catch the one you did not; the
-   * Undo catches that one and does not charge for the rest.
-   */
-  private deleteFrame(frame: Frame): void {
-    const { name } = frame;
-    const removed = this.deps.frames.remove(frame.id);
-    if (!removed) {
-      return;
-    }
-    toast(`Deleted ${name}`, {
-      action: { label: "Undo", run: () => this.restoreFrame(removed) },
-    });
-  }
-
-  /** The Undo button's other half. Silent on success — see below. */
-  private restoreFrame(removed: RemovedFrame): void {
-    if (this.deps.frames.restoreRemoved(removed)) {
-      // The frame reappearing, selected, is the feedback. This is the
-      // legibility clause working the way it is supposed to.
-      return;
-    }
-    // The only way to get here is to have filled the canvas since the delete,
-    // and a refusal always speaks — a button that has already faded has no
-    // disabled state to lean on.
-    toast(`Frame limit reached (${MAX_FRAMES})`, { tone: "error" });
   }
 
   /** What ⌫ and the bar's `−` resolve to. */
   private deleteActiveFrame(): void {
     const frame = this.deps.frames.active;
     if (frame) {
-      this.deleteFrame(frame);
+      deleteFrame(this.deps.frames, frame);
     }
   }
 
@@ -785,17 +697,21 @@ export class FrameChrome {
    * own rule is that a separator goes with the group it divides, and as a child
    * it hides with the group instead of leaving a hairline hanging off the Hand.
    *
-   * On the glyphs — the imported set publishes no trash, no refresh and no copy, so
-   * three of these are chosen rather than found:
+   * On the glyphs — the imported set publishes no refresh and no copy, so two of
+   * these are chosen rather than found:
    *
-   * - `minus` is the literal counterpart of the `plus` three controls along in
-   *   the same bar. `+` adds a frame, `−` removes the selected one; that grammar
-   *   is already established here and needs no new artwork.
    * - `rotate-ccw` for Reload, because a circular arrow *is* the reload mark. It
    *   is also the Undo glyph — deliberately, and it is not a collision: Undo
    *   lives in `editOnlyBar` and this lives in `viewOnlyBar`, and `syncBar`
    *   guarantees the two are never on screen together.
    * - `doc-plus` for Duplicate: a frame is a document, and this makes one more.
+   *
+   * Delete was a third. It drew `minus`, on the argument that `−` is the literal
+   * counterpart of the `+` three controls along — which is a real grammar, but
+   * the wrong one: `+`/`−` over a *list* adds and removes a row, and this
+   * destroys a frame. The same verb in the frame list drew `✕`, so one action
+   * had two glyphs and neither said "destroy". The set now carries a `trash` of
+   * our own; see ICONS.md for why it was drawn rather than found.
    */
   private buildFrameTools(): HTMLElement {
     return el(
@@ -815,7 +731,7 @@ export class FrameChrome {
           this.reloadActiveFrame();
         }),
         this.dupBtn,
-        this.barButton("minus", "Delete frame", (e) => {
+        this.barButton("trash", "Delete frame", (e) => {
           e.stopPropagation();
           this.deleteActiveFrame();
         }),

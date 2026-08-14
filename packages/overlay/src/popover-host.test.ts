@@ -3,6 +3,8 @@ import { cls, el } from "./dom";
 import { keys } from "./keys";
 import {
   closeOpenPopover,
+  createMenu,
+  type MenuGroup,
   mountPopoverHost,
   openPopover,
   type PopoverHandle,
@@ -302,5 +304,211 @@ describe("a popover's own keys", () => {
     } finally {
       off();
     }
+  });
+});
+
+/*
+ * The reflow listener is registered in capture phase, which is what lets it see
+ * scrolls inside `.insp-body` — and, for a long time, scrolls inside the popover
+ * itself. `reposition` is `placePopover`, whose first act is to clear the
+ * `max-height` it wrote so it can measure the content unconstrained. Under a
+ * scrolled menu that let the box grow to full height, so the browser clamped
+ * `scrollTop` back to zero before the cap went on again: every wheel tick over
+ * the frame menu's twenty-seven rows snapped it to the top, which reads as a
+ * menu that simply refuses to scroll.
+ */
+describe("a scrollable popover", () => {
+  it("keeps its scroll position when the scroll came from inside it", () => {
+    const { handle } = open(anchor());
+    const shell = shells()[0] as HTMLElement;
+    // happy-dom does no layout, so `scrollTop` will not stick on its own.
+    let top = 0;
+    Object.defineProperty(shell, "scrollTop", {
+      configurable: true,
+      get: () => top,
+      set: (v: number) => {
+        top = v;
+      },
+    });
+    const spy = vi.spyOn(handle, "reposition");
+
+    shell.scrollTop = 40;
+    shell.dispatchEvent(new Event("scroll", { bubbles: true }));
+
+    expect(shell.scrollTop).toBe(40);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("still re-places when something else scrolls", () => {
+    // The behaviour the guard must not cost: a scroller the popover is anchored
+    // inside still moves the anchor, and the popover has to follow it.
+    const scroller = el("div");
+    document.body.append(scroller);
+    const trigger = el("button", { type: "button" });
+    scroller.append(trigger);
+    const { handle } = open(trigger);
+    const spy = vi.spyOn(handle, "reposition");
+
+    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+
+    expect(spy).toHaveBeenCalled();
+  });
+});
+
+/*
+ * The accordion.
+ *
+ * A flat `pop-head` is right for three verbs and wrong for twenty-two device
+ * presets, where the menu becomes a twenty-seven-item column that gets capped
+ * and scrolled — so Delete ends up below the fold of a menu you opened to reach
+ * it. What is worth pinning down is the part that is not visual: exactly one
+ * group is open, a shut group's rows stay in the DOM but out of the keyboard
+ * cursor, and a disclosure is not a choice.
+ */
+describe("a menu with collapsible groups", () => {
+  const GROUPS: MenuGroup[] = [
+    {
+      group: "phone",
+      items: [
+        { label: "iPhone", run: () => undefined },
+        { label: "Pixel", run: () => undefined },
+      ],
+      label: "Phone",
+    },
+    {
+      group: "desktop",
+      // Deliberately not "Desktop": a row sharing its group's label would make
+      // the cursor test unable to tell a reachable row from a header.
+      items: [{ label: "MacBook", run: () => undefined }],
+      label: "Desktop",
+    },
+  ];
+
+  const body = (content: ParentNode, id: string) =>
+    content.querySelector<HTMLElement>(
+      `[data-group="${id}"] .${cls("pop-group-body")}`
+    );
+
+  const head = (content: ParentNode, id: string) =>
+    content.querySelector<HTMLElement>(
+      `[data-group="${id}"] .${cls("pop-group-head")}`
+    );
+
+  const openGroups = (content: ParentNode) =>
+    ["phone", "desktop"].filter(
+      (id) => head(content, id)?.getAttribute("aria-expanded") === "true"
+    );
+
+  /**
+   * Open a grouped menu and hand back its content.
+   *
+   * The content, not the shell: `openPopover` scopes the arrow-key bindings to
+   * exactly that element, so a keypress dispatched from anywhere else is outside
+   * the scope and does nothing.
+   */
+  function grouped(entries = GROUPS): HTMLElement {
+    const handle = createMenu(entries);
+    handle.open(anchor(), "below");
+    const content = shells()[0]?.querySelector<HTMLElement>(
+      `.${cls("pop-menu")}`
+    );
+    if (!content) {
+      throw new Error("no menu");
+    }
+    return content;
+  }
+
+  function key(from: Node, name: string): void {
+    from.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        bubbles: true,
+        cancelable: true,
+        key: name,
+      })
+    );
+  }
+
+  it("opens with exactly one group expanded", () => {
+    // Never all-shut: a menu that opens as two headers and nothing to read makes
+    // you work out that they are headers before it will show you anything.
+    expect(openGroups(grouped())).toEqual(["phone"]);
+  });
+
+  it("honours the seeded group rather than always taking the first", () => {
+    const content = grouped([GROUPS[0], { ...GROUPS[1], open: true }]);
+    expect(openGroups(content)).toEqual(["desktop"]);
+  });
+
+  it("expands one at a time", () => {
+    const content = grouped();
+    head(content, "desktop")?.click();
+    expect(openGroups(content)).toEqual(["desktop"]);
+  });
+
+  it("collapses the open group when its own header is clicked", () => {
+    const content = grouped();
+    head(content, "phone")?.click();
+    expect(openGroups(content)).toEqual([]);
+  });
+
+  it("hides a shut group's rows but keeps them in the DOM", () => {
+    // Detaching them would put them out of reach of anything that reads the
+    // built menu back — the trap `frame-chrome.ts` documents for its own
+    // accordion, where a collapsed group's current-device mark went stale.
+    const content = grouped();
+    head(content, "desktop")?.click();
+
+    expect(body(content, "phone")?.classList.contains(cls("hidden"))).toBe(
+      true
+    );
+    expect(
+      content.querySelector(`[data-group="phone"] .${cls("pop-item")}`)
+    ).not.toBeNull();
+  });
+
+  it("keeps the keyboard cursor out of a collapsed group", () => {
+    const content = grouped();
+    // Phone is open, so its two rows are reachable and Desktop's one is not.
+    // Both headers always are — they are the only way to open a group by key.
+    key(content, "ArrowDown");
+    const seen: string[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      seen.push(
+        content
+          .querySelector<HTMLElement>("[data-pop-active]")
+          ?.textContent?.trim() ?? "?"
+      );
+      key(content, "ArrowDown");
+    }
+    expect(seen).not.toContain("MacBook");
+    expect(seen).toContain("iPhone");
+  });
+
+  it("does not close the menu when a group is toggled", () => {
+    // A row's click closes the popover before it runs; a disclosure must not,
+    // or opening a group would dismiss the menu you were reading.
+    const content = grouped();
+    head(content, "desktop")?.click();
+    expect(shells()).toHaveLength(1);
+  });
+
+  it("closes the menu when a row inside a group is chosen", () => {
+    const run = vi.fn();
+    const content = grouped([
+      { group: "phone", items: [{ label: "iPhone", run }], label: "Phone" },
+    ]);
+    content.querySelector<HTMLElement>(`.${cls("pop-item")}`)?.click();
+
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(shells()).toHaveLength(0);
+  });
+
+  it("drops a `node` entry in as its own row", () => {
+    // The escape hatch for the custom width × height form.
+    const custom = el("div", { class: "custom-form" });
+    const handle = createMenu([GROUPS[0], { node: custom }]);
+    handle.open(anchor(), "below");
+
+    expect(shells()[0].querySelector(".custom-form")).toBe(custom);
   });
 });

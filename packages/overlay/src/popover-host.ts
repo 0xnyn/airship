@@ -299,8 +299,27 @@ function install(opts: PopoverOptions, handle: PopoverHandle): () => void {
    *
    * This is also the backstop for an anchor removed by something that did not
    * route through `DesignPanel.renderBody`.
+   *
+   * **The popover's own scrolling is not a reflow, and treating it as one made
+   * every tall menu unscrollable.** Capture is what makes that a real hazard:
+   * the listener sees scroll events from *inside* this shell as well as around
+   * it. `reposition` is `place`, and `placePopover` starts by clearing
+   * `max-height` so it can measure the content unconstrained — which lets the
+   * box grow to full height, so the browser clamps `scrollTop` back toward zero
+   * before the cap is written again. The frame menu's twenty-seven rows scrolled
+   * and then snapped to the top on every wheel tick. This popover's own scroll
+   * cannot move its own anchor, so skipping it is not a heuristic: there is
+   * nothing to re-place.
+   *
+   * `handle.element`, not `levelOf` — the test has to be "*this* shell", not
+   * "any open shell". Popovers nest, and a nested one's anchor lives inside its
+   * parent's body: when that parent scrolls, the child's anchor really has
+   * moved, and the child really does have to follow it.
    */
-  const onReflow = (): void => {
+  const onReflow = (e: Event): void => {
+    if (e.type === "scroll" && handle.element.contains(e.target as Node)) {
+      return;
+    }
     if (!opts.anchor.isConnected) {
       handle.close("anchor-gone");
       return;
@@ -399,8 +418,21 @@ function install(opts: PopoverOptions, handle: PopoverHandle): () => void {
  * menu feel broken.
  */
 
+/**
+ * The rows the cursor may land on.
+ *
+ * Filtered rather than un-marked, and that is the whole reason a collapsed group
+ * keeps its rows in the DOM at all. Stripping `data-pop-item` on collapse would
+ * work for the cursor and break everything else that reads the built menu back —
+ * the same trap `frame-chrome.ts` documents for its own accordion, where a
+ * `[data-preset]` sweep has to reach rows inside a shut group to keep their
+ * current-device mark from going stale. Hidden rows measure zero for
+ * `placePopover` either way.
+ */
 function items(content: HTMLElement): HTMLElement[] {
-  return Array.from(content.querySelectorAll<HTMLElement>(ITEM));
+  return Array.from(content.querySelectorAll<HTMLElement>(ITEM)).filter(
+    (node) => !node.closest(`.${cls("pop-group-body")}.${cls("hidden")}`)
+  );
 }
 
 function activeItem(content: HTMLElement): HTMLElement | null {
@@ -455,13 +487,158 @@ export interface MenuItem {
 }
 
 /**
+ * A collapsible run of rows, one open at a time within a menu.
+ *
+ * A flat header is the right answer for three verbs under "Selection"; it is the
+ * wrong one for the twenty-two device presets, where the menu becomes a
+ * twenty-seven-item column that `placePopover` caps and scrolls. Grouping turns
+ * that into four lines you choose from.
+ *
+ * `open` seeds which one starts expanded. Exactly one does — an accordion that
+ * opens with everything shut presents a stack of headers and nothing to read —
+ * so an `open` that matches nothing falls back to the first group.
+ */
+export interface MenuGroup {
+  /** Stable id, written to `data-group`. What `open` is matched against. */
+  group: string;
+  items: MenuItem[];
+  label: string;
+  open?: boolean;
+}
+
+/**
+ * Arbitrary content, dropped in as its own row.
+ *
+ * The escape hatch for the one thing a list of buttons cannot express — the
+ * custom width × height form that ends both device menus. Deliberately narrow:
+ * anything that is a *row* should be a `MenuItem`, or the keyboard cursor and
+ * the disabled/selected grammar have to be reinvented per call site.
+ */
+export interface MenuNode {
+  node: HTMLElement;
+}
+
+/**
  * A menu row. Headers and separators carry no `data-pop-item`, so the roving
  * cursor steps over them without the keyboard code needing to know they exist.
+ * A group's *header* does carry one — it is the only way to open the group from
+ * the keyboard — and its rows carry theirs but are filtered out while shut. See
+ * {@link items}.
  */
-export type MenuEntry = MenuItem | { separator: true } | { header: string };
+export type MenuEntry =
+  | MenuItem
+  | { separator: true }
+  | { header: string }
+  | MenuGroup
+  | MenuNode;
 
-function isMenuItem(entry: MenuEntry): entry is MenuItem {
-  return "label" in entry;
+/**
+ * Is this entry a clickable row?
+ *
+ * Exported because narrowing a `MenuEntry` by hand is now a trap: `"label" in
+ * entry` was a complete test while rows were the only labelled thing, and a
+ * group has a label too. Callers that duck-typed it silently started admitting
+ * groups. `run` is what actually separates them.
+ */
+export function isMenuItem(entry: MenuEntry): entry is MenuItem {
+  return "label" in entry && "run" in entry;
+}
+
+function isMenuGroup(entry: MenuEntry): entry is MenuGroup {
+  return "group" in entry;
+}
+
+/**
+ * One collapsible group: a disclosure button and a body of rows.
+ *
+ * **A `<button>` and a `<div>`, not `<details>`/`<summary>`.** Two reasons, both
+ * learned elsewhere in this codebase rather than here. `chat/disclosure.ts`'s
+ * header has the first: host-page resets reach `<details>` and there is no way
+ * to opt out of the marker in every engine. `frame-chrome.ts`'s accordion has
+ * the second and it is the one that would bite here — `<summary>` swallows the
+ * activation of every nested control, and a group body is nothing *but* nested
+ * buttons.
+ *
+ * **Hidden, not detached.** A collapsed body keeps its rows in the tree so
+ * anything that reads the built menu back still finds them; `items` filters them
+ * out of the keyboard cursor instead. Both `hidden` and `aria-expanded` are
+ * seeds only — `openGroup` owns them from the first click on.
+ */
+function buildGroup(
+  entry: MenuGroup,
+  buildRow: (item: MenuItem) => HTMLElement,
+  menu: HTMLElement
+): HTMLElement {
+  const head = el(
+    "button",
+    {
+      "aria-expanded": "false",
+      class: cls("pop-group-head"),
+      // On the header, so a group can be opened without a pointer. Its rows
+      // carry theirs too, and are filtered out of the cursor while shut.
+      "data-pop-item": "",
+      onClick: (e: Event) => {
+        // The row handlers close the menu; a disclosure must not, and must not
+        // be read as a choice by anything listening above it either.
+        e.stopPropagation();
+        openGroup(
+          menu,
+          head.getAttribute("aria-expanded") === "true" ? null : entry.group
+        );
+      },
+      type: "button",
+    },
+    [icon("chev-right", "xs"), el("span", { text: entry.label })]
+  );
+  return el("div", { class: cls("pop-group"), "data-group": entry.group }, [
+    head,
+    el(
+      "div",
+      { class: `${cls("pop-group-body")} ${cls("hidden")}` },
+      entry.items.map(buildRow)
+    ),
+  ]);
+}
+
+/**
+ * Expand one group and shut the rest, or shut them all for `null`.
+ *
+ * Single-open because the whole point is to make a long list short again; two
+ * groups expanded at once is most of the way back to the flat column. Written
+ * across the built DOM rather than held as state, for the reason
+ * `frame-chrome.ts` gives for the same choice: the open group is re-derived on
+ * every open and left alone in between, so a field would be a second copy of
+ * something the tree already says.
+ */
+function openGroup(menu: HTMLElement, id: string | null): void {
+  for (const group of menu.querySelectorAll<HTMLElement>(
+    `.${cls("pop-group")}`
+  )) {
+    const on = group.dataset.group === id;
+    group
+      .querySelector(`.${cls("pop-group-head")}`)
+      ?.setAttribute("aria-expanded", String(on));
+    group
+      .querySelector(`.${cls("pop-group-body")}`)
+      ?.classList.toggle(cls("hidden"), !on);
+  }
+}
+
+/**
+ * Open the group the caller asked for, or the first one.
+ *
+ * Never all-shut: a menu that opens as three headers and nothing to read makes
+ * the reader work out that they are headers before it will show them anything.
+ * `frame-chrome.ts`'s accordion holds the same rule, and its test suite fences
+ * it as `never opens with every group shut`.
+ */
+function seedOpenGroup(menu: HTMLElement, entries: MenuEntry[]): void {
+  const groups = entries.filter(isMenuGroup);
+  if (!groups.length) {
+    return;
+  }
+  const wanted = groups.find((g) => g.open) ?? groups[0];
+  openGroup(menu, wanted.group);
 }
 
 export interface MenuOpenOptions {
@@ -494,10 +671,12 @@ export interface MenuHandle {
  * which is also what stops a rebuilt row from leaving its old menu behind.
  *
  * Still deliberately not a general menu system: no submenus. It does group,
- * though — headers and separators, because a menu carrying "Undo", "Create
- * pull request" and "Open in VS Code" in one undifferentiated column reads as a
- * junk drawer. `frame-chrome.ts`'s device menu still is not a client of this:
- * it places itself against world-space canvas geometry and re-anchors on pan.
+ * though — headers, separators, and single-open accordions, because a menu
+ * carrying "Undo", "Create pull request" and "Open in VS Code" in one
+ * undifferentiated column reads as a junk drawer, and one carrying
+ * twenty-two device presets reads as a scroll. `frame-chrome.ts`'s device menu
+ * still is not a client of this: it places itself against world-space canvas
+ * geometry and re-anchors on pan.
  */
 export function createMenu(entries: MenuEntry[]): MenuHandle {
   /*
@@ -513,15 +692,7 @@ export function createMenu(entries: MenuEntry[]): MenuHandle {
   let handle: PopoverHandle | null = null;
   const menu = el("div", { class: cls("pop-menu"), role: "menu" });
 
-  for (const entry of entries) {
-    if (!isMenuItem(entry)) {
-      menu.append(
-        "header" in entry
-          ? el("div", { class: cls("pop-head"), text: entry.header })
-          : el("div", { class: cls("pop-sep"), role: "separator" })
-      );
-      continue;
-    }
+  const buildRow = (entry: MenuItem): HTMLElement => {
     const disabled = Boolean(entry.disabled);
     const row = el(
       "button",
@@ -551,8 +722,29 @@ export function createMenu(entries: MenuEntry[]): MenuHandle {
     if (entry.hint) {
       row.append(el("span", { class: cls("pop-item-hint"), text: entry.hint }));
     }
-    menu.append(row);
+    return row;
+  };
+
+  for (const entry of entries) {
+    if (isMenuItem(entry)) {
+      menu.append(buildRow(entry));
+      continue;
+    }
+    if (isMenuGroup(entry)) {
+      menu.append(buildGroup(entry, buildRow, menu));
+      continue;
+    }
+    if ("node" in entry) {
+      menu.append(entry.node);
+      continue;
+    }
+    menu.append(
+      "header" in entry
+        ? el("div", { class: cls("pop-head"), text: entry.header })
+        : el("div", { class: cls("pop-sep"), role: "separator" })
+    );
   }
+  seedOpenGroup(menu, entries);
 
   return {
     close: () => handle?.close(),
