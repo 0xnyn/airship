@@ -2,10 +2,14 @@
  * The `--safe` guards, and the Claude hook that installs them.
  *
  * The two screens — `screenEdit` and `screenBash` — are the policy, expressed
- * without reference to any backend. `makeSandboxHook` wraps them as a Claude
- * `PreToolUse` hook, where a deny hard-blocks the tool because hooks run
- * ahead of permission rules and `canUseTool`; that is the safety layer which
- * replaces the reference tools' blanket `--dangerously-skip-permissions`.
+ * without reference to any backend, and `screenTool` is the single dispatch
+ * that routes a named tool call through them. `makeSandboxHook` wraps that
+ * dispatch as a Claude `PreToolUse` hook, where a deny hard-blocks the tool
+ * because hooks run ahead of permission rules and `canUseTool` — and unlike
+ * `canUseTool`, a hook cannot be shadowed by a target project's own
+ * `permissions.allow` settings, which makes it the primary guard. The Claude
+ * adapter's `canUseTool` calls the same `screenTool`, so the second layer
+ * enforces an identical rule set rather than a drifting copy.
  *
  * OpenCode has no hook of any kind, but it does emit a permission request and
  * accept a reply, so its adapter answers each request from these same two
@@ -94,31 +98,66 @@ export function screenBash(command: string): ScreenResult {
   return ALLOWED;
 }
 
+/**
+ * The path an edit tool is about to write. `NotebookEdit` names its target
+ * `notebook_path` where every other edit tool says `file_path` — keying on
+ * `file_path` alone let notebook writes anywhere on disk sail past both
+ * screens, silently.
+ */
+export function editPathOf(
+  toolInput: Record<string, unknown>
+): string | undefined {
+  const fp = toolInput.file_path ?? toolInput.notebook_path;
+  return typeof fp === "string" ? fp : undefined;
+}
+
+/**
+ * Route one tool call through the policy. Everything that is neither an edit
+ * nor a shell command — read-only built-ins and the `mcp__airship__*` tools —
+ * passes. The screen must fail open for unknown names: under `--safe` every
+ * permission decision funnels through here, and a fail-closed default would
+ * cut off tools the flow depends on rather than guard anything.
+ *
+ * Total by construction: every branch returns a verdict, never throws. A
+ * caller that turns this into `canUseTool` relies on that — an unresolved
+ * permission request parks the tool call forever.
+ */
+export function screenTool(
+  root: string,
+  toolName: string,
+  toolInput: Record<string, unknown>
+): ScreenResult {
+  if (EDIT_TOOLS.has(toolName)) {
+    const fp = editPathOf(toolInput);
+    // A missing or malformed path is the SDK's problem to reject, not a
+    // security decision to make on its behalf.
+    return fp === undefined ? ALLOWED : screenEdit(root, fp);
+  }
+  if (toolName === "Bash") {
+    return screenBash(
+      typeof toolInput.command === "string" ? toolInput.command : ""
+    );
+  }
+  return ALLOWED;
+}
+
 export function makeSandboxHook(cwd: string): HookCallback {
   const root = resolve(cwd);
   return (input) => {
     if (input.hook_event_name !== "PreToolUse") {
       return Promise.resolve({});
     }
-    const name = input.tool_name;
-    const ti = (input.tool_input ?? {}) as Record<string, unknown>;
-
-    if (EDIT_TOOLS.has(name) && typeof ti.file_path === "string") {
-      const verdict = screenEdit(root, ti.file_path);
-      if (!verdict.allowed) {
-        return Promise.resolve(deny(verdict.reason ?? "denied"));
-      }
+    const verdict = screenTool(
+      root,
+      input.tool_name,
+      (input.tool_input ?? {}) as Record<string, unknown>
+    );
+    if (!verdict.allowed) {
+      return Promise.resolve(deny(verdict.reason ?? "denied"));
     }
-
-    if (name === "Bash") {
-      const verdict = screenBash(
-        typeof ti.command === "string" ? ti.command : ""
-      );
-      if (!verdict.allowed) {
-        return Promise.resolve(deny(verdict.reason ?? "denied"));
-      }
-    }
-
+    // An allow stays `{}` — fall through to permission evaluation — never an
+    // explicit hook allow, which would skip `canUseTool` and silently delete
+    // the second screen.
     return Promise.resolve({});
   };
 }
