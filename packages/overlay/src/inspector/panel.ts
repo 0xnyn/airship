@@ -75,6 +75,7 @@ import {
   trackInjected,
 } from "./forced-state";
 import { hasBounds, hasFill, hasStroke, type Reader } from "./gates";
+import { MIXED } from "./mixed";
 import { KIND_ICON, layerName, nodeKind } from "./node-kind";
 import { type CompletedMove, DragReorderController } from "./reorder";
 import { renderAlignRow } from "./sections/align-row";
@@ -102,7 +103,8 @@ import {
   readValue,
   readValues,
 } from "./style-model";
-import { TextEditor } from "./text-edit";
+import { vectorShapeKey } from "./svg-paint";
+import { isEditableText, TextEditor } from "./text-edit";
 
 export interface DesignPanelDeps {
   /** Accumulates HTML attribute edits (`alt`, `loading`, `autoplay`, …). */
@@ -253,9 +255,6 @@ function keepAuthoredUnit(
   return fromPx(parsed.value, authored.unit, node) ?? value;
 }
 
-/** What a control shows when a multi-selection disagrees on a value. */
-const MIXED = "Mixed";
-
 /**
  * How many elements a class-scoped edit is previewed on.
  *
@@ -353,6 +352,26 @@ function sameDecl(a: Change | null, b: Change | null): boolean {
 interface RecordOpts {
   /** Keep the declaration even when the value is unchanged. See `RecordInput`. */
   binding?: boolean;
+  /**
+   * This node is *standing in for* the selection, so the edit keeps the
+   * selection's scope and forced state.
+   *
+   * `recordOn` otherwise gives a node outside the selection no target at all —
+   * no scope, no state — which is right for the alignment row, whose flex
+   * parent is a *different element* being edited on the selection's behalf. It
+   * is wrong for the SVG paint fan, where the shapes are not a different
+   * element in any sense the user recognises: they are where the selection's
+   * own paint had to land because a presentation attribute shadowed the root.
+   * Without this, painting a `.icon`-scoped or `:hover`-forced icon recorded a
+   * plain resting-state instance edit on each shape.
+   *
+   * Two things downstream key off the resulting target rather than off this
+   * flag, and both were broken by the same omission: `trackInjected`, so
+   * `exitState` could not clean the inline style up and the shape kept its
+   * hover paint; and `applyPreview`'s `important`, so the preview competed
+   * unprefixed with the rule it stands in for.
+   */
+  standIn?: boolean;
   /** The token the user picked, in place of one inferred from the value. */
   token?: TokenRef;
 }
@@ -420,7 +439,16 @@ export class DesignPanel {
   private readonly bodyEl: HTMLElement;
 
   // DOM-tab tree state.
-  private readonly expanded = new Set<Element>();
+  //
+  // A WeakSet, deliberately: disclosure state is only ever probed per node
+  // (has/add/delete, never iterated), and a strong Set would pin every
+  // element the user ever expanded — across deletes, HMR re-renders and frame
+  // reloads, in every frame's realm — for the panel's whole lifetime.
+  private readonly expanded = new WeakSet<Element>();
+  /** The selection `expanded` was last seeded for. Seeding happens once per
+   * selection change, so collapsing the selected row sticks — a re-render or
+   * even a re-click of the same node must not spring it back open. */
+  private treeSeeded: Element | null = null;
   private readonly rowNode = new WeakMap<HTMLElement, Element>();
   /** dnd-kit entities for the current tree render; torn down on every rebuild. */
   private readonly treeScope = new DndScope();
@@ -531,29 +559,10 @@ export class DesignPanel {
         if (!(ctx && ctx.node === edit.node)) {
           return;
         }
-        deps.structureSet.recordText({
-          element: ctx.element,
-          from: edit.from,
-          node: edit.node,
-          source: ctx.source,
-          to: edit.to,
-        });
-        deps.history.push({
-          element: ctx.element,
-          from: edit.from,
-          kind: "text",
-          // Unconditional now. This used to be
-          // `edit.node === sel.node ? sel.source : null`, which existed
-          // *because* the node might not be the selection — and quietly shipped
-          // a null source whenever it wasn't. The snapshot guarantees they
-          // match, so the ternary was only ever hiding the bug it was written
-          // to work around.
-          node: edit.node,
-          source: ctx.source,
-          to: edit.to,
-        });
-        deps.controller.drawOutline();
-        this.notifyChanged();
+        // `writeDom: false` — the contenteditable has already written the
+        // page, and rewriting `textContent` here would collapse the text node
+        // under the caret.
+        this.commitText(ctx, edit.from, edit.to, false);
       },
       setTextOwner: (node) => {
         // Grab-to-move and text editing cannot share a node, and the collision
@@ -616,6 +625,16 @@ export class DesignPanel {
     this.clearScopePreviews();
     this.editTarget = {};
     this.selection = selection;
+    // First sight of this node as the selection: open it so its children are
+    // in view. Seeded here rather than in the DOM tab's render — the tab may
+    // be inactive right now, and seeding at render time would re-open a row
+    // the user collapsed as soon as they switched tabs. From then on the
+    // disclosure is the user's: `treeSeeded` is what lets a deliberate
+    // collapse survive re-renders and re-clicks of the same node.
+    if (selection && this.treeSeeded !== selection.node) {
+      this.treeSeeded = selection.node;
+      this.expanded.add(selection.node);
+    }
     // Grab-to-move is armed by default whenever something is selected (the
     // editor feel): the drag controller reads the live selection, so enabling it
     // once makes it auto-follow every new selection. Disable when nothing is
@@ -750,6 +769,10 @@ export class DesignPanel {
       s.display,
       s.flexWrap,
       hasText(node) ? "t" : "",
+      // Gates the Content field. Distinct from `hasText`: deleting the <svg>
+      // out of `<button><svg/>Save</button>` makes the node editable, and the
+      // field must appear under a refresh(), not only under a reselect.
+      isEditableText(node) ? "T" : "",
       isFlexChild(node) ? "f" : "",
       // Scope and state are panel state, not element state, but they belong in
       // the same key: switching either one changes which values every control
@@ -777,9 +800,15 @@ export class DesignPanel {
        * of them is set — which also decides whether its `+` exists at all, so
        * typing a `min-width` deleted the button you had just used.
        */
-      hasFill(this.reader(node)) ? "F" : "",
+      hasFill(this.reader(node), node) ? "F" : "",
       hasStroke(this.reader(node)) ? "S" : "",
       hasBounds(this.reader(node)) ? "M" : "",
+      // The Vector section's Fill/Stroke rows pick a colour row or a
+      // read-only paint note from the plan-resolved paint — state that lives
+      // on the *children* of an svg root, so nothing else in this key moves
+      // when an agent edit or HMR flips it. Scoped to the nodes the section
+      // renders for; the walk inside is capped.
+      isSvgRoot(node) || isSvgChild(node) ? vectorShapeKey(node) : "",
     ].join("|");
   }
 
@@ -849,6 +878,84 @@ export class DesignPanel {
   /** Commit any in-flight text edit. Safe to call when there is none. */
   endTextEdit(): void {
     this.textEditor.commit();
+  }
+
+  /**
+   * Record one text edit: delta set, journal, outline, notification.
+   *
+   * Two callers with opposite DOM obligations, hence `writeDom`. The in-frame
+   * contenteditable path has already written the page (rewriting
+   * `textContent` there would destroy the caret) and passes `false`. The
+   * panel's Content field has not — recording without writing would produce
+   * an edit the chip claims and the page never shows, and an asymmetric
+   * journal on top: `applyText` writes `textContent` in *both* directions, so
+   * redo would apply an edit undo never reverted.
+   *
+   * The `history` entry's source is unconditional on purpose — see the git
+   * history of the old inline version: the snapshot guarantees node and
+   * context match, and the ternary this replaced only hid the bug it was
+   * written to work around.
+   */
+  private commitText(
+    ctx: {
+      element: ElementContext;
+      node: Element;
+      source: SourceLocation | null;
+    },
+    from: string,
+    to: string,
+    writeDom: boolean
+  ): void {
+    if (from === to) {
+      return;
+    }
+    if (writeDom) {
+      ctx.node.textContent = to;
+    }
+    this.deps.structureSet.recordText({
+      element: ctx.element,
+      from,
+      node: ctx.node,
+      source: ctx.source,
+      to,
+    });
+    this.deps.history.push({
+      element: ctx.element,
+      from,
+      kind: "text",
+      node: ctx.node,
+      source: ctx.source,
+      to,
+    });
+    this.deps.controller.drawOutline();
+    this.notifyChanged();
+  }
+
+  /**
+   * A text edit arriving from the panel rather than the in-frame editor.
+   *
+   * Enforces the same invariant `beginTextEdit` does — never record against a
+   * node that is not the selection — and takes the DOM write the
+   * contenteditable path performs itself.
+   */
+  private recordText(node: Element, value: string): void {
+    const sel = this.selection;
+    if (!sel || sel.node !== node) {
+      return;
+    }
+    // Two writers on one node: if the in-frame editor is live here, a
+    // `textContent` write would blow away the text node under its caret. End
+    // it first — it commits whatever was typed, and the field's edit lands as
+    // its own step on top.
+    if (this.textEditor.active && this.textEditor.node === node) {
+      this.endTextEdit();
+    }
+    this.commitText(
+      { element: sel.element, node, source: sel.source },
+      node.textContent ?? "",
+      value,
+      true
+    );
   }
 
   /**
@@ -1137,10 +1244,11 @@ export class DesignPanel {
    * short on purpose.
    */
   private readonly ctx: SectionContext = {
+    batch: (run) => this.deps.history.batch(run),
     buildControl: (descriptor, node, after) =>
       this.buildControl(descriptor, node, after),
-    colorRow: (value, tip, onChange, node, properties) =>
-      this.colorRow(value, tip, onChange, node, properties),
+    colorRow: (value, tip, onChange, node, properties, read) =>
+      this.colorRow(value, tip, onChange, node, properties, read),
     fieldCell: (descriptor, node) => this.fieldCell(descriptor, node),
     flash: (node) => this.flash(node),
     gate: (node) => this.reader(node),
@@ -1151,6 +1259,7 @@ export class DesignPanel {
       this.numControl(spec, initial, onCommit, properties, read),
     onAttr: (node, attribute, value) => this.recordAttr(node, attribute, value),
     onChange: (property, value) => this.onChange(property, value),
+    onText: (node, value) => this.recordText(node, value),
     recordOn: (node, property, value) => this.recordOn(node, property, value),
     redrawOutline: () => this.deps.controller.drawOutline(),
     refresh: () => this.refresh(),
@@ -1162,6 +1271,8 @@ export class DesignPanel {
     seed: (node, property, fallback) => this.seed(node, property, fallback),
     spacingControl: (node, group) => this.spacingControl(node, group),
     tokenSlot: (node, properties) => this.tokenSlot(node, properties),
+    writeOn: (nodes, cssProperty, value, opts) =>
+      this.write(nodes, cssProperty, value, opts),
   };
 
   /**
@@ -1203,12 +1314,14 @@ export class DesignPanel {
     tip: string,
     onChange: (next: string) => void,
     node?: Element,
-    properties: readonly string[] = []
+    properties: readonly string[] = [],
+    read?: () => string
   ): HTMLElement {
     const slot =
       node && properties.length ? this.tokenSlot(node, properties) : null;
     const row = createColorRow({
       gestures: this.gestures,
+      node,
       onChange,
       tip,
       value,
@@ -1226,6 +1339,10 @@ export class DesignPanel {
      * property name while `syncControl` fans one property out to *every*
      * mounted control, a resize-handle drag pushed `"240px"` into each colour
      * row in the panel: unparseable, so every swatch flipped to `Mixed`.
+     *
+     * `read`, when the caller supplies one, replaces the pushed value: the
+     * re-seed pass reads the selection, and a row whose value lives on other
+     * nodes (an `<svg>` root's paint lives on its shapes) must re-derive it.
      */
     this.controls.push({
       destroy: row.destroy,
@@ -1235,7 +1352,7 @@ export class DesignPanel {
       setToken: (name) => row.setToken(name),
       setValue: (property, next) => {
         if (properties.includes(property)) {
-          row.setValue(next);
+          row.setValue(read ? read() : next);
         }
       },
     });
@@ -1570,7 +1687,11 @@ export class DesignPanel {
     }
     const value = keepAuthoredUnit(node, cssProperty, raw);
     const info = this.infoFor(node);
-    const target = info.inSelection ? this.editTarget : undefined;
+    // A stand-in carries the selection's scope and state even though it is not
+    // in the selection — see `RecordOpts.standIn` for why that is a different
+    // question from `inSelection`.
+    const target =
+      info.inSelection || opts?.standIn ? this.editTarget : undefined;
     const from =
       this.deps.changeSet.originalValue(node, cssProperty, target) ??
       readValue(node, cssProperty);
@@ -1647,8 +1768,8 @@ export class DesignPanel {
       source: node === sel.node ? sel.source : null,
       to: value,
     });
-    this.notifyChanged();
-    this.deps.onChanged?.();
+    // `refresh()` ends in `notifyChanged()`; firing it here too ran the app's
+    // change handler (chips, preview, dock reveal) three times per keystroke.
     this.refresh();
   }
 
@@ -2030,9 +2151,14 @@ export class DesignPanel {
       return;
     }
     const tree = el("div", { class: cls("tree") });
-    // Auto-expand the ancestor path to the selection so it's always visible.
+    // Force-open the *strict* ancestors of the selection, so it is always
+    // visible — the tree is the selection UI here, and collapsing an ancestor
+    // would hide the selected row itself. The selected node's own disclosure
+    // is deliberately not forced: it was seeded open once in `setSelection`,
+    // and from then on its chevron belongs to the user (seeding at the node
+    // itself made `toggleExpand` a no-op — the row could never be closed).
     const path = new Set<Element>();
-    let cur: Element | null = sel.node;
+    let cur: Element | null = sel.node.parentElement;
     while (cur) {
       path.add(cur);
       cur = cur.parentElement;
@@ -2757,7 +2883,7 @@ export class DesignPanel {
     control.element.dataset.inherited = "";
     const existing = control.element.dataset.tip;
     control.element.dataset.tip = existing
-      ? `${existing} — inherited from ${source}`
+      ? `${existing} · inherited from ${source}`
       : `Inherited from ${source}`;
   }
 
@@ -2993,7 +3119,8 @@ export class DesignPanel {
         descriptor,
         value,
         handleChange,
-        this.gestures
+        this.gestures,
+        node
       );
     } else {
       control = createNumberScrub(
@@ -3270,6 +3397,12 @@ export class DesignPanel {
       // A `<path>` has `fill` and `stroke`, not `background` and `border` — the
       // Vector section covers it, and these two would offer properties that do
       // nothing on it.
+      //
+      // An `<svg>` *root* keeps both on purpose, alongside Vector. It lays out
+      // as a normal box, and `background-color`/`border` genuinely paint on it
+      // — the "Fill is broken on svg roots" hypothesis was checked and
+      // rejected; the thing that was broken was the Vector rows writing paint
+      // the children shadow, which `svg-paint.ts` now routes around.
       this.bodyEl.append(
         renderFill(this.ctx, node),
         renderStroke(this.ctx, node)
@@ -3328,7 +3461,6 @@ export class DesignPanel {
     }
     this.journalDecl(node, before, property, target);
     this.deps.controller.drawOutline();
-    this.deps.onChanged?.();
     this.refreshCss();
     this.notifyChanged();
   }
@@ -3344,7 +3476,6 @@ export class DesignPanel {
     this.deps.changeSet.reapplyPreviews(node);
     this.journalDecl(node, before, property, this.editTarget);
     this.deps.controller.drawOutline();
-    this.deps.onChanged?.();
     this.refreshCss();
     this.notifyChanged();
   }
