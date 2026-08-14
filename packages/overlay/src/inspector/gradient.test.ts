@@ -3,6 +3,7 @@ import {
   angleOf,
   formatGradient,
   type Gradient,
+  interpolate,
   isGradient,
   parseGradient,
   reverse,
@@ -159,5 +160,89 @@ describe("stop ordering", () => {
       "#000 0%",
       "#fff 100%",
     ]);
+  });
+});
+
+/*
+ * `interpolate` — the colour of a stop you get by clicking the gradient bar.
+ *
+ * This whole function was untested, which is how it shipped carrying a second,
+ * weaker hex parser: a private `HEX` regex and `hexToRgb` that read three- and
+ * six-digit hex and nothing else. Everything it could not read fell into the
+ * "nearer one wins" branch, silently — so clicking the bar inserted an exact
+ * copy of one end instead of the blend at the point clicked.
+ *
+ * What it could not read was most things. `oklch()` is Tailwind 4's entire
+ * default palette, so no Tailwind project's gradients interpolated at all; and
+ * because the old serialiser emitted six-digit hex, mixing two `#rrggbbaa` stops
+ * threw away both alphas.
+ */
+describe("interpolate", () => {
+  const ramp = (a: string, b: string): Gradient =>
+    parseGradient(`linear-gradient(${a}, ${b})`) as Gradient;
+
+  it("blends hex, which is all it could ever do before", () => {
+    expect(interpolate(ramp("#000000", "#ffffff"), 0.5)).toBe(
+      "rgb(128 128 128)"
+    );
+    // Short hex expands rather than being read as three channels.
+    expect(interpolate(ramp("#000", "#fff"), 0.5)).toBe("rgb(128 128 128)");
+  });
+
+  it("blends the notations the old parser fell through on", () => {
+    // Each of these used to return one endpoint verbatim.
+    expect(interpolate(ramp("rgb(0, 0, 0)", "rgb(255, 255, 255)"), 0.5)).toBe(
+      "rgb(128 128 128)"
+    );
+    expect(interpolate(ramp("rgb(0 0 0)", "rgb(255 255 255)"), 0.5)).toBe(
+      "rgb(128 128 128)"
+    );
+    expect(interpolate(ramp("hsl(0 0% 0%)", "hsl(0 0% 100%)"), 0.5)).toBe(
+      "rgb(128 128 128)"
+    );
+  });
+
+  it("interpolates the alpha instead of discarding it", () => {
+    // The old serialiser emitted six-digit hex, so both alphas were lost and a
+    // fade-to-transparent ramp produced an opaque stop in the middle.
+    expect(interpolate(ramp("#00000000", "#000000ff"), 0.5)).toBe(
+      "rgb(0 0 0 / 0.5)"
+    );
+    // A quarter of the way, so the alpha is a value only interpolation produces
+    // — not either endpoint, which is what the old "nearer one wins" returned.
+    expect(interpolate(ramp("#00000000", "#000000ff"), 0.25)).toBe(
+      "rgb(0 0 0 / 0.25)"
+    );
+    expect(interpolate(ramp("rgb(0 0 0 / 0)", "rgb(0 0 0 / 1)"), 0.5)).toBe(
+      "rgb(0 0 0 / 0.5)"
+    );
+  });
+
+  it("respects where along the ramp the click landed", () => {
+    const g = ramp("#000000", "#ffffff");
+    expect(interpolate(g, 0)).toBe("rgb(0 0 0)");
+    expect(interpolate(g, 1)).toBe("rgb(255 255 255)");
+    expect(interpolate(g, 0.25)).toBe("rgb(64 64 64)");
+  });
+
+  it("honours authored stop positions rather than assuming an even spread", () => {
+    // Both stops sit in the first half, so the midpoint of the *bar* is past
+    // the last one and the blend has to clamp to it.
+    const g = parseGradient(
+      "linear-gradient(#000000 0%, #ffffff 50%)"
+    ) as Gradient;
+    expect(interpolate(g, 0.25)).toBe("rgb(128 128 128)");
+    expect(interpolate(g, 0.5)).toBe("rgb(255 255 255)");
+  });
+
+  it("still lets the nearer stop win when one is genuinely unreadable", () => {
+    /*
+     * The fallback is kept — but it now means what it says. A `var()` that does
+     * not resolve is a real "no idea", unlike the `rgb()` and `oklch()` values
+     * that used to land here.
+     */
+    const g = ramp("var(--nope)", "#ffffff");
+    expect(interpolate(g, 0.1)).toBe("var(--nope)");
+    expect(interpolate(g, 0.9)).toBe("#ffffff");
   });
 });

@@ -39,6 +39,8 @@ const ANGLE_COARSE_STEP = 15;
 
 export interface GradientEditorOptions {
   gestures?: Gestures;
+  /** The realm a stop colour resolves against. See `ColorRowOptions.node`. */
+  node?: Element | null;
   onChange: (css: string) => void;
   /** The gradient's current CSS text. */
   value: string;
@@ -114,7 +116,7 @@ export function openGradientEditor(
       stopBar(gradient, selected, {
         onAdd: (fraction) => {
           const stop: GradientStop = {
-            color: interpolate(gradient, fraction),
+            color: interpolate(gradient, fraction, opts.node),
             position: `${Math.round(fraction * 100)}%`,
           };
           const stops = [...gradient.stops, stop];
@@ -141,24 +143,33 @@ export function openGradientEditor(
       // `opts.gestures` so an angle drag is one undo step, as `stopList`'s fields
       // already are — without it a 40-degree drag left ~40 entries in the history.
       angleRow(gradient, commit, track, opts.gestures),
-      stopList(gradient, selected, opts.gestures, track, {
-        onEdit: (index, stop) => {
-          const stops = gradient.stops.map((s, i) => (i === index ? stop : s));
-          commit({ ...gradient, stops });
+      stopList(
+        gradient,
+        selected,
+        opts.gestures,
+        track,
+        {
+          onEdit: (index, stop) => {
+            const stops = gradient.stops.map((s, i) =>
+              i === index ? stop : s
+            );
+            commit({ ...gradient, stops });
+          },
+          onRemove: (index) => {
+            if (gradient.stops.length <= MIN_STOPS) {
+              return;
+            }
+            const stops = gradient.stops.filter((_, i) => i !== index);
+            selected = Math.min(selected, stops.length - 1);
+            commit({ ...gradient, stops });
+          },
+          onSelect: (index) => {
+            selected = index;
+            paint();
+          },
         },
-        onRemove: (index) => {
-          if (gradient.stops.length <= MIN_STOPS) {
-            return;
-          }
-          const stops = gradient.stops.filter((_, i) => i !== index);
-          selected = Math.min(selected, stops.length - 1);
-          commit({ ...gradient, stops });
-        },
-        onSelect: (index) => {
-          selected = index;
-          paint();
-        },
-      })
+        opts.node
+      )
     );
     handle.reposition();
   };
@@ -416,7 +427,8 @@ function stopList(
   selected: number,
   gestures: Gestures | undefined,
   track: (dispose: () => void) => void,
-  handlers: StopHandlers
+  handlers: StopHandlers,
+  node?: Element | null
 ): HTMLElement {
   const list = el("div", { class: cls("grad-stops") });
   const order = sortedStops(gradient);
@@ -432,6 +444,7 @@ function stopList(
 
     const color = createColorRow({
       gestures,
+      node,
       onChange: (next) => handlers.onEdit(index, { ...stop, color: next }),
       tip: "Stop color",
       value: stop.color,

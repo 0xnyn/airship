@@ -230,6 +230,29 @@ const NAME_PATTERNS: [RegExp, TokenCategory][] = [
 
 const HEX_OR_FUNC_COLOR =
   /^(#|rgba?\(|hsla?\(|oklch\(|oklab\(|lab\(|lch\(|color\()/i;
+
+/**
+ * Does this value *look* like a colour? A shape test, not a parse.
+ *
+ * Deliberately weak, and only used where being wrong is cheap. It answers on the
+ * prefix alone — `#`, and the names of the colour functions — so `#zzz` and a
+ * bare `rgb(` both pass. Its two callers can afford that: `categoryFromValue`,
+ * picking a scale for a custom property when usage and name have both declined
+ * to say, and the token picker, deciding whether a menu row gets a swatch.
+ *
+ * The overlay *has* a real answer — `isParseableColor` in `css-value.ts`, which
+ * asks the engine — and the picker deliberately does not call it. That path
+ * inserts a probe element and forces a style recalc per call, and a colour scale
+ * routinely runs to a hundred rows; a hundred recalcs to open a menu is a worse
+ * bug than the occasional swatch that paints nothing.
+ *
+ * Exported because the overlay held a byte-identical copy of this regex under
+ * the name `COLORISH`. Two spellings of one rule in two packages is how they
+ * drift apart.
+ */
+export function looksLikeColor(value: string): boolean {
+  return HEX_OR_FUNC_COLOR.test(value.trim());
+}
 const NUMERIC_LENGTH = /^-?[\d.]+(px|r?em|%|v[hw]|ch|ex)$/;
 const THREE_DIGITS = /^\d{3}$/;
 /** Whole-value now, not a prefix — so `ui-` has to spell out what it heads. */
@@ -395,7 +418,7 @@ function categoryFromName(name: string): TokenCategory | null {
 
 function categoryFromValue(value: string): TokenCategory | null {
   const v = value.trim();
-  if (HEX_OR_FUNC_COLOR.test(v) || isChannelTriple(v)) {
+  if (looksLikeColor(v) || isChannelTriple(v)) {
     return "colors";
   }
   if (THREE_DIGITS.test(v)) {
@@ -455,6 +478,52 @@ const LEGACY_RGB = /^rgba?\(([^)]+)\)$/;
 const SPACE_RGB = /^(\d{1,3})\s+(\d{1,3})\s+(\d{1,3})$/;
 /** Commas, slashes and whitespace all separate colour channels. */
 const CHANNEL_SEPARATOR = /[,/\s]+/;
+/** `#rgb`, `#rgba`, `#rrggbb`, `#rrggbbaa` — already lowercased by the caller. */
+const HEX = /^#([\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/;
+
+/**
+ * A hex colour as `rgb()` — pure string math, no DOM, no colour science.
+ *
+ * This is the one colour conversion that belongs in this module. It is exact
+ * (hex *is* 8-bit sRGB, so nothing is approximated), it needs no engine, and
+ * without it the registry could not match its own tokens: `byValue` is keyed on
+ * the value as **authored**, and a design system authors `--brand: #0af` while
+ * every control reads back the *computed* `rgb(0, 170, 255)`. Those are the same
+ * colour and they hashed to two different keys, so no hex-authored colour token
+ * ever bound to a control.
+ *
+ * `oklch()`, named colours and `hsl()` need a real parser and cannot be done
+ * here — `css-value.ts` in the overlay handles those, which is why `match.ts`
+ * has a second, engine-backed comparison behind this one.
+ */
+function hexToRgb(value: string): string | null {
+  const matched = HEX.exec(value);
+  if (!matched) {
+    return null;
+  }
+  const [, digits] = matched;
+  const full =
+    digits.length <= 4
+      ? digits
+          .split("")
+          .map((d) => d + d)
+          .join("")
+      : digits;
+  const channel = (i: number) => Number.parseInt(full.slice(i, i + 2), 16);
+  const rgb = `${channel(0)}, ${channel(2)}, ${channel(4)}`;
+  if (full.length === 8) {
+    /*
+     * `rgb(r, g, b, a)`, not `rgba(…)` — the four-argument `rgb(` is what the
+     * legacy branch below already produces for both `rgba(0, 0, 0, .5)` and the
+     * modern `rgb(0 0 0 / .5)`, and the whole point of this function is that one
+     * colour gets one key. Three decimals, matching the overlay's `formatColor`,
+     * so a round trip through either side lands on the same string.
+     */
+    const alpha = Math.round((channel(6) / 255) * 1000) / 1000;
+    return `rgb(${rgb}, ${alpha})`;
+  }
+  return `rgb(${rgb})`;
+}
 
 /** True when a bare value is three space-separated 0–255 channels. */
 export function isChannelTriple(value: string): boolean {
@@ -469,13 +538,26 @@ export function isChannelTriple(value: string): boolean {
  * registry key `byValue` through this, so a token found statically and the same
  * token found at runtime collapse to one entry instead of two.
  *
- * Deliberately *not* a colour parser — it only has to be consistent, and
- * anything needing real colour maths goes through `css-value.ts` in the overlay.
+ * Still not a colour parser, with one exception that earns its place. Hex is
+ * converted, because hex *is* 8-bit sRGB — the conversion is exact string math,
+ * needs no engine, and without it this function could not do the job named in
+ * the paragraph above: a design system authors `--brand: #0af`, every control
+ * reads back the computed `rgb(0, 170, 255)`, and the two hashed to different
+ * keys, so no hex-authored colour token ever matched anything.
+ *
+ * Everything past hex — `oklch()`, named colours, `hsl()`, `color-mix()` — needs
+ * a real parser and an engine probe, which this module cannot have and must not
+ * grow. Those go through `css-value.ts`'s `sameColor` in the overlay, which
+ * `tokens/match.ts` consults as a second pass behind this one.
  */
 export function normalizeTokenValue(value: string): string {
   const trimmed = value.trim().toLowerCase().replace(SPACE_RUN, " ");
   if (isChannelTriple(trimmed)) {
     return `rgb(${trimmed.replace(SPACE_RUN, ", ")})`;
+  }
+  const hex = hexToRgb(trimmed);
+  if (hex) {
+    return hex;
   }
   const legacy = LEGACY_RGB.exec(trimmed);
   if (legacy) {

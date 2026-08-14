@@ -23,7 +23,8 @@ export function renderEffects(ctx: SectionContext, node: Element): HTMLElement {
   const shadows = createShadowList(
     readValue(node, "box-shadow"),
     ctx.onChange,
-    ctx.gestures
+    ctx.gestures,
+    node
   );
   /*
    * A shadow scale is a real token category and had no picker at all.

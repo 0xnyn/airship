@@ -8,7 +8,7 @@
  * of dead icons.
  */
 import type { TokenRef } from "@airship/protocol";
-import type { DesignToken } from "@airship/protocol/tokens";
+import { type DesignToken, looksLikeColor } from "@airship/protocol/tokens";
 import { cls, el } from "../../dom";
 import { icon } from "../../icons";
 import { openPopover } from "../../popover-host";
@@ -123,11 +123,11 @@ function describe(current: TokenRef | undefined, property: string): string {
     return `Use a design token for ${property}`;
   }
   if (!current.exact) {
-    return `Closest token: ${current.name} (${current.actual}) — click to apply`;
+    return `Closest: ${current.name} (${current.actual})`;
   }
   return current.via === "reference"
-    ? `Using ${current.name} — click to change or detach`
-    : `Matches ${current.name} — click to use it by name`;
+    ? `Using ${current.name}. Click to change`
+    : `Matches ${current.name}. Click to bind`;
 }
 
 /**
@@ -309,7 +309,7 @@ function row(
   // Name on the left, value right-aligned in the dimmed mono the menus already
   // use for hints — a token's value is exactly that kind of trailing detail.
   const main = el("span", { class: cls("pop-item-main") });
-  if (isColorish(value)) {
+  if (looksLikeColor(value)) {
     const swatch = el("span", { class: cls("token-swatch") });
     swatch.style.background = value;
     main.append(swatch);
@@ -348,9 +348,7 @@ function row(
   const where = `${token.file ?? ""}${token.file && token.line ? `:${token.line}` : ""}`;
   const tip = bound
     ? `Stop using ${token.name} here and write a literal value`
-    : [inScope ? "" : "Not defined on this element", where]
-        .filter(Boolean)
-        .join(" — ");
+    : [inScope ? "" : "Not defined here", where].filter(Boolean).join(" · ");
   if (tip) {
     item.dataset.tip = tip;
   }
@@ -365,10 +363,4 @@ function row(
     opts.onApply(token);
   });
   return item;
-}
-
-const COLORISH = /^(#|rgba?\(|hsla?\(|oklch\(|oklab\(|lab\(|lch\(|color\()/i;
-
-function isColorish(value: string): boolean {
-  return COLORISH.test(value.trim());
 }

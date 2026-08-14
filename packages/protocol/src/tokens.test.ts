@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { categorizeToken, categoryForProperty } from "./tokens";
+import {
+  categorizeToken,
+  categoryForProperty,
+  looksLikeColor,
+  normalizeTokenValue,
+} from "./tokens";
 
 /*
  * Which scale a custom property belongs to.
@@ -146,5 +151,93 @@ describe("the values that used to become fonts", () => {
   it("does not read a breakpoint as a spacing step", () => {
     // Named, so the name tier catches it before the bare-length rule can.
     expect(at("--pk-layout-breakpoint-nav", "1240px")).toBe("sizing");
+  });
+});
+
+/*
+ * `normalizeTokenValue` is the key both scanners hash a token's value into, and
+ * it did not touch hex — so the registry could not match its own tokens. A
+ * design system authors `--brand: #0af`; every control reads back the *computed*
+ * `rgb(0, 170, 255)`; the two hashed to different keys, and no hex-authored
+ * colour token ever bound to a control. The badge simply never appeared.
+ *
+ * Hex is the one colour conversion that belongs in this module — it is exact
+ * string math on 8-bit sRGB and needs no engine. Everything past it (`oklch()`,
+ * named colours) is `sameColor`'s job in the overlay.
+ */
+describe("normalizeTokenValue", () => {
+  it("collapses every spelling of one colour into one key", () => {
+    const key = "rgb(0, 170, 255)";
+    for (const spelling of [
+      "#0af",
+      "#00AAFF",
+      "#00aaff",
+      "rgb(0, 170, 255)",
+      "rgb(0 170 255)",
+      "  #0AF  ",
+    ]) {
+      expect(normalizeTokenValue(spelling)).toBe(key);
+    }
+  });
+
+  it("carries the alpha of a four- or eight-digit hex", () => {
+    // 0x80 / 255 = 0.502 — three decimals, matching the overlay's `formatColor`.
+    expect(normalizeTokenValue("#00000080")).toBe("rgb(0, 0, 0, 0.502)");
+    // `#0008` expands to `#00000088`, not to `#000` with a stray alpha.
+    expect(normalizeTokenValue("#0008")).toBe("rgb(0, 0, 0, 0.533)");
+    expect(normalizeTokenValue("#ffffffff")).toBe("rgb(255, 255, 255, 1)");
+  });
+
+  it("agrees with the four-argument rgb() the legacy branch already emits", () => {
+    // The whole point is one colour, one key — so hex with alpha has to land on
+    // the same string as the two spellings a browser and a stylesheet produce.
+    expect(normalizeTokenValue("rgba(0, 0, 0, 0.5)")).toBe("rgb(0, 0, 0, 0.5)");
+    expect(normalizeTokenValue("rgb(0 0 0 / 0.5)")).toBe("rgb(0, 0, 0, 0.5)");
+  });
+
+  it("leaves alone what it cannot convert exactly", () => {
+    // No engine here, so these pass through for `sameColor` to settle.
+    expect(normalizeTokenValue("oklch(0.7 0.1 200)")).toBe(
+      "oklch(0.7 0.1 200)"
+    );
+    expect(normalizeTokenValue("REBECCAPURPLE")).toBe("rebeccapurple");
+    expect(normalizeTokenValue("var(--brand)")).toBe("var(--brand)");
+  });
+
+  it("does not mistake a malformed hex for a colour", () => {
+    for (const bad of ["#zzz", "#12345", "#1234567", "#", "#ff"]) {
+      expect(normalizeTokenValue(bad)).toBe(bad.toLowerCase());
+    }
+  });
+
+  it("still normalizes the non-hex forms it always did", () => {
+    expect(normalizeTokenValue("255 229 202")).toBe("rgb(255, 229, 202)");
+    expect(normalizeTokenValue("  8PX  ")).toBe("8px");
+  });
+});
+
+/*
+ * The prefix test the overlay used to keep a byte-identical copy of, under the
+ * name `COLORISH`. Deliberately weak — it is a swatch gate, not a parser.
+ */
+describe("looksLikeColor", () => {
+  it("accepts hex and every colour function", () => {
+    for (const value of [
+      "#0af",
+      "rgb(0 0 0)",
+      "rgba(0,0,0,.5)",
+      "hsl(0 100% 50%)",
+      "oklch(0.7 0.1 200)",
+      "lab(50% 40 59)",
+      "color(srgb 1 0 0)",
+    ]) {
+      expect(looksLikeColor(value)).toBe(true);
+    }
+  });
+
+  it("rejects what does not start like one", () => {
+    for (const value of ["8px", "bold", "var(--brand)", "255 229 202"]) {
+      expect(looksLikeColor(value)).toBe(false);
+    }
   });
 });

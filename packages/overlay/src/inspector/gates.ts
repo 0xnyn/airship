@@ -24,14 +24,28 @@
  *
  * Hence `Reader`: the caller composes "pending, then computed" once and every
  * gate asks the same question the same way.
+ *
+ * These are the *element* half of the four colour predicates — "does this node
+ * have a fill at all", not "is this string a colour". `isParseableColor` in
+ * `css-value.ts` lists all four and says which question each answers.
  */
 import { alphaOf } from "./css-value";
 
 /** How a gate reads a property. Pending value first, computed style behind it. */
 export type Reader = (property: string) => string;
 
-/** Does this element have a background worth showing a Fill row for? */
-export function hasFill(read: Reader): boolean {
+/**
+ * Does this element have a background worth showing a Fill row for?
+ *
+ * `node` is the element the value was read from, and it is here because the
+ * answer can depend on which document resolves it. A pending edit can be
+ * `var(--brand)`, and `alphaOf` reaches `parseColor`'s engine probe to read it —
+ * against the overlay shell, where `--brand` is undefined, unless it is told
+ * otherwise. That returned the shell's inherited colour at alpha 1, so an
+ * unresolvable token read as a fill and the row stayed. Optional because the
+ * gates are pure functions of a `Reader` and the tests exercise them that way.
+ */
+export function hasFill(read: Reader, node?: Element): boolean {
   const color = read("background-color");
   if (!color) {
     return false;
@@ -39,7 +53,7 @@ export function hasFill(read: Reader): boolean {
   // `transparent` never comes back from computed style — it resolves to
   // `rgba(0, 0, 0, 0)` — but it is exactly what a pending "remove fill" writes,
   // so both spellings have to be understood here.
-  return color.trim() !== "transparent" && alphaOf(color) > 0;
+  return color.trim() !== "transparent" && alphaOf(color, node) > 0;
 }
 
 /** The four edges, so a gate never speaks for the box from one of them. */

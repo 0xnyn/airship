@@ -230,6 +230,15 @@ export type RGBA = [number, number, number, number];
  * Exported because it is the whole conversion boundary for the colour picker:
  * this module owns `string ↔ RGBA` and the picker owns `RGBA ↔ HSVA`, so there
  * is exactly one CSS colour parser in the overlay.
+ *
+ * `node` names the realm `viaEngine` resolves against, and every wrapper below
+ * takes it for one reason: for a long time none of them did, so the realm fix
+ * `viaEngine` documents was unreachable. `withAlpha`, `alphaOf`, `opaque` and
+ * `isParseableColor` each called `parseColor(color)` with no node, and they are
+ * how the swatch, the hex field and `gates.ts` actually ask — so a `var()`
+ * colour inside a canvas frame went on resolving against the overlay shell
+ * exactly as before, and `hasFill` could answer `true` off the shell's inherited
+ * colour. A parameter nothing passes is not a fix; the callers have to thread it.
  */
 export function parseColor(color: string, node?: Element | null): RGBA | null {
   const c = color.trim().toLowerCase();
@@ -489,8 +498,12 @@ function viaEngine(value: string, realm?: Document | null): RGBA | null {
  * fill at 50% would fade the text inside it. A design tool's fill opacity is the alpha
  * of that one paint, and `rgb(r g b / a)` is its exact CSS equivalent.
  */
-export function withAlpha(color: string, alpha: number): string {
-  const parsed = parseColor(color);
+export function withAlpha(
+  color: string,
+  alpha: number,
+  node?: Element | null
+): string {
+  const parsed = parseColor(color, node);
   if (!parsed) {
     return color;
   }
@@ -499,11 +512,11 @@ export function withAlpha(color: string, alpha: number): string {
 }
 
 /** The alpha already carried by a colour, as 0–1. */
-export function alphaOf(color: string): number {
+export function alphaOf(color: string, node?: Element | null): number {
   if (color.trim() === "transparent") {
     return 0;
   }
-  return parseColor(color)?.[3] ?? 1;
+  return parseColor(color, node)?.[3] ?? 1;
 }
 
 /**
@@ -513,8 +526,8 @@ export function alphaOf(color: string): number {
  * field is six characters wide, and putting `color(srgb 0.97 …)` in it is worse
  * than being slightly wrong about a colour nothing can edit anyway.
  */
-export function opaque(color: string): string {
-  const parsed = parseColor(color);
+export function opaque(color: string, node?: Element | null): string {
+  const parsed = parseColor(color, node);
   if (!parsed) {
     return "#000000";
   }
@@ -522,9 +535,96 @@ export function opaque(color: string): string {
   return `#${[r, g, b].map((n) => Math.max(0, Math.min(255, n)).toString(16).padStart(2, "0")).join("")}`;
 }
 
-/** Can this value be shown in the picker at all? Guards `Mixed` and keywords. */
-export function isParseableColor(color: string): boolean {
-  return parseColor(color) !== null;
+/**
+ * Is this a hex colour? The one hex grammar, for every field that takes one.
+ *
+ * There were three of these. `color-picker.ts` gated its row's hex field on
+ * `/^[0-9a-f]{3}$|^[0-9a-f]{6}$/i` while the *same file's* popover field gated on
+ * nothing and went straight to `parseColor` — so `FF0000AA` was accepted in one
+ * field and silently reverted in the other. `gradient.ts` had a third,
+ * `/^#([\da-f]{3}|[\da-f]{6})$/i`, behind its own hex parser.
+ *
+ * `HEX_COLOR` is the grammar `parseHex` actually implements, so a field that
+ * gates on this can never refuse a value the parser would have read.
+ */
+export function isHexColor(value: string): boolean {
+  return HEX_COLOR.test(value.trim().toLowerCase());
+}
+
+/**
+ * Can this value be shown in the picker at all? Guards `Mixed` and keywords.
+ *
+ * One of four colour predicates, which look interchangeable and are not. They
+ * answer different questions, and picking the wrong one is how `none` came to
+ * render as the `Mixed` hairline on every unstroked shape:
+ *
+ * - **this** — *can the picker render it?* Asks the engine, so it is the only
+ *   one that knows about `oklch()` and named colours, and the only one that
+ *   costs a style recalc.
+ * - `looksLikeColor` (`@airship/protocol/tokens`) — *does it look like one?* A
+ *   prefix test, no engine. For the places a wrong answer is cheap and a
+ *   hundred style recalcs would not be.
+ * - `isEditablePaint` (`svg-paint.ts`) — *is it a colour rather than a paint
+ *   server?* SVG `fill`/`stroke` also take `url(#grad)` and `context-fill`,
+ *   which are valid paints this module cannot read.
+ * - `hasFill` / `hasStroke` (`gates.ts`) — *does the element have one at all?*
+ *   About the element, not the string.
+ *
+ * And `sameColor`, above, is the one comparison. Nothing should be asking
+ * whether two colours are equal with `===`.
+ */
+export function isParseableColor(
+  color: string,
+  node?: Element | null
+): boolean {
+  return parseColor(color, node) !== null;
+}
+
+/**
+ * Are these the same colour? The comparison `===` cannot do.
+ *
+ * Three places in the overlay ask this question, and all three used to answer it
+ * with string equality: the change set's no-op check, token matching, and the
+ * gates. String equality is wrong here because every boundary in this codebase
+ * hands back a *different spelling of the same colour*. `getComputedStyle`
+ * returns the legacy comma form, `formatColor` writes the modern space form, and
+ * a design system authors hex — so `#0af`, `rgb(0 170 255)` and
+ * `rgb(0, 170, 255)` are one colour that compared unequal three ways.
+ *
+ * What that cost: a colour edited and then set back to its original was not
+ * recognised as a no-op, so a change reading `background-color: rgb(59, 130,
+ * 246) → rgb(59 130 246)` reached the agent asking it to do nothing.
+ *
+ * Exact, not approximate. `findToken` is right that colours have no meaningful
+ * "near" — a slightly different hex is a different colour, not an approximation
+ * of one — so this is equality with the spellings normalised away, never a
+ * tolerance.
+ *
+ * The one place that reads as a tolerance and is not: alpha is compared as the
+ * 8-bit channel it composites to. It has to be, because `formatColor` rounds
+ * alpha to three decimals, so `#00000080` (128/255 = 0.50196…) serialises as
+ * `rgb(0 0 0 / 0.502)` and would not equal itself across a round trip. Both
+ * round to 128, which is the only sense in which they differ or don't.
+ *
+ * `node` picks the realm the engine probe resolves against — see `parseColor`.
+ */
+export function sameColor(
+  a: string,
+  b: string,
+  node?: Element | null
+): boolean {
+  const ca = parseColor(a, node);
+  const cb = parseColor(b, node);
+  if (!(ca && cb)) {
+    return false;
+  }
+  const alpha8 = (rgba: RGBA) => Math.round(clamp01(rgba[3]) * 255);
+  return (
+    ca[0] === cb[0] &&
+    ca[1] === cb[1] &&
+    ca[2] === cb[2] &&
+    alpha8(ca) === alpha8(cb)
+  );
 }
 
 // -- HSV ---------------------------------------------------------------------

@@ -1,11 +1,14 @@
+import { normalizeTokenValue } from "@airship/protocol/tokens";
 import { describe, expect, it } from "vitest";
 import {
   alphaOf,
   formatColor,
+  isHexColor,
   isParseableColor,
   opaque,
   parseColor,
   type RGBA,
+  sameColor,
   splitTop,
   splitWords,
   withAlpha,
@@ -199,5 +202,219 @@ describe("isParseableColor", () => {
   it("guards the Mixed sentinel and keywords", () => {
     expect(isParseableColor("Mixed")).toBe(false);
     expect(isParseableColor("#abcdef")).toBe(true);
+  });
+});
+
+/*
+ * `sameColor` — the comparison, and the reason `===` is not it.
+ *
+ * Three places asked "are these the same colour?" and all three answered with
+ * string equality, which is wrong because every boundary here hands back a
+ * different spelling: computed style gives the legacy comma form, `formatColor`
+ * writes the modern space form, and stylesheets author hex.
+ */
+describe("sameColor", () => {
+  it("sees through the spelling", () => {
+    const same = [
+      ["#0af", "rgb(0, 170, 255)"],
+      ["#0af", "rgb(0 170 255)"],
+      ["#00AAFF", "#0af"],
+      ["rgb(59, 130, 246)", "rgb(59 130 246)"],
+      ["rgba(0, 0, 0, 0.5)", "rgb(0 0 0 / 50%)"],
+      ["transparent", "rgba(0, 0, 0, 0)"],
+    ];
+    for (const [a, b] of same) {
+      expect(sameColor(a, b), `${a} vs ${b}`).toBe(true);
+    }
+  });
+
+  it("survives a round trip through formatColor", () => {
+    /*
+     * The case that forces alpha to be compared as an 8-bit channel rather than
+     * a float. `#00000080` is 128/255 = 0.50196…, and `formatColor` rounds alpha
+     * to three decimals — so the value it writes back is `0.502`, and exact
+     * float equality would report a colour as different from itself.
+     */
+    const parsed = parseColor("#00000080") as RGBA;
+    expect(sameColor("#00000080", formatColor(parsed, "rgb"))).toBe(true);
+    expect(sameColor("#00000080", formatColor(parsed, "hex"))).toBe(true);
+  });
+
+  it("still calls a different colour different", () => {
+    // No tolerance: `findToken` is right that a slightly different hex is a
+    // different colour, not an approximation of one.
+    expect(sameColor("#000000", "#010000")).toBe(false);
+    expect(sameColor("rgb(0 0 0 / 0.5)", "rgb(0 0 0 / 0.6)")).toBe(false);
+    expect(sameColor("#000000", "rgba(0, 0, 0, 0.99)")).toBe(false);
+  });
+
+  it("refuses rather than guessing when either side is unreadable", () => {
+    // `Mixed` is the sentinel the panel uses for a multi-select disagreement;
+    // it must never compare equal to anything, including itself.
+    expect(sameColor("Mixed", "Mixed")).toBe(false);
+    expect(sameColor("#000000", "Mixed")).toBe(false);
+  });
+});
+
+/*
+ * The one hex grammar. There were three, and the two in `color-picker.ts` and
+ * `gradient.ts` both refused four- and eight-digit hex that `parseHex` reads.
+ */
+describe("isHexColor", () => {
+  it("accepts every length parseHex implements, in either case", () => {
+    for (const value of ["#abc", "#abcd", "#aabbcc", "#aabbccdd", "#AABBCC"]) {
+      expect(isHexColor(value), value).toBe(true);
+    }
+  });
+
+  it("rejects the lengths that are not hex colours", () => {
+    for (const value of ["#ab", "#abcde", "#abcdefg", "#", "abc", "#zzz"]) {
+      expect(isHexColor(value), value).toBe(false);
+    }
+  });
+
+  it("never refuses something parseColor would have read", () => {
+    // The property that makes it safe as a field gate.
+    for (const value of ["#abc", "#abcd", "#aabbcc", "#aabbccdd"]) {
+      expect(parseColor(value), value).not.toBeNull();
+    }
+  });
+});
+
+/*
+ * The realm the engine probe runs in.
+ *
+ * `parseColor` has always taken a `node` for this, and for a long time nothing
+ * passed one: `withAlpha`, `alphaOf`, `opaque` and `isParseableColor` are how
+ * the swatch, the hex field and `gates.ts` actually ask, and all four dropped
+ * it. So a `var(--brand)` inside a canvas frame went on resolving against the
+ * overlay shell — where `--brand` is undefined — and the swatch showed the
+ * shell's inherited colour while `withAlpha` wrote that wrong colour back.
+ *
+ * A parameter nothing passes is not a fix, so what is asserted here is the
+ * threading, not just the signature.
+ */
+describe("the realm a colour resolves in", () => {
+  /** A stand-in frame: a real probe element, but its own window for the read. */
+  function frame(color: string) {
+    const host = document.createElement("div");
+    document.body.append(host);
+    const seen: string[] = [];
+    const doc = {
+      body: host,
+      createElement: (tag: string) => document.createElement(tag),
+      defaultView: {
+        getComputedStyle: () => {
+          seen.push(color);
+          return { color } as CSSStyleDeclaration;
+        },
+      },
+    } as unknown as Document;
+    return {
+      node: { nodeType: 1, ownerDocument: doc } as unknown as Element,
+      seen,
+      teardown: () => host.remove(),
+    };
+  }
+
+  /** The shell answers a colour nothing in the frame would ever produce. */
+  function withShellSaying<T>(color: string, run: () => T): T {
+    const real = globalThis.getComputedStyle;
+    globalThis.getComputedStyle = (() =>
+      ({ color }) as CSSStyleDeclaration) as typeof real;
+    try {
+      return run();
+    } finally {
+      globalThis.getComputedStyle = real;
+    }
+  }
+
+  it("asks the node's own window, not the shell's", () => {
+    const f = frame("rgb(0, 170, 255)");
+    try {
+      withShellSaying("rgb(1, 1, 1)", () => {
+        expect(parseColor("var(--brand)", f.node)).toEqual<RGBA>([
+          0, 170, 255, 1,
+        ]);
+      });
+      expect(f.seen).toHaveLength(1);
+    } finally {
+      f.teardown();
+    }
+  });
+
+  it("threads that realm through every wrapper", () => {
+    const f = frame("rgba(0, 170, 255, 0.5)");
+    try {
+      withShellSaying("rgb(1, 1, 1)", () => {
+        // Each of these is a route the panel actually takes. Without the node
+        // every one of them reports the shell's opaque `rgb(1, 1, 1)`.
+        expect(opaque("var(--brand)", f.node)).toBe("#00aaff");
+        expect(alphaOf("var(--brand)", f.node)).toBe(0.5);
+        expect(isParseableColor("var(--brand)", f.node)).toBe(true);
+        expect(withAlpha("var(--brand)", 1, f.node)).toBe("rgb(0 170 255)");
+        expect(sameColor("var(--brand)", "rgb(0 170 255 / 0.5)", f.node)).toBe(
+          true
+        );
+      });
+    } finally {
+      f.teardown();
+    }
+  });
+
+  it("still falls back to the shell when given no node", () => {
+    // The old behaviour, which is correct for a colour that belongs to no frame.
+    withShellSaying("rgb(1, 1, 1)", () => {
+      expect(parseColor("var(--brand)")).toEqual<RGBA>([1, 1, 1, 1]);
+    });
+  });
+});
+
+/*
+ * The two hex grammars that are left, held together.
+ *
+ * There is no way to get to one. `@airship/protocol` is a leaf and must stay
+ * DOM-free, so it cannot import `parseHex`; the overlay's grammar has to live
+ * beside the expansion logic it describes. Two definitions in two packages is
+ * structural — three in one package was the bug.
+ *
+ * What can be guaranteed is that they never disagree, which is the failure that
+ * would matter: `normalizeTokenValue` keys the registry and `parseColor` reads
+ * the control, so a hex one accepts and the other refuses is a token that
+ * silently stops binding. This is the seam where that would show up.
+ */
+describe("the overlay and protocol agree about hex", () => {
+  it("accepts the same set of hex colours", () => {
+    for (const value of [
+      "#abc",
+      "#abcd",
+      "#aabbcc",
+      "#aabbccdd",
+      "#ABC",
+      "#ab",
+      "#abcde",
+      "#abcdefg",
+      "#zzz",
+    ]) {
+      const overlay = parseColor(value) !== null;
+      // Protocol converts what it recognises and passes the rest through, so a
+      // changed value is exactly "this was hex to me".
+      const protocolSaw = normalizeTokenValue(value) !== value.toLowerCase();
+      expect(protocolSaw, value).toBe(overlay);
+    }
+  });
+
+  it("resolves them to the same colour", () => {
+    for (const value of ["#0af", "#00aaff", "#0af8", "#00aaff88"]) {
+      const viaOverlay = parseColor(value) as RGBA;
+      // `normalizeTokenValue`'s output is `rgb()`, which the overlay parses on a
+      // fast path — so a disagreement anywhere in either expansion shows here.
+      const viaProtocol = parseColor(normalizeTokenValue(value)) as RGBA;
+      expect(viaProtocol[0], value).toBe(viaOverlay[0]);
+      expect(viaProtocol[1], value).toBe(viaOverlay[1]);
+      expect(viaProtocol[2], value).toBe(viaOverlay[2]);
+      // Alpha survives protocol's three-decimal rounding to the same 8-bit step.
+      expect(sameColor(value, normalizeTokenValue(value)), value).toBe(true);
+    }
   });
 });

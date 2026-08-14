@@ -6,6 +6,8 @@ import type {
   TokenRef,
   VisualEditTarget,
 } from "@airship/protocol";
+import { categoryForProperty } from "@airship/protocol/tokens";
+import { sameColor } from "./inspector/css-value";
 import { applyPreview, clearPreview } from "./inspector/style-model";
 
 /**
@@ -83,6 +85,39 @@ function addresses(
   );
 }
 
+/**
+ * Did this edit actually change anything? The no-op test, which `===` fails.
+ *
+ * `from` and `to` arrive in different serialisations and always have.
+ * `recordOn` takes `from` from computed style, which every engine hands back in
+ * the legacy comma form — `rgb(59, 130, 246)` — while `to` comes from the colour
+ * picker's `formatColor`, which writes the modern space form, `rgb(59 130 246)`.
+ * One colour, two strings, so a colour set back to its original compared unequal
+ * and the change survived: a chip stayed in the composer, and the agent was sent
+ *
+ *     background-color: rgb(59, 130, 246) → rgb(59 130 246)
+ *
+ * — an instruction to make an edit that changes nothing.
+ *
+ * Only colours need this. Lengths already round-trip as the same string, because
+ * `keepAuthoredUnit` preserves the unit the source wrote; it is specifically the
+ * colour boundary that has two normal forms. Keyed on `categoryForProperty` so
+ * the set of colour-valued properties stays the one table everything else reads.
+ */
+function unchanged(
+  property: string,
+  from: string,
+  to: string,
+  node: Element
+): boolean {
+  if (to === from) {
+    return true;
+  }
+  return (
+    categoryForProperty(property) === "colors" && sameColor(from, to, node)
+  );
+}
+
 /** Grouping key for splitting one node's declarations back into wire targets. */
 function slotOf(change: Change): string {
   return `${change.scope ?? ""}\u0000${change.state ?? ""}`;
@@ -157,7 +192,7 @@ export class ChangeSet {
     const { node, property, from, to, target } = input;
     // A binding survives an unchanged value; a plain edit does not. See
     // `RecordInput.binding`.
-    if (to === from && !input.binding) {
+    if (unchanged(property, from, to, node) && !input.binding) {
       this.remove(node, property, target);
       return;
     }

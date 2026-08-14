@@ -15,6 +15,7 @@ import {
 } from "@airship/protocol/tokens";
 import { toPx } from "../inspector/css-length";
 import { type MatchedResult, matchedRules } from "../inspector/css-rules";
+import { sameColor } from "../inspector/css-value";
 import { computedStyle } from "../realm";
 import { tokens, tokenValue } from "./registry";
 
@@ -32,10 +33,36 @@ const LENGTH_UNIT = /[a-z%]$/i;
 const NEAR_ABSOLUTE_PX = 2;
 const NEAR_RELATIVE = 0.1;
 
-/** Are two CSS values the same, allowing for units and formatting? */
-function sameValue(a: string, b: string, node?: Element): boolean {
+/**
+ * Are two CSS values the same, allowing for units and formatting?
+ *
+ * The colour branch is the second half of a two-layer fix, and it is here rather
+ * than in `normalizeTokenValue` because of what each layer can reach.
+ * `normalizeTokenValue` lives in `@airship/protocol`, which must not touch the
+ * DOM, so it can convert hex — exact string math — and nothing further. But
+ * `oklch()` is Tailwind 4's entire default palette, and `red` and `hsl()` are
+ * ordinary things to author; resolving any of those needs an engine probe, which
+ * only exists in the overlay.
+ *
+ * So: `normalizeTokenValue` collapses the spellings it can on both sides of the
+ * wire, and `sameColor` catches the rest here, where a document is available.
+ * Without this branch a Tailwind project's colour tokens never bind to a control.
+ *
+ * Deliberately still no *tolerance* for colours — `findToken` is right that a
+ * slightly different hex is a different colour, not an approximation of one.
+ * `sameColor` is exact; only the spelling is normalised away.
+ */
+function sameValue(
+  property: string,
+  a: string,
+  b: string,
+  node?: Element
+): boolean {
   if (normalizeTokenValue(a) === normalizeTokenValue(b)) {
     return true;
+  }
+  if (categoryForProperty(property) === "colors") {
+    return sameColor(a, b, node);
   }
   const pa = toPx(a, node);
   const pb = toPx(b, node);
@@ -174,7 +201,7 @@ function findByUnitAwareEquality(
   node?: Element
 ): TokenRef | undefined {
   for (const token of tokensFor(property)) {
-    if (sameValue(tokenValue(token, property), value, node)) {
+    if (sameValue(property, tokenValue(token, property), value, node)) {
       return toRef(token, property, true);
     }
   }

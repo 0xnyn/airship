@@ -336,3 +336,72 @@ describe("ChangeSet previews and payload filtering", () => {
     expect(set.targets()).toHaveLength(1);
   });
 });
+
+/*
+ * The no-op test, which `===` was not.
+ *
+ * `from` and `to` arrive in different serialisations and always have. `recordOn`
+ * takes `from` from computed style, which every engine hands back in the legacy
+ * comma form — `rgb(59, 130, 246)` — while `to` comes from the colour picker's
+ * `formatColor`, which writes the modern space form, `rgb(59 130 246)`. One
+ * colour, two strings.
+ *
+ * So a colour set back to its original was never recognised as unchanged: the
+ * chip stayed in the composer and the agent was sent an instruction to make an
+ * edit that changes nothing —
+ *
+ *     background-color: rgb(59, 130, 246) → rgb(59 130 246)
+ */
+describe("a colour edited back to where it started", () => {
+  let set: ChangeSet;
+  let button: Element;
+
+  beforeEach(() => {
+    set = new ChangeSet();
+    button = node("button");
+  });
+
+  const record = (property: string, from: string, to: string): void => {
+    set.record({ element, from, node: button, property, source: null, to });
+  };
+
+  it("is dropped across the comma/space spellings of one colour", () => {
+    record("background-color", "rgb(59, 130, 246)", "rgb(59 130 246)");
+    expect(set.count()).toBe(0);
+  });
+
+  it("is dropped when the source authored hex and the DOM computed rgb", () => {
+    record("color", "rgb(0, 170, 255)", "#0af");
+    record("border-top-color", "#0af", "rgb(0 170 255)");
+    expect(set.count()).toBe(0);
+  });
+
+  it("is dropped for a colour carrying an alpha", () => {
+    record("background-color", "rgba(0, 0, 0, 0.5)", "rgb(0 0 0 / 0.5)");
+    expect(set.count()).toBe(0);
+  });
+
+  it("still records a colour that genuinely changed", () => {
+    // The guard must not swallow real edits, including near-misses.
+    record("background-color", "rgb(59, 130, 246)", "rgb(59 130 247)");
+    expect(set.count()).toBe(1);
+  });
+
+  it("leaves non-colour properties on exact string equality", () => {
+    /*
+     * Deliberately scoped to colours. Lengths already round-trip as the same
+     * string because `keepAuthoredUnit` preserves the unit the source wrote, and
+     * teaching this to equate `16px` with `1rem` would drop edits that a
+     * stylesheet author means to keep.
+     */
+    record("padding-top", "16px", "1rem");
+    expect(set.count()).toBe(1);
+  });
+
+  it("does not treat two unreadable values as equal", () => {
+    // `sameColor` refuses rather than guessing, so a pair it cannot parse falls
+    // back to the string test — and two different strings are a real change.
+    record("background-color", "var(--a)", "var(--b)");
+    expect(set.count()).toBe(1);
+  });
+});
