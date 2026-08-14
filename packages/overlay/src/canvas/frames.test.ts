@@ -38,6 +38,17 @@ function painted(): string[] {
   );
 }
 
+/** Frame ids sorted by the `z-index` they were given — see `applyOrder`. */
+function stacked(): string[] {
+  return Array.from(world.children)
+    .map((node) => ({
+      id: node.getAttribute("data-frame") ?? "?",
+      z: Number((node as HTMLElement).style.zIndex),
+    }))
+    .sort((a, b) => a.z - b.z)
+    .map((entry) => entry.id);
+}
+
 function add(name: string): Frame {
   const frame = frames.add({ name });
   if (!frame) {
@@ -166,5 +177,122 @@ describe("FrameManager.restoreRemoved", () => {
     const next = add("three");
     expect(next.id).not.toBe(second.id);
     expect(order()).toEqual(["f1", "f2", "f3"]);
+  });
+});
+
+/*
+ * `reorder` — the frame list's drag-to-restack.
+ *
+ * The DOM assertions here are the interesting ones and they are deliberately
+ * *negative*: reorder must leave the document untouched. Moving an `iframe`
+ * between parents (or between siblings) tears down its browsing context and
+ * reloads it, so the obvious implementation — splice the array, then
+ * `.before()` the element the way `restoreRemoved` does — would reboot the app
+ * inside any frame you dragged, losing its route and scroll position. Paint
+ * order is published as `z-index` instead, which is what `stacked()` reads.
+ */
+describe("FrameManager.destroy", () => {
+  it("takes its global down with it", () => {
+    // The hook is a closure over the manager, hung off `window` by the
+    // constructor. Left behind, it keeps a destroyed manager and every frame it
+    // ever built reachable — and points the next frame that loads at an array
+    // that has just been emptied.
+    const host = window as unknown as { __airshipOnFrameReady?: unknown };
+    add("one");
+    expect(typeof host.__airshipOnFrameReady).toBe("function");
+
+    frames.destroy();
+    expect(host.__airshipOnFrameReady).toBeUndefined();
+  });
+
+  it("leaves a newer manager's hook alone", () => {
+    // Construction order is the trap: a second manager has already overwritten
+    // the global, so a late `destroy` on the first must not take the live one
+    // down with it.
+    const host = window as unknown as { __airshipOnFrameReady?: unknown };
+    const older = frames;
+    const newer = manager();
+    const live = host.__airshipOnFrameReady;
+
+    older.destroy();
+    expect(host.__airshipOnFrameReady).toBe(live);
+
+    frames = newer;
+  });
+});
+
+describe("FrameManager.reorder", () => {
+  it("moves the frame in the array and restacks without touching the DOM", () => {
+    add("one");
+    add("two");
+    add("three");
+
+    frames.reorder("f3", 0);
+
+    expect(order()).toEqual(["f3", "f1", "f2"]);
+    // The bug this exists to prevent: no element moved, so no iframe reloaded.
+    expect(painted()).toEqual(["f1", "f2", "f3"]);
+    // …and paint order still agrees with the array, via z-index.
+    expect(stacked()).toEqual(["f3", "f1", "f2"]);
+  });
+
+  it("moves a frame later in the list", () => {
+    add("one");
+    add("two");
+    add("three");
+
+    frames.reorder("f1", 2);
+
+    expect(order()).toEqual(["f2", "f3", "f1"]);
+    expect(stacked()).toEqual(["f2", "f3", "f1"]);
+  });
+
+  it("clamps an overshooting drag to the ends of the list", () => {
+    add("one");
+    add("two");
+    add("three");
+
+    frames.reorder("f1", 99);
+    expect(order()).toEqual(["f2", "f3", "f1"]);
+
+    frames.reorder("f1", -4);
+    expect(order()).toEqual(["f1", "f2", "f3"]);
+  });
+
+  it("does nothing for an unknown id or a move to the same slot", () => {
+    add("one");
+    add("two");
+    let changes = 0;
+    // `onChanged` is what re-renders the canvas and persists the layout; a
+    // no-op reorder that still fired it would save on every settled drag.
+    frames = new FrameManager({
+      onChanged: () => {
+        changes += 1;
+      },
+      pathname: "/",
+      storageKey: "__airship-test:frames",
+      world,
+    });
+    add("a");
+    add("b");
+    changes = 0;
+
+    frames.reorder("nope", 0);
+    frames.reorder(frames.all[0].id, 0);
+
+    expect(changes).toBe(0);
+    expect(order()).toEqual(["f1", "f2"]);
+  });
+
+  it("keeps z-index in step as frames come and go", () => {
+    add("one");
+    add("two");
+    add("three");
+    const removed = frames.remove("f2");
+
+    expect(stacked()).toEqual(["f1", "f3"]);
+
+    expect(removed && frames.restoreRemoved(removed)).toBe(true);
+    expect(stacked()).toEqual(["f1", "f2", "f3"]);
   });
 });
