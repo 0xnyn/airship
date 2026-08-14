@@ -46,6 +46,8 @@ export const DND = {
   frameGrip: "airship:frame-grip",
   /** Dragging a frame's title bar to reposition it on the canvas. */
   frameMove: "airship:frame-move",
+  /** Dragging a row of the frame list to restack the frames. */
+  frameRow: "airship:frame-row",
   resizeHandle: "airship:resize-handle",
   scrub: "airship:scrub",
   splitter: "airship:splitter",
@@ -88,6 +90,38 @@ export const FEEDBACK = {
   /** No visual feedback — the handler owns all rendering. */
   none: [Feedback.configure({ feedback: "none" })] as Plugins,
 };
+
+/**
+ * Sensors for a draggable that must not offer a keyboard drag.
+ *
+ * A `feedback: "none"` draggable **cannot** be dragged by keyboard, and the
+ * failure is silent and hostile. `KeyboardSensor.handleMove` returns early on
+ * `!shape`, and the only thing that ever sets `dragOperation.shape` is the
+ * Feedback plugin — which returns before that line for `feedback: "none"`. So
+ * the sensor still *starts* a drag on Space and still ends one on Space, Enter
+ * or Tab, but every arrow key in between does nothing at all.
+ *
+ * What the user gets is worse than "nothing happens": the row latches into its
+ * dragging state, the Accessibility plugin has already announced the handle as
+ * `aria-roledescription="draggable"`, and the sensor's document-capture listener
+ * calls `preventDefault` on Tab — so the one key that should let you leave ends
+ * the phantom drag *and* eats the focus move. Unregistering the sensor for these
+ * draggables is what stops a promise being made that nothing can keep; the
+ * keyboard route is then a real one, next to the drag rather than pretending to
+ * be it (see `FramesPanel.moveBy`, and `num-field.ts`'s `stepBy` beside its
+ * scrub).
+ *
+ * The pointer constraint has to be restated because a per-draggable `sensors`
+ * array *replaces* the manager's list rather than extending it — omitted, every
+ * press on a handle would begin a drag with no threshold at all.
+ */
+export const POINTER_ONLY = [
+  PointerSensor.configure({
+    activationConstraints: [
+      new PointerActivationConstraints.Distance({ value: DRAG_THRESHOLD }),
+    ],
+  }),
+];
 
 /**
  * Cumulative pointer delta for a transform-only drag (resize grip, scrub, dock

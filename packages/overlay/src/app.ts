@@ -10,6 +10,7 @@ import {
   type ImageInput,
   type JobDiffBundle,
   type JobHistorySummary,
+  type JobSnapshot,
   modeToSurface,
   type ServerEvent,
 } from "@airship/protocol";
@@ -199,6 +200,16 @@ export interface Stage {
    */
   mount: (tools: HTMLElement) => void;
   /**
+   * The left dock's **view-mode** body — on the canvas, the list of frames.
+   *
+   * A third slot rather than a second stage-owned dock, for the same reason the
+   * two bar slots are slots: the app owns where panels go and how wide they
+   * are, and the stage owns what is in them. A stage with nothing to list omits
+   * this and the app never builds the alternate body, so the inline overlay's
+   * dock is exactly what it was.
+   */
+  mountFramesPanel?: (host: HTMLElement) => void;
+  /**
    * A second bar slot, for controls that act on the stage's *selected object*
    * rather than on the stage itself.
    *
@@ -216,6 +227,16 @@ export interface Stage {
    * never fills this and its bar is unchanged.
    */
   mountFrameTools?: (host: HTMLElement) => void;
+  /**
+   * The bottom-right corner, for a stage that has somewhere to *be* — on the
+   * canvas, the minimap.
+   *
+   * Gated by mode in `syncMinimap`, the way `mountFrameTools`' host is gated in
+   * `syncBar`, and by its own visible flag from inside. One element per owner,
+   * so neither can clobber the `hidden` the other wrote. Inline is the page
+   * itself and has no world to map, so it omits this.
+   */
+  mountMinimap?: (host: HTMLElement) => void;
   /**
    * A pan/zoom gesture settled. The pointer has not moved but the canvas under
    * it has, so the app re-resolves what is being hovered — without this the
@@ -334,12 +355,19 @@ export class AirshipApp {
   private chipsEl!: HTMLElement;
   private histEl!: HTMLElement;
   private sendBtn!: HTMLButtonElement;
+  private newChatBtn!: HTMLElement;
+  /** The bar's Apply/Discard pair; hidden while nothing is pending. */
+  private applyGroup!: HTMLElement;
+  private applyBtn!: HTMLButtonElement;
+  private discardBtn!: HTMLButtonElement;
 
   // Right (design) dock
   private rightDock!: HTMLElement;
   private rightPill!: HTMLElement;
 
   private leftOpen = false;
+  /** High-water mark for `pendingCount()`; the composer reveals on an increase. */
+  private pendingSeen = 0;
   private rightOpen = false;
 
   /** Live dock widths, persisted across reloads and reset from the splitters. */
@@ -394,6 +422,28 @@ export class AirshipApp {
   private viewOnlyBar: HTMLElement[] = [];
   /** The stage's slot in `viewOnlyBar` — see `Stage.mountFrameTools`. */
   private frameToolsHost: HTMLElement | null = null;
+  /** View mode's one word about a running job — see `buildJobChip`. */
+  private jobChip: HTMLElement | null = null;
+  /**
+   * The left dock's two heads and two bodies, swapped by mode.
+   *
+   * One dock element with two contents, rather than two docks. The splitter,
+   * the drag handle, the pill and the four `--__airship-left-*` placement
+   * properties are all keyed on the *side*, so a second element on the same
+   * side would mean two dnd entities racing for one id and two pills fighting
+   * over one corner — while the thing actually being asked for is that the
+   * panel keep its width and position and change what is inside it.
+   *
+   * The frames pair is null on a stage that has no frames to list.
+   */
+  private chatHead!: HTMLElement;
+  private chatBody!: HTMLElement;
+  private framesHead: HTMLElement | null = null;
+  private framesBody!: HTMLElement;
+  /** The collapsed pill's label — it names whichever body the mode is showing. */
+  private leftBrand!: HTMLElement;
+  /** The bottom-right slot — see `Stage.mountMinimap`. */
+  private minimapHost: HTMLElement | null = null;
   /**
    * The Hand tool's latch.
    *
@@ -742,6 +792,14 @@ export class AirshipApp {
     if (this.frameToolsHost) {
       this.stage.mountFrameTools?.(this.frameToolsHost);
     }
+    if (this.stage.mountMinimap) {
+      // Built only when there is something to put in it, the same way the frame
+      // tools host is — an empty fixed-position box in the corner is invisible
+      // but is still a node the pointer has to be reasoned about against.
+      this.minimapHost = el("div", { class: cls("minimap-host") });
+      this.root.append(this.minimapHost);
+      this.stage.mountMinimap(this.minimapHost);
+    }
     this.stage.mount(this.barTools);
     // Inline fills nothing in, and the bar collapses to just the mode toggle.
     this.bar.classList.toggle(
@@ -815,7 +873,7 @@ export class AirshipApp {
   private buildSplitter(side: Side): HTMLElement {
     const handle = el("div", {
       class: `${cls("splitter")} ${cls(`splitter-${side}`)}`,
-      "data-tip": "Drag to resize · double-click to reset",
+      "data-tip": "Drag to resize, double-click to reset",
       onDblclick: () => this.resetWidth(side),
     });
     this.dockScope.add(
@@ -1059,13 +1117,16 @@ export class AirshipApp {
     // The gutter is the breathing room between a dock's inner edge and the
     // nearest frame a fit is allowed to place there.
     const gutter = 8;
-    const covers = (side: Side, open: boolean): number =>
-      open && this.placement[side].mode === "docked"
+    // `isVisible`, not the raw open flag: in view mode the inspector is gated
+    // away, and reserving 360px for a panel that is not on screen would leave
+    // every fit and every centring quietly off-centre to the left.
+    const covers = (side: Side): number =>
+      this.isVisible(side) && this.placement[side].mode === "docked"
         ? clampWidth(this.width[side]) + gutter
         : 0;
     this.stage.setSafeInset?.({
-      left: covers("left", this.leftOpen),
-      right: covers("right", this.rightOpen),
+      left: covers("left"),
+      right: covers("right"),
     });
     this.stage.relayout?.();
   }
@@ -1341,6 +1402,13 @@ export class AirshipApp {
       sep(),
       inspectGroup,
       sep(),
+      // Lands immediately before the surface toggle on purpose: that toggle is
+      // blocked by exactly this pending state, so the remedy sits beside the
+      // control it unblocks. Two nested `display: contents` wrappers, one per
+      // owner — the outer is mode-hidden by `syncBar`, the inner is
+      // pending-hidden by `syncApplyGroup` — so neither can clobber the
+      // `hidden` the other wrote (same pattern as the frame-tools slot).
+      el("div", { class: cls("bar-apply-host") }, [this.buildApplyGroup()]),
     ];
     // Same bargain as `editOnlyBar`, in the opposite direction — and empty
     // rather than disabled when the stage has no pan surface, so the inline
@@ -1360,6 +1428,7 @@ export class AirshipApp {
       ? [
           this.buildHandGroup(),
           ...(this.frameToolsHost ? [this.frameToolsHost] : []),
+          this.buildJobChip(),
           sep(),
         ]
       : [];
@@ -1382,6 +1451,78 @@ export class AirshipApp {
     // The bar is built before `mount` lands in edit mode, so seed it from the
     // flag rather than leaving the DOM disagreeing with the state it reflects.
     this.syncBar();
+  }
+
+  /**
+   * Apply and Discard, as bar buttons — the save affordance the reporter went
+   * looking for. Apply is a second entry point onto `submit()`, not a new
+   * mechanism: `buildEditRequest` already accepts an empty prompt when visual
+   * deltas exist, and `turnLabel` already synthesizes "Applied 3 style
+   * changes". Discard is the same unjournalled bulk clear the composer offers,
+   * so it goes through the same confirm.
+   */
+  private buildApplyGroup(): HTMLElement {
+    this.applyBtn = el(
+      "button",
+      {
+        "aria-label": "Apply pending changes",
+        class: cls("tool"),
+        "data-tip": "Apply",
+        onClick: () => this.submit(),
+        type: "button",
+      },
+      [icon("check", "sm")]
+    ) as HTMLButtonElement;
+    this.discardBtn = el(
+      "button",
+      {
+        "aria-label": "Discard pending changes",
+        class: cls("tool"),
+        "data-tip": "Discard",
+        onClick: () =>
+          this.confirmPending(
+            this.discardBtn,
+            (n) => `Discard all ${n} pending change${n === 1 ? "" : "s"}`,
+            () => this.panel.discard(),
+            "above"
+          ),
+        type: "button",
+      },
+      [icon("close", "sm")]
+    ) as HTMLButtonElement;
+    this.applyGroup = el(
+      "div",
+      { class: `${cls("bar-apply-group")} ${cls("hidden")}` },
+      [
+        el("div", { class: cls("tool-group") }, [
+          this.applyBtn,
+          this.discardBtn,
+        ]),
+        el("div", { class: cls("bar-sep") }),
+      ]
+    );
+    return this.applyGroup;
+  }
+
+  /**
+   * Show the pair only while something is pending, keep the tooltips counting,
+   * and disable Apply during a live job — `submit()` silently no-ops on
+   * `awaiting`, and a control that eats clicks without a word is the exact
+   * shape of complaint this group exists to answer.
+   */
+  private syncApplyGroup(): void {
+    if (!this.applyGroup) {
+      return;
+    }
+    const pending = this.pendingCount();
+    this.applyGroup.classList.toggle(cls("hidden"), pending === 0);
+    if (pending === 0) {
+      return;
+    }
+    const s = pending === 1 ? "" : "s";
+    this.applyBtn.dataset.tip = `Apply ${pending} change${s}`;
+    this.discardBtn.dataset.tip = `Discard ${pending} pending change${s}`;
+    this.applyBtn.disabled = this.awaiting;
   }
 
   /**
@@ -1469,6 +1610,88 @@ export class AirshipApp {
    * "Hand tool H" without either side knowing about the other. Same trick the
    * undo buttons use.
    */
+  /**
+   * "Working" — the one thing view mode has to say about a job.
+   *
+   * Everything that reports a turn's progress lives inside the assistant bubble:
+   * the pulsing status dot, the timeline rows, the result. All of it is in the
+   * chat body, which view mode swaps out — so before this, sending a prompt and
+   * flipping to view meant the editor gave no sign that anything was happening
+   * at all, and a turn that carried no inspector deltas finished without a word
+   * anywhere (`reconcileVisual` and `keepVisual` are both gated on
+   * `applyingVisual`).
+   *
+   * A button, not a badge, because there is an obvious thing to want next: it
+   * puts you back where the transcript is. In `viewOnlyBar` rather than the
+   * always-on part of the bar, since in edit mode the transcript is already
+   * saying this — two live indicators for one job is one more than the fact
+   * deserves.
+   *
+   * The dot is the transcript's own (`.dot`, `@keyframes ap-pulse`), so the
+   * thing in the bar and the thing in the bubble are visibly the same state.
+   */
+  private buildJobChip(): HTMLElement {
+    this.jobChip = el(
+      "button",
+      {
+        // The visible "Working" and the dot carry the state; the tip carries
+        // what pressing it does. Kept apart rather than joined with a dash,
+        // which is the whole point of the rule `tooltip.copy.test.ts` enforces.
+        "aria-label": "Working. Show the agent panel",
+        class: `${cls("bar-job")} ${cls("hidden")}`,
+        "data-tip": "Show the agent panel",
+        onClick: () => this.showTranscript(),
+        type: "button",
+      },
+      [
+        el("span", { class: cls("dot") }),
+        el("span", { class: cls("bar-job-label"), text: "Working" }),
+      ]
+    );
+    /*
+     * Two elements, one per owner — the same bargain `bar-frame-tools` and
+     * `bar-apply-host` make, and for a reason this very nearly shipped without.
+     *
+     * Two things gate this chip and they belong to different code: the *mode*,
+     * which `syncBar` hides the whole `viewOnlyBar` by, and `awaiting`, which
+     * `syncJobChip` owns. Written to one element they clobber each other — and
+     * in the direction that matters: start a job in edit mode and
+     * `syncJobChip` would strip the `hidden` that `syncBar` had put there,
+     * putting the chip in a bar that is supposed to have swapped it out.
+     */
+    return el("div", { class: cls("bar-job-host") }, [this.jobChip]);
+  }
+
+  private syncJobChip(): void {
+    this.jobChip?.classList.toggle(cls("hidden"), !this.awaiting);
+  }
+
+  /**
+   * Go to where the transcript is, from wherever you are.
+   *
+   * Three things can be hiding it and any of them can be true at once: view
+   * mode swapped the body out, the dock is collapsed to its pill, and the
+   * preview pane is over the top of it. The chip and the completion toast both
+   * land here so neither has to know which one it is fixing.
+   */
+  private showTranscript(): void {
+    this.setEditing(true);
+    this.setPreview(false);
+    if (!this.leftOpen) {
+      this.setLeft(true);
+    }
+    this.repinTranscript();
+  }
+
+  /** Is the transcript actually on screen? Not the same as "in edit mode". */
+  private transcriptVisible(): boolean {
+    return (
+      this.editing &&
+      this.leftOpen &&
+      !(this.previewOpen || this.chatBody.classList.contains(cls("hidden")))
+    );
+  }
+
   private buildHandGroup(): HTMLElement {
     this.handBtn = el(
       "button",
@@ -1543,11 +1766,22 @@ export class AirshipApp {
 
   /** Edits that only exist in memory, and so would not survive a navigation. */
   private hasPendingEdits(): boolean {
-    return !(
-      this.changeSet.isEmpty() &&
-      this.moveSet.isEmpty() &&
-      this.structureSet.isEmpty() &&
-      this.attrSet.isEmpty()
+    return this.pendingCount() > 0;
+  }
+
+  /**
+   * Every pending in-memory edit, as one number — the single spelling of "is
+   * anything pending". The composer reveal, the surface-toggle block and the
+   * bar's Apply/Discard group all read it. Structure edits are included on
+   * purpose: the old reveal predicate forgot them, so a delete rendered a chip
+   * and blocked the surface toggle without ever revealing the composer.
+   */
+  private pendingCount(): number {
+    return (
+      this.changeSet.count() +
+      this.moveSet.count() +
+      this.attrSet.count() +
+      this.structureSet.count()
     );
   }
 
@@ -1655,9 +1889,21 @@ export class AirshipApp {
    */
   private syncSurfaceToggle(): void {
     const blocked = this.hasPendingEdits();
-    const label = blocked
-      ? "Apply or discard your changes before switching surface"
-      : `Surface: ${this.activeSurface().label}`;
+    /*
+     * The remedy has to be one you can actually reach.
+     *
+     * Apply, Discard and the composer's per-change chips are all edit-mode
+     * furniture, so in view mode the old wording named three controls that were
+     * not on screen — and on the canvas the whole chat body is swapped out, so
+     * there was no route to any of them without first doing the thing the
+     * message did not mention.
+     */
+    let label = `Surface: ${this.activeSurface().label}`;
+    if (blocked) {
+      label = this.editing
+        ? "Apply or discard your changes before switching surface"
+        : "Switch to Edit to apply or discard your changes";
+    }
     this.surfaceBtn.disabled = blocked;
     this.surfaceBtn.setAttribute("data-tip", label);
     this.surfaceBtn.setAttribute("aria-label", label);
@@ -1668,7 +1914,7 @@ export class AirshipApp {
       "button",
       {
         class: `${cls("seg")} ${cls("seg-on")}`,
-        "data-tip": "Edit mode — hover to auto-select, click to edit",
+        "data-tip": "Edit mode. Hover to select, click to edit",
         onClick: () => this.setEditing(true),
         type: "button",
       },
@@ -1678,7 +1924,7 @@ export class AirshipApp {
       "button",
       {
         class: cls("seg"),
-        "data-tip": "View mode — no auto-select, page fully interactive",
+        "data-tip": "View mode. The page stays interactive",
         onClick: () => this.setEditing(false),
         type: "button",
       },
@@ -1721,11 +1967,61 @@ export class AirshipApp {
       this.tools.reset();
       this.clearSelectionScope();
     }
+    // Both of the left dock's overlays come down, and for the same reason: they
+    // are drawn over the transcript's slot, so either one left standing would
+    // survive the swap and sit on top of the frame list — the drawer as a
+    // full-panel sheet of past chats (`inset: 0`), the preview as the prompt
+    // pane in the transcript's place. The preview is the one that bites on the
+    // way *back*, where it hides the turn that just finished.
+    this.closeHistory();
+    this.setPreview(false);
     this.syncBar();
+    this.syncDocks();
+    this.syncMinimap();
+    this.syncJobChip();
+    // Its blocked message names a different remedy per mode, so the mode is now
+    // one of its inputs — `renderComposerChips` is no longer the only thing
+    // that can make it stale.
+    this.syncSurfaceToggle();
+    // Republishes the safe inset — which has just changed, because the
+    // inspector is gated away in view mode — and re-anchors the chrome.
+    this.afterDockToggle();
     this.panel.setEditing(on);
     this.controller.setEditing(on);
-    // On the canvas this is what makes the frames inert (edit) or live (view).
+    // On the canvas this is what makes the frames inert (edit) or live (view),
+    // and what catches the minimap and the frame list up on everything that
+    // moved while they were off screen. After `afterDockToggle`, so the inset
+    // they aim against is the one they will be looking at.
     this.stage.setEditing?.(on);
+    if (on) {
+      this.repinTranscript();
+    }
+  }
+
+  /**
+   * Put the transcript back at the bottom after it has been off screen.
+   *
+   * `.hidden` is `display: none`, and an element with no box reports zero for
+   * `scrollTop`, `scrollHeight` and `clientHeight` — so while the chat is
+   * swapped out, `atBottom()` computes `0 - 0 - 0 < 40` and answers *true* to
+   * everything, and the `scrollTop` writes `scrollTranscript` makes are
+   * discarded by the CSSOM. The box that comes back is a fresh one at offset 0.
+   *
+   * The upshot before this: stream a turn, flip to view mode and back, and the
+   * transcript was scrolled to the very top showing the oldest bubble — with a
+   * live turn still writing into the bottom of it.
+   *
+   * The frame of delay is load-bearing. `syncDocks` has un-hidden the subtree
+   * but layout has not run, so `scrollHeight` is still 0 this tick; scrolling
+   * now would write into the same void that lost the position in the first
+   * place.
+   */
+  private repinTranscript(): void {
+    requestAnimationFrame(() => {
+      if (!this.chatBody.classList.contains(cls("hidden"))) {
+        this.scrollTranscript();
+      }
+    });
   }
 
   private buildLeftDock(): void {
@@ -1803,7 +2099,7 @@ export class AirshipApp {
         ]),
         el("div", { class: cls("head-actions") }, [
           this.buildAgentButton(),
-          this.iconButton("plus", "New chat", () => this.newChat()),
+          this.buildNewChatButton(),
           this.iconButton("history", "Past chats", () => this.toggleHistory()),
           this.iconButton("rotate-ccw", "Reset width", () =>
             this.resetWidth("left")
@@ -1831,31 +2127,94 @@ export class AirshipApp {
     const composer = el("div", { class: cls("composer") }, [field]);
     this.buildPreviewPane();
 
+    /*
+     * The chat's four children, wrapped so the mode can hide them as a group.
+     *
+     * `display: contents` on the wrapper, not a real box: the dock is a flex
+     * column and these have to stay its own flex items — the transcript is what
+     * takes the remaining height, and a wrapper with a box of its own would take
+     * it instead and leave the composer floating. It also keeps the drawer's
+     * `inset: 0` resolving against the dock, which is what it is drawn over.
+     */
+    this.chatBody = el("div", { class: cls("dock-body") }, [
+      this.transcriptEl,
+      this.previewEl,
+      this.histEl,
+      composer,
+    ]);
+    this.chatHead = head;
+    this.framesHead = this.buildFramesHead();
+    this.framesBody = el("div", {
+      class: `${cls("dock-body")} ${cls("hidden")}`,
+    });
     this.leftDock = el(
       "div",
       { class: `${cls("dock")} ${cls("dock-left")} ${cls("hidden")}` },
       [
-        head,
-        this.transcriptEl,
-        this.previewEl,
-        this.histEl,
-        composer,
+        this.chatHead,
+        ...(this.framesHead ? [this.framesHead] : []),
+        this.chatBody,
+        this.framesBody,
         this.buildSplitter("left"),
       ]
     );
+    this.leftBrand = el("span", {
+      class: cls("brand-name"),
+      text: "Airship",
+    });
     this.leftPill = this.buildPill("left", "chat", [
-      el("div", { class: cls("brand") }, [
-        icon("logo", "sm"),
-        el("span", { class: cls("brand-name"), text: "Airship" }),
-      ]),
+      el("div", { class: cls("brand") }, [icon("logo", "sm"), this.leftBrand]),
       this.panelToggle("left", "chat", true),
     ]);
     this.heads.left = head;
     this.armDockDrag("left", head, "head");
+    if (this.framesHead) {
+      // A distinct `part`, or the two would build dnd entities with the same
+      // id — `armDockDrag` keys on `${type}:${side}:${part}`.
+      this.armDockDrag("left", this.framesHead, "frames-head");
+    }
     this.armDockDrag("left", this.leftPill, "pill");
     this.root.append(this.leftDock, this.leftPill);
+    this.stage.mountFramesPanel?.(this.framesBody);
     this.clearTranscript();
     this.renderComposerChips();
+  }
+
+  /**
+   * The left dock's view-mode header.
+   *
+   * Its own header rather than a retitled one, because the actions differ all
+   * the way down: no agent picker, no new chat, no past chats — none of which
+   * mean anything in a mode with no element selection to scope a prompt to.
+   * What it keeps is the pair every dock header has, reset-width and collapse,
+   * so the panel behaves like the panel it replaced.
+   *
+   * Null on a stage with no frames to list, and that absence is what leaves the
+   * inline overlay's dock exactly as it was.
+   */
+  private buildFramesHead(): HTMLElement | null {
+    if (!this.stage.mountFramesPanel) {
+      return null;
+    }
+    return el(
+      "div",
+      {
+        class: `${cls("head")} ${cls("hidden")}`,
+        ...dockHeadAttrs("Frames panel"),
+      },
+      [
+        el("div", { class: cls("brand") }, [
+          icon("layer-frame", "sm"),
+          el("span", { class: cls("brand-name"), text: "Frames" }),
+        ]),
+        el("div", { class: cls("head-actions") }, [
+          this.iconButton("rotate-ccw", "Reset width", () =>
+            this.resetWidth("left")
+          ),
+          this.panelToggle("left", "frames", false),
+        ]),
+      ]
+    );
   }
 
   /**
@@ -1866,12 +2225,14 @@ export class AirshipApp {
    * the content height *of the current box*, so measuring without the reset
    * only ever ratchets upwards and the field can never shrink again.
    *
-   * Bails while the dock is hidden, where every layout metric reads 0 and the
-   * field would collapse to nothing; `afterDockToggle` re-runs it on the way
-   * back open.
+   * Bails while the composer is not on screen, where every layout metric reads
+   * 0 and the field would collapse to nothing; `afterDockToggle` re-runs it on
+   * the way back. That is two cases now, not one: the dock can be collapsed to
+   * its pill, and — since the left dock started carrying the frame list in view
+   * mode — the dock can be open with the chat swapped out from under it.
    */
   private autoGrow(): void {
-    if (!this.leftOpen) {
+    if (!this.leftOpen || this.chatBody.classList.contains(cls("hidden"))) {
       return;
     }
     const max = Math.max(96, Math.round(this.leftDock.clientHeight * 0.4));
@@ -1919,6 +2280,51 @@ export class AirshipApp {
   private atBottom(): boolean {
     const e = this.transcriptEl;
     return e.scrollHeight - e.scrollTop - e.clientHeight < 40;
+  }
+
+  /**
+   * New chat, behind the confirm. Held as a field because the confirm menu
+   * anchors on it — and because `newChat` destroys pending edits, comments,
+   * the draft and the transcript, and doing that silently was how the
+   * complaint arrived.
+   */
+  private buildNewChatButton(): HTMLElement {
+    this.newChatBtn = this.iconButton("plus", "New chat", () =>
+      this.confirmPending(
+        this.newChatBtn,
+        (n) =>
+          `Discard ${n} pending change${n === 1 ? "" : "s"} and start a new chat`,
+        () => this.newChat()
+      )
+    );
+    return this.newChatBtn;
+  }
+
+  /**
+   * Run a destructive action, asking first when there is something to lose.
+   *
+   * `panel.discard()` clears four delta sets *and* the journal, so unlike
+   * everything else in the editor there is no ⌘Z behind it — and the toast
+   * doctrine reserves an actionable toast for acts the journal can honestly
+   * reverse, which this is not. The two-step menu is the same shape the
+   * push-and-open-PR flow uses: it says exactly what will happen and takes a
+   * second deliberate click. With nothing pending it stays out of the way.
+   */
+  private confirmPending(
+    anchor: HTMLElement,
+    verb: (pending: number) => string,
+    run: () => void,
+    prefer: "above" | "below" = "below"
+  ): void {
+    const pending = this.pendingCount();
+    if (pending === 0) {
+      run();
+      return;
+    }
+    createMenu([
+      { header: "This cannot be undone" },
+      { icon: "close", label: verb(pending), run },
+    ]).open(anchor, prefer);
   }
 
   private newChat(): void {
@@ -2039,16 +2445,62 @@ export class AirshipApp {
 
   private setLeft(open: boolean): void {
     this.leftOpen = open;
-    this.leftDock.classList.toggle(cls("hidden"), !open);
-    this.leftPill.classList.toggle(cls("hidden"), open);
+    this.syncDocks();
     this.afterDockToggle();
   }
 
   private setRight(open: boolean): void {
     this.rightOpen = open;
-    this.rightDock.classList.toggle(cls("hidden"), !open);
-    this.rightPill.classList.toggle(cls("hidden"), open);
+    this.syncDocks();
     this.afterDockToggle();
+  }
+
+  /** Does this side's panel have a home in the mode we are in? */
+  private isVisible(side: Side): boolean {
+    return dockVisible({
+      editing: this.editing,
+      modeScoped: Boolean(this.stage.mountFramesPanel),
+      open: this.isOpen(side),
+      side,
+    });
+  }
+
+  /**
+   * Publish which panels exist, and which body the left one is showing.
+   *
+   * The open flags are the *user's* state and are never written here — the mode
+   * is a second term laid over them, so a round trip through view mode returns
+   * the inspector exactly as it was found, open or collapsed. Writing
+   * `rightOpen = false` on the way in would have been a line shorter and would
+   * have quietly thrown that away.
+   *
+   * A collapsed panel's pill goes with it. The pill means "there is a panel
+   * here, folded up"; in view mode there is no inspector to unfold, so a pill
+   * offering to show one would be a control that lies.
+   */
+  private syncDocks(): void {
+    const leftOn = this.isVisible("left");
+    const rightOn = this.isVisible("right");
+    const modeScoped = Boolean(this.stage.mountFramesPanel);
+    const frames = modeScoped && !this.editing;
+    this.leftDock.classList.toggle(cls("hidden"), !leftOn);
+    this.leftPill.classList.toggle(cls("hidden"), leftOn);
+    this.rightDock.classList.toggle(cls("hidden"), !rightOn);
+    this.rightPill.classList.toggle(
+      cls("hidden"),
+      rightOn || (modeScoped && !this.editing)
+    );
+    this.chatHead.classList.toggle(cls("hidden"), frames);
+    this.chatBody.classList.toggle(cls("hidden"), frames);
+    this.framesHead?.classList.toggle(cls("hidden"), !frames);
+    this.framesBody.classList.toggle(cls("hidden"), !frames);
+    this.leftBrand.textContent = frames ? "Frames" : "Airship";
+    this.leftPill.dataset.tip = frames ? "Show frames" : "Show chat";
+  }
+
+  /** The bottom-right slot exists only in the mode the minimap belongs to. */
+  private syncMinimap(): void {
+    this.minimapHost?.classList.toggle(cls("hidden"), this.editing);
   }
 
   /**
@@ -2263,16 +2715,20 @@ export class AirshipApp {
 
   /** The inspector recorded or discarded a tweak. Surface it in the left
    * composer and — so direct-manipulation edits visibly "land in the chat" —
-   * open the left dock whenever changes are pending. */
+   * open the left dock when a *new* edit arrives. */
   private onVisualChanged(): void {
     this.renderComposerChips();
-    // Reveal the composer the first time a tweak lands (guarded so continuous
-    // scrub/resize ticks don't re-inset the canvas once it's already open).
-    const pending =
-      this.changeSet.count() + this.moveSet.count() + this.attrSet.count() > 0;
-    if (pending && !this.leftOpen) {
+    // Reveal on an increase only, never on "non-zero": this fires on every
+    // panel change including deselect, undo and refresh, and re-opening a dock
+    // the user deliberately closed on a plain empty-canvas click was a bug.
+    const pending = this.pendingCount();
+    if (pending > this.pendingSeen && !this.leftOpen) {
       this.setLeft(true);
     }
+    // Stored unconditionally — inside the `if`, the watermark would latch high
+    // after a discard and the reveal would be dead for the rest of the session.
+    this.pendingSeen = pending;
+    this.syncApplyGroup();
   }
 
   /** The composer's context chips: the selected element (scopes the next edit)
@@ -2300,8 +2756,13 @@ export class AirshipApp {
         ])
       );
     }
-    renderChangeChips(this.selChipsEl, this.pendingChips(), () =>
-      this.panel.discard()
+    renderChangeChips(this.selChipsEl, this.pendingChips(), (anchor) =>
+      this.confirmPending(
+        anchor,
+        (n) => `Discard all ${n} pending change${n === 1 ? "" : "s"}`,
+        () => this.panel.discard(),
+        "above"
+      )
     );
     // The single funnel every delta mutation already passes through — selection
     // set or cleared, a tweak recorded, a chip discarded, `reconcileVisual`
@@ -2355,7 +2816,7 @@ export class AirshipApp {
               scope: c.scope,
               state: c.state,
             }),
-          tip: `${label}${suffix} — ${c.property}: ${c.from} → ${c.to}${
+          tip: `${label}${suffix} · ${c.property}: ${c.from} → ${c.to}${
             c.token ? ` (token ${c.token.name})` : ""
           }`,
         });
@@ -2372,7 +2833,7 @@ export class AirshipApp {
         icon: "drag",
         label: `${chipLabel(entry.element)} moved`,
         onRemove: () => this.panel.discardOneMove(entry.node),
-        tip: `${chipLabel(entry.element)} — repositioned in the tree`,
+        tip: `${chipLabel(entry.element)} · moved in the tree`,
       });
     }
     for (const entry of this.structureSet.entries()) {
@@ -2381,7 +2842,7 @@ export class AirshipApp {
         icon: entry.op === "delete" ? "minus" : "plus",
         label: `${chipLabel(entry.element)} ${verb}`,
         onRemove: () => this.panel.discardOneStructure(entry.node),
-        tip: `${chipLabel(entry.element)} — ${verb}`,
+        tip: `${chipLabel(entry.element)} · ${verb}`,
       });
     }
     for (const entry of this.structureSet.textEntries()) {
@@ -2390,7 +2851,7 @@ export class AirshipApp {
         icon: "layer-text",
         label: `${label} “${shortValue(entry.to)}”`,
         onRemove: () => this.panel.discardOneText(entry.node),
-        tip: `${label} — text: ${JSON.stringify(entry.from)} → ${JSON.stringify(entry.to)}`,
+        tip: `${label} · text: ${JSON.stringify(entry.from)} → ${JSON.stringify(entry.to)}`,
       });
     }
     return chips;
@@ -2406,7 +2867,7 @@ export class AirshipApp {
         icon: "insert",
         label: `${label} ${entry.attribute} ${shown}`,
         onRemove: () => this.panel.discardOneAttr(entry.node, entry.attribute),
-        tip: `${label} — ${entry.attribute}: ${entry.from ?? "(unset)"} → ${
+        tip: `${label} · ${entry.attribute}: ${entry.from ?? "(unset)"} → ${
           entry.to ?? "(unset)"
         }`,
       });
@@ -2512,6 +2973,24 @@ export class AirshipApp {
    */
   private submit(): void {
     if (this.awaiting) {
+      return;
+    }
+    /*
+     * Refuse rather than send into a closed socket.
+     *
+     * `AirshipSocket.send` drops silently when the socket is down, which is the
+     * right bargain for fire-and-forget traffic and the wrong one here:
+     * `beginJob` would latch `awaiting` for a job the daemon was never told to
+     * create, and nothing would ever clear it — Send and Apply disabled for the
+     * rest of the session, with a "Working" chip pulsing over a turn that does
+     * not exist. `isOpen` was added for exactly this distinction on the prompt
+     * preview; see its docstring.
+     *
+     * The socket reconnects on a 1.5s timer, so this refuses a keystroke the
+     * user can repeat rather than one they cannot take back.
+     */
+    if (!this.socket.isOpen()) {
+      toast("Not connected. Try again in a moment.", { tone: "error" });
       return;
     }
     // Before `buildRequest`, not after. An uncommitted edit is not yet in the
@@ -2635,9 +3114,106 @@ export class AirshipApp {
     this.awaiting = true;
     this.activeJobId = null;
     this.sendBtn.disabled = true;
+    this.syncApplyGroup();
+    this.syncJobChip();
     const turn = assistantTurn();
     this.activeTurn = turn;
     this.pushBubble(turn.root);
+  }
+
+  /**
+   * Reconcile a latched `awaiting` against what the daemon actually has.
+   *
+   * `awaiting` is cleared in exactly one place — a `job:done` whose id matches
+   * `activeJobId` — so anything that eats that one broadcast strands the editor
+   * with Send and Apply disabled and no way back. The daemon sends it once; a
+   * socket that is down at that moment simply never hears it, and the 1.5s
+   * reconnect brings back a connection with nothing to say about the turn that
+   * ended while it was gone.
+   *
+   * `hello` is the answer because the server sends it on *every* connection
+   * carrying `jobs.snapshots()`, and `JobStore` never evicts — so a reconnect
+   * arrives holding the outcome of the job we stopped hearing about.
+   *
+   * Adopting the running job when we have no id of our own is sound rather than
+   * a guess: the server serialises edits on one chain, so at most one job is
+   * ever `running`, and having no id means our `job:created` was the thing we
+   * missed.
+   */
+  private reconcileAwaiting(jobs: JobSnapshot[]): void {
+    if (!this.awaiting) {
+      return;
+    }
+    const verdict = reconcileJob(this.activeJobId, jobs);
+    if (verdict.kind === "running") {
+      // Still going, and we are back in time to hear it land.
+      this.activeJobId = verdict.jobId;
+      return;
+    }
+    this.releaseAwaiting(verdict.job);
+  }
+
+  /**
+   * Let go of a turn whose ending we will never see.
+   *
+   * The bundle is what `finalizeAssistant` needs and the one thing a snapshot
+   * cannot carry, so the turn is closed rather than filled: the pulse comes
+   * off, the bubble takes the error treatment, and the text points at Past
+   * chats, which is where the daemon did persist the result. Saying that is
+   * better than either leaving it pulsing forever or quietly deleting it.
+   */
+  private releaseAwaiting(job?: JobSnapshot): void {
+    this.awaiting = false;
+    this.activeJobId = null;
+    this.applyingVisual = false;
+    this.sendBtn.disabled = false;
+    this.syncApplyGroup();
+    this.syncJobChip();
+
+    const turn = this.activeTurn;
+    this.activeTurn = null;
+    if (turn) {
+      turn.status.remove();
+      (turn.result.parentElement ?? turn.result).classList.add(cls("msg-err"));
+      clear(turn.result);
+      turn.result.append(
+        el("div", {
+          class: cls("msg-body"),
+          text: job
+            ? `Lost the connection while this ran. It ${job.status}; open Past chats for the result.`
+            : "Lost the connection before this was sent. Nothing ran.",
+        })
+      );
+    }
+    // Pending visual deltas are deliberately left alone: the turn may well have
+    // landed, and discarding a user's unsaved changes on a socket blip would be
+    // a far worse trade than leaving them to re-apply.
+    toast("Connection dropped. The turn was released.", { tone: "error" });
+  }
+
+  /**
+   * Say a turn finished, when nothing on screen otherwise would.
+   *
+   * A finished turn reports itself by *becoming* the assistant bubble — which
+   * is the right design and says nothing at all if the transcript is not on
+   * screen. That is now three ordinary states, not an edge case: view mode, a
+   * dock collapsed to its pill, and the preview pane open over the top.
+   *
+   * Gated on visibility rather than on the mode, so all three are covered by
+   * one condition; and gated on that rather than firing always, because a toast
+   * duplicating a bubble the user is already looking at is noise. The action is
+   * the same door the bar chip opens — see `showTranscript`.
+   */
+  private reportOffscreenTurn(bundle: JobDiffBundle): void {
+    if (this.transcriptVisible()) {
+      return;
+    }
+    const ok = bundle.status === "done";
+    toast(ok ? "Change applied" : `Change ${bundle.status}`, {
+      action: { label: "Show", run: () => this.showTranscript() },
+      icon: ok ? "check" : "attention",
+      tone: ok ? "neutral" : "error",
+    });
   }
 
   // -- Socket events ---------------------------------------------------------
@@ -2648,6 +3224,9 @@ export class AirshipApp {
         // The daemon's `--agent` is the resting default; the picker only ever
         // departs from it deliberately.
         this.setAgent(ev.defaultAgent);
+        // The snapshot is the only thing that can tell us a turn ended while we
+        // were not listening — see `reconcileAwaiting`.
+        this.reconcileAwaiting(ev.jobs);
         // A reconnect drops whatever request was in flight. Reset the key
         // first, or the dedupe decides nothing changed and the pane never
         // repaints.
@@ -2767,6 +3346,9 @@ export class AirshipApp {
   private onDone(bundle: JobDiffBundle): void {
     this.awaiting = false;
     this.sendBtn.disabled = false;
+    this.syncApplyGroup();
+    this.syncJobChip();
+    this.reportOffscreenTurn(bundle);
     this.parentJobId = bundle.jobId;
     if (!this.activeThreadRoot) {
       this.activeThreadRoot = bundle.jobId;
@@ -2815,7 +3397,7 @@ export class AirshipApp {
     }
     const what = status === "cancelled" ? "Cancelled" : "Edit failed";
     toast(
-      `${what} — your ${pending === 1 ? "change is" : "changes are"} still pending`,
+      `${what}. Your ${pending === 1 ? "change is" : "changes are"} still pending`,
       {
         icon: "rotate-ccw",
       }
@@ -2881,7 +3463,7 @@ export class AirshipApp {
     this.clearSelectionScope();
     this.stage.afterApply?.();
     if (bundle.status === "done") {
-      toast("Applied — reload if it doesn't update", { icon: "check" });
+      toast("Applied. Reload if it doesn't update", { icon: "check" });
     }
   }
 
@@ -2897,7 +3479,7 @@ export class AirshipApp {
     this.parentJobId = jobId;
     this.forkNext = true;
     this.setLeft(true);
-    toast("Branching — type a new instruction", { icon: "version-branch" });
+    toast("Branching. Type a new instruction", { icon: "version-branch" });
     this.input.focus();
   }
 
@@ -2940,7 +3522,7 @@ export class AirshipApp {
         });
         this.setLeft(true);
         this.renderComposerChips();
-        toast("Comment added — send to apply", { icon: "tool-comment" });
+        toast("Comment added. Send to apply", { icon: "tool-comment" });
       }
     );
   }
@@ -3077,7 +3659,7 @@ export class AirshipApp {
     }
     this.previewBodyEl.append(
       emptyState({
-        body: "Select an element, tweak it in the inspector, or type an instruction — the prompt the agent receives appears here.",
+        body: "Select an element, tweak it in the inspector, or type an instruction. The prompt the agent receives appears here.",
         title: "Nothing to send yet",
       })
     );
@@ -3188,10 +3770,67 @@ function clamp(v: number, lo: number, hi: number): number {
  * `closest("[data-tip]")`, so each button in the row keeps its own tip and only
  * the bare header shows this one.
  */
+/**
+ * What a reconnect's job snapshot says about the turn we think is in flight.
+ *
+ * Free and exported so the rule can be asserted directly. Standing up an
+ * `AirshipApp` to check three cases would mean a socket, a dnd-kit manager, a
+ * `DesignPanel` and a live document — and this is the part that has to be
+ * right: answering "running" for a job that ended leaves the editor latched,
+ * and answering "release" for one that is still going throws away a live turn's
+ * transcript while the agent is still writing to it.
+ */
+export type AwaitingVerdict =
+  | { jobId: string; kind: "running" }
+  | { job?: JobSnapshot; kind: "release" };
+
+export function reconcileJob(
+  activeJobId: string | null,
+  jobs: JobSnapshot[]
+): AwaitingVerdict {
+  // With no id of our own, `job:created` is precisely what we missed — and the
+  // server runs edits on one chain, so at most one job is ever `running`.
+  const mine = activeJobId
+    ? jobs.find((job) => job.jobId === activeJobId)
+    : jobs.find((job) => job.status === "running");
+  return mine?.status === "running"
+    ? { jobId: mine.jobId, kind: "running" }
+    : { job: mine, kind: "release" };
+}
+
+/**
+ * Is a dock on screen, given what the user asked for and which mode we are in?
+ *
+ * Free and exported so the rule can be asserted without standing up an
+ * `AirshipApp` — which means a socket, a dnd-kit manager, a `DesignPanel` and a
+ * live document — to check three booleans. `AirshipApp.isVisible` is the only
+ * caller in the product.
+ *
+ * `modeScoped` is what keeps the inline overlay out of this. Edit and view mean
+ * different things on the two stages: on the canvas, view mode is *about* the
+ * frames and has a panel and a map of its own to put in their place, so giving
+ * up the two element-scoped panels is a trade. Inline has neither, so the same
+ * rule would just take the inspector away and put nothing there — the gate is
+ * therefore the stage's ability to fill the gap, which is exactly what
+ * `Stage.mountFramesPanel` reports.
+ */
+export function dockVisible(opts: {
+  editing: boolean;
+  modeScoped: boolean;
+  open: boolean;
+  side: Side;
+}): boolean {
+  if (!(opts.open && opts.modeScoped)) {
+    return opts.open;
+  }
+  // The left dock stays: it is the one that has something else to show.
+  return opts.side === "left" || opts.editing;
+}
+
 function dockHeadAttrs(name: string): Record<string, string> {
   return {
     "aria-label": name,
-    "data-tip": "Drag to move · double-click to dock",
+    "data-tip": "Drag to move, double-click to dock",
   };
 }
 
@@ -3287,5 +3926,5 @@ function applyLabel(
   attrCount = 0
 ): string {
   const base = `Applied ${changeSummary(styleCount, moveCount, structureCount, attrCount)}`;
-  return note ? `${base} — ${note}` : base;
+  return note ? `${base}. ${note}` : base;
 }

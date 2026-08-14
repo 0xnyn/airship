@@ -1,5 +1,5 @@
 import { PREFIX } from "../dom";
-import { Z_POP } from "./const";
+import { TIP_MAX_W, Z_POP } from "./const";
 
 /**
  * The popover layer: the host, the shared shell, and the menu shape.
@@ -14,6 +14,63 @@ import { Z_POP } from "./const";
 export const css = `
 .${PREFIX}-pop-host {
   position: absolute; inset: 0; z-index: ${Z_POP}; pointer-events: none;
+}
+/* The tooltip. Here rather than beside the docks it mostly labels, because
+   \`Tooltips\` mounts it into the host above and its neighbours are the shells
+   below it.
+
+   \`z-index: 1\`, and not the global \`Z\`: the host is a stacking context of its
+   own, so the global scale means nothing inside it. What this orders is the tip
+   against its *siblings* — the \`.pop\` shells, which carry no z-index and are all
+   appended after the tip, which is created once when the overlay mounts. Drop
+   the number and DOM order takes over: the tip paints under every popover ever
+   opened, which is how it reads on a control inside the colour picker.
+
+   It wraps, and that is the shape of the whole rule. Most tips are one short
+   line, but a handful carry values the editor did not author — a font stack, a
+   stylesheet URL, a review comment body — and for those the tip *is* the
+   untruncated view of a field that already truncated. Ellipsing them throws
+   away the only thing they were opened for.
+
+   This used to say \`white-space: nowrap\` alongside the same width cap and no
+   overflow rule at all. Those cannot both hold: the text laid out at its full
+   intrinsic width while the border, background and shadow painted at the cap, so
+   from about 45 characters up the label sat outside its own box. It also made
+   \`offsetWidth\` report the cap rather than the painted width, so the centring in
+   \`Tooltips.place\` and its dock clamp were both computed from a number that was
+   never true of anything on screen. */
+.${PREFIX}-tip {
+  position: absolute; z-index: 1; pointer-events: none;
+  display: flex; align-items: baseline; gap: 6px;
+  width: max-content; max-width: ${TIP_MAX_W}px; padding: 4px 8px;
+  background: var(--ap-surface-selected); color: var(--ap-text-primary);
+  border: 1px solid var(--ap-border-default); border-radius: var(--ap-radius-xs);
+  box-shadow: var(--ap-elevation-floating);
+  font-family: var(--ap-font-sans); font-size: var(--ap-font-size-body); line-height: 1.5;
+}
+/* Three lines, then an ellipsis. A tip is a label and not a document, and the
+   interpolated ones have no length bound at all — a comment body is whatever
+   somebody typed into it.
+
+   \`overflow-wrap: anywhere\` rather than \`break-word\` is for the values with no
+   spaces to break at, a stylesheet URL being the one that actually turns up:
+   only \`anywhere\` lowers the min-content width, so the box settles at
+   \`max-width\` instead of being pushed past it by a single unbreakable token. */
+.${PREFIX}-tip-text {
+  min-width: 0;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+/* The chord never wraps and never shrinks. It is the one part of a tooltip that
+   is unreadable if it breaks, so the \`min-width: 0\` above makes the *text* the
+   item that gives way — the container stays \`flex-wrap: nowrap\`, which is what
+   keeps the chip on the first line beside a wrapped tip instead of orphaning it
+   onto a line of its own. \`baseline\` on the container is what sits it on that
+   first line rather than halfway down the block, and it is also what lines
+   JetBrains Mono up with Inter at the same size, which \`center\` never did. */
+.${PREFIX}-tip-key {
+  flex: 0 0 auto; white-space: nowrap;
+  font-family: var(--ap-font-mono); color: var(--ap-text-tertiary);
 }
 /* The shell is the scroller, because the shell is what carries the cap.
 
@@ -83,6 +140,38 @@ export const css = `
   padding: 6px 8px 2px; font-family: var(--ap-font-mono); text-transform: uppercase;
   font-size: var(--ap-font-size-micro); letter-spacing: .6px; color: var(--ap-text-tertiary);
 }
+/* ---- Collapsible group -------------------------------------------------- */
+
+/* The long-list answer, next to \`pop-head\`'s short-list one. Written to the same
+   measures as \`fc-dgroup\` in \`canvas.css.ts\` on purpose: the device list appears
+   in both menu systems, and two accordions over the same twenty-two rows must
+   not be visibly different objects. */
+.${PREFIX}-pop-group { display: flex; flex-direction: column; }
+.${PREFIX}-pop-group + .${PREFIX}-pop-group {
+  margin-top: 4px; padding-top: 4px;
+  border-top: 1px solid var(--ap-border-default);
+}
+/* Sentence case and body type, not \`pop-head\`'s uppercase mono: these are
+   section headers in a list you are reading, not the menu's own title. */
+.${PREFIX}-pop-group-head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  padding: 5px 8px; border: 0; border-radius: var(--ap-radius-xs);
+  background: transparent; cursor: pointer; text-align: left;
+  font-family: var(--ap-font-sans); font-size: var(--ap-font-size-label);
+  color: var(--ap-text-primary);
+}
+.${PREFIX}-pop-group-head:hover { background: var(--ap-surface-active); }
+/* Rotating \`chev-right\` a quarter turn reproduces \`chev-down\` exactly — the set
+   draws them as one path at two rotations — so one glyph serves both states.
+   Driven from \`aria-expanded\`, which is where the state already lives. */
+.${PREFIX}-pop-group-head .${PREFIX}-ic { flex: 0 0 16px; opacity: .5; }
+.${PREFIX}-pop-group-head[aria-expanded="true"] .${PREFIX}-ic { transform: rotate(90deg); }
+/* 8px padding + 16px glyph + 6px gap, so a group's name and every row under it
+   share one left edge and the triangle hangs in a gutter of its own. Getting
+   this wrong is what makes an accordion read as two unrelated lists rather than
+   a tree. */
+.${PREFIX}-pop-group-body .${PREFIX}-pop-item { padding-left: 30px; }
+
 .${PREFIX}-pop-item-main { display: inline-flex; align-items: center; gap: var(--ap-space-xs); min-width: 0; }
 .${PREFIX}-pop-item-main { --${PREFIX}-ic-tone: var(--ap-icon-secondary); }
 .${PREFIX}-pop-item-main .${PREFIX}-ic { flex: 0 0 auto; }

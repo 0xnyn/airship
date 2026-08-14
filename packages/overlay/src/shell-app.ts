@@ -2,6 +2,8 @@ import type { AirshipWindowConfig } from "@airship/protocol";
 import { AirshipApp, type Stage } from "./app";
 import { FrameChrome } from "./canvas/frame-chrome";
 import { type Frame, FrameManager } from "./canvas/frames";
+import { FramesPanel } from "./canvas/frames-panel";
+import { Minimap } from "./canvas/minimap";
 import { frameScreenRect, type Point, type Rect } from "./canvas/space";
 import { CanvasViewport, type SafeInset } from "./canvas/viewport";
 import {
@@ -38,6 +40,8 @@ class CanvasStage implements Stage {
   private readonly canvas: CanvasViewport;
   private readonly frames: FrameManager;
   private readonly chrome: FrameChrome;
+  private readonly minimap: Minimap;
+  private readonly framesPanel: FramesPanel;
   private readonly listeners: (() => void)[] = [];
   /** Subscribers to the trailing edge of a pan/zoom — see `isGesturing`. */
   private readonly gestureEndListeners: (() => void)[] = [];
@@ -78,6 +82,14 @@ class CanvasStage implements Stage {
       pathname: config.pathname ?? "/",
       storageKey: `${key}:frames`,
       world: this.canvas.world,
+    });
+    this.minimap = new Minimap({
+      frames: this.frames,
+      viewport: this.canvas,
+    });
+    this.framesPanel = new FramesPanel({
+      frames: this.frames,
+      viewport: this.canvas,
     });
     this.chrome = new FrameChrome({
       frames: this.frames,
@@ -306,6 +318,17 @@ class CanvasStage implements Stage {
     this.chrome.mountFrameTools(host);
   }
 
+  /** The left dock's view-mode body. */
+  mountFramesPanel(host: HTMLElement): void {
+    host.append(this.framesPanel.element);
+    this.framesPanel.render();
+  }
+
+  /** The bottom-right corner. */
+  mountMinimap(host: HTMLElement): void {
+    this.minimap.mount(host);
+  }
+
   bindFramePress(report: (at: Point, mods: Mods, dbl: boolean) => void): void {
     this.reportFramePress = report;
   }
@@ -429,6 +452,12 @@ class CanvasStage implements Stage {
     // visible but inert in edit. See the note above `FrameChrome.setEditing`.
     this.frames.setEditing(on);
     this.chrome.setEditing(on);
+    if (!on) {
+      // Coming into view mode, both have been ignoring every change since the
+      // last time they were on screen and are showing a stale canvas.
+      this.minimap.render();
+      this.framesPanel.render();
+    }
   }
 
   relayout(): void {
@@ -461,10 +490,36 @@ class CanvasStage implements Stage {
   }
 
   private onFramesChanged(): void {
+    this.pruneFrameUnsubs();
     this.frames.updateMounts(this.canvas.rect);
     this.chrome.render();
     this.notify();
     this.save();
+  }
+
+  /**
+   * Drop the layout subscriptions of frames that are gone.
+   *
+   * `onFrameReady` writes one entry per frame and nothing ever removed them, so
+   * a deleted frame left its unsubscriber in the map — and that closure holds
+   * the frame's `FrameAgent`, which holds that frame's `window`. The realm the
+   * delete was supposed to destroy stayed reachable for the rest of the
+   * session, and with a cap of eight frames you can churn through a lot of
+   * them.
+   *
+   * Calling the disposer rather than only forgetting it: the agent's own
+   * listener list is in the frame's realm, and while that realm is being torn
+   * down anyway it costs nothing to leave it tidy — and this same path runs for
+   * a frame that was merely *replaced*, where the realm is very much alive.
+   */
+  private pruneFrameUnsubs(): void {
+    const live = new Set(this.frames.all.map((f) => f.id));
+    for (const [id, off] of this.frameUnsubs) {
+      if (!live.has(id)) {
+        off();
+        this.frameUnsubs.delete(id);
+      }
+    }
   }
 
   /**
@@ -484,7 +539,21 @@ class CanvasStage implements Stage {
     this.notify();
   }
 
+  /**
+   * Everything that has to be re-read after the canvas moved or its frames
+   * changed.
+   *
+   * The two view-mode surfaces are redrawn from here rather than subscribing
+   * through `onLayoutChange` like the app's own chrome does, because the gate
+   * belongs here: they are hidden in edit mode, this fires on every frame of
+   * every pan, and a subscriber cannot see the mode. `setEditing` catches them
+   * up on the way back.
+   */
   private notify(): void {
+    if (!this.editing) {
+      this.minimap.render();
+      this.framesPanel.render();
+    }
     for (const cb of this.listeners) {
       cb();
     }

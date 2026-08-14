@@ -36,7 +36,9 @@ export interface ChangeChip {
 export function renderChangeChips(
   host: HTMLElement,
   chips: ChangeChip[],
-  onDiscardAll?: () => void
+  // Handed its own button so the caller can anchor a confirm menu on it —
+  // this is the bulk path with no journal entry behind it.
+  onDiscardAll?: (anchor: HTMLElement) => void
 ): void {
   for (const chip of chips) {
     host.append(
@@ -63,18 +65,17 @@ export function renderChangeChips(
   }
 
   if (onDiscardAll && chips.length > 1) {
-    host.append(
-      el(
-        "button",
-        {
-          class: `${cls("sel-chip")} ${cls("chip-all")}`,
-          "data-tip": "Discard every pending change",
-          onClick: onDiscardAll,
-          type: "button",
-        },
-        [icon("close", "sm"), el("span", { text: "Discard all" })]
-      )
+    const all = el(
+      "button",
+      {
+        class: `${cls("sel-chip")} ${cls("chip-all")}`,
+        "data-tip": "Discard every pending change",
+        type: "button",
+      },
+      [icon("close", "sm"), el("span", { text: "Discard all" })]
     );
+    all.addEventListener("click", () => onDiscardAll(all));
+    host.append(all);
   }
 }
 
