@@ -151,6 +151,12 @@ Undo is Airship's, not the agent's. It keeps the previous version of every file 
 undo works on all three. One catch: `codex` and `opencode` get that previous version from Git,
 so **undo needs your project to be a Git repo on those two**. Airship warns you at startup.
 
+One more `opencode` quirk: the one-line summary and the follow-up suggestion chips come from a
+JSON block the model is asked to append to its reply. A model that ignores the instruction
+loses the chips and gets a plainer commit message — never the edit itself. Models with thinking
+enabled reject opencode's own structured-output request outright; Airship detects that, retries
+the turn without it, and remembers not to ask that model again.
+
 ### Authentication
 
 Airship reuses whatever the chosen agent already has, and warns at startup if it finds nothing.
@@ -375,6 +381,28 @@ first one that answers:
 
 With `--exec` it's the opposite: the port has to be *free*, since Airship is about to start your
 dev server on it. It won't start one on a port that's already taken.
+
+## Troubleshooting
+
+**Every `opencode` turn fails with "Thinking mode does not support this tool_choice".**
+The provider is rejecting the structured-output request opencode sends — it is implemented as a
+forced tool call, which models with thinking/reasoning enabled refuse (opencode issue #15226,
+closed upstream). Airship retries the turn without that request and remembers the model, so you
+should see one warning row and a working edit. If it persists, pick a model without thinking
+enabled, or disable thinking for your provider via `--opencode-config`.
+
+**"No `opencode` binary found on PATH."**
+The `opencode` CLI is a separate install (`brew install sst/tap/opencode`); Airship finds it on
+PATH rather than bundling it.
+
+**"No provider credentials found."**
+Airship reuses the chosen agent's own login — see [Authentication](#authentication). For
+`opencode` that means a provider key or `opencode auth login`; for `codex`, a `codex login` or
+an API key; for `claude`, a `claude` login or `ANTHROPIC_API_KEY`.
+
+**Undo does nothing, or diffs come back empty, on `codex` or `opencode`.**
+Both reconstruct their diff baseline from Git, so the project must be a Git repository. Airship
+warns about this at startup.
 
 ## Questions
 
