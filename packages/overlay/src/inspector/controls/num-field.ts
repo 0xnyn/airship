@@ -531,7 +531,7 @@ export function createNumField(
       class: scrubbable
         ? cls("ctl-glyph")
         : `${cls("ctl-glyph")} ${cls("ctl-glyph-static")}`,
-      "data-tip": scrubbable ? `${spec.label} — drag to adjust` : spec.label,
+      "data-tip": scrubbable ? `${spec.label}, drag to adjust` : spec.label,
     },
     glyphText
       ? [

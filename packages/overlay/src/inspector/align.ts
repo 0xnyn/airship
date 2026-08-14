@@ -115,7 +115,7 @@ function tidyPlan(parent: Element): AlignPlan {
         { property: "gap", value: `${gap}px` },
         { property: "align-items", value: "center" },
       ],
-      note: "evens out the grid's spacing",
+      note: "Evens the grid's spacing",
       target: "parent",
     };
   }
@@ -126,7 +126,7 @@ function tidyPlan(parent: Element): AlignPlan {
       { property: "gap", value: `${gap}px` },
       { property: "align-items", value: "center" },
     ],
-    note: "makes the parent an auto-layout with even spacing",
+    note: "Makes the parent an auto-layout",
     target: "parent",
   };
 }
@@ -141,7 +141,7 @@ function distributePlan(parent: Element, wantColumn: boolean): AlignPlan {
           value: "space-between",
         },
       ],
-      note: "spaces every child in the parent evenly",
+      note: "Spaces every child evenly",
       target: "parent",
     };
   }
@@ -151,7 +151,7 @@ function distributePlan(parent: Element, wantColumn: boolean): AlignPlan {
       { property: "flex-direction", value: wantColumn ? "column" : "row" },
       { property: "justify-content", value: "space-between" },
     ],
-    note: "spaces every child in the parent evenly",
+    note: "Spaces every child evenly",
     target: "parent",
   };
 }
@@ -286,7 +286,7 @@ export function planAlign(
     if (isMainAxis(action, mode)) {
       return {
         decls: [{ property: "justify-content", value: JUSTIFY[action] }],
-        note: "aligns within the parent — moves siblings too",
+        note: "Moves the siblings too",
         target: "parent",
       };
     }

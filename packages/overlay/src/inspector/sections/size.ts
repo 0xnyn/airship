@@ -147,8 +147,8 @@ function renderAxisRow(
         "aria-label": MODE_TEXT[m],
         class: cls("ctl-seg-btn"),
         "data-tip": enabled
-          ? `${MODE_TEXT[m]} — ${MODE_NOTE[m]}`
-          : `${MODE_TEXT[m]} — needs a parent to fill`,
+          ? `${MODE_TEXT[m]}. ${MODE_NOTE[m]}`
+          : `${MODE_TEXT[m]}. Needs a parent to fill`,
         disabled: enabled ? undefined : "",
         onClick: enabled ? () => applyMode(m) : undefined,
         type: "button",
@@ -326,7 +326,7 @@ export function renderSize(
     const open = constrained || state.showBounds;
     let tip = open ? "Hide min and max" : "Add min and max";
     if (constrained) {
-      tip = "Min and max are set — clear them to hide these";
+      tip = "Clear min and max to hide these";
     }
     toggle.replaceChildren(icon(open ? "minus" : "plus", "xs"));
     toggle.toggleAttribute("disabled", constrained);

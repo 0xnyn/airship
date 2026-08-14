@@ -279,7 +279,7 @@ function renderGridTracks(ctx: SectionContext, node: Element): HTMLElement {
       // count-and-size — that would silently destroy it.
       const custom = createTextField({
         glyph,
-        label: `${kind} — custom track list`,
+        label: `Custom ${kind} track list`,
       });
       custom.input.value = raw;
       bindField(

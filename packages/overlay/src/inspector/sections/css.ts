@@ -705,6 +705,6 @@ function computedRow(
 
 const BADGE_TIP: Record<string, string> = {
   css: "Set by a stylesheet rule",
-  default: "The value an unstyled element here would have (incl. inherited)",
+  default: "Browser default, or inherited",
   inline: "Set inline on the element",
 };

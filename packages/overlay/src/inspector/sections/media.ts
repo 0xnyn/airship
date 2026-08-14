@@ -323,7 +323,7 @@ function positionRow(
   });
 
   const field = createTextField({
-    label: `${label} — custom`,
+    label: `Custom ${label.toLowerCase()}`,
     placeholder: "20% 30%",
   });
   field.input.value = isPreset ? "" : current;

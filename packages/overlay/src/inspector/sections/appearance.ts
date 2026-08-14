@@ -52,8 +52,7 @@ export function renderAppearance(
     // Layer opacity and fill alpha are different things and the panel offers
     // both, two sections apart. Saying which is which here is cheaper than
     // letting someone discover it by fading their text along with the box.
-    cell.dataset.tip =
-      "Layer opacity — fades children too. Use the fill's % to fade the fill alone";
+    cell.dataset.tip = "Layer opacity, children included";
     top.append(cell);
   }
   // Corner radius is four longhands behind one field with its own mode
@@ -101,7 +100,7 @@ export function renderAppearance(
       {
         "aria-pressed": String(clipped),
         class: `${cls("ctl-toggle")}${clipped ? ` ${cls("ctl-toggle-on")}` : ""}`,
-        "data-tip": "Hide anything that overflows this element's bounds",
+        "data-tip": "Clip anything outside this element",
         onClick: () => {
           const now = readValue(node, "overflow") === "hidden";
           ctx.onChange("overflow", now ? "visible" : "hidden");
