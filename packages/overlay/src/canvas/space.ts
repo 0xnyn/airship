@@ -191,6 +191,27 @@ export function clipTo(box: Rect, bounds: Rect): string {
   return `inset(${snap(top)}px ${snap(right)}px ${snap(bottom)}px ${snap(left)}px)`;
 }
 
+/**
+ * The world-space box `viewportRect` is currently showing.
+ *
+ * The inverse of the world→screen transform applied to the viewport's own
+ * corners, which is why it is four divisions and not a matrix: screen `left`
+ * maps to world `-x/scale`, and a viewport `width` screen px wide spans
+ * `width/scale` world units at any zoom.
+ *
+ * Needed by anything that has to reason about *where you are looking* rather
+ * than where one node is — the minimap's indicator, and the bounds it has to
+ * cover so that indicator cannot leave the map.
+ */
+export function visibleWorldRect(vp: Viewport, viewportRect: Rect): Rect {
+  return {
+    height: viewportRect.height / vp.scale,
+    left: -vp.x / vp.scale,
+    top: -vp.y / vp.scale,
+    width: viewportRect.width / vp.scale,
+  };
+}
+
 // -- zoom --------------------------------------------------------------------
 
 /**
@@ -236,6 +257,61 @@ export function fitTo(
       (size.height - padding * 2) / bounds.height
     )
   );
+  return {
+    scale,
+    x: (size.width - bounds.width * scale) / 2 - bounds.left * scale,
+    y: (size.height - bounds.height * scale) / 2 - bounds.top * scale,
+  };
+}
+
+/**
+ * The viewport that puts world `point` at the centre of `size`, at the scale
+ * given.
+ *
+ * Same contract as `fitTo` — it centres within a box whose origin is `(0, 0)`,
+ * so a caller aiming at anything other than the whole viewport shifts the
+ * result by that box's offset. Deliberately does *not* touch the scale: this is
+ * "take me there", not "take me there and decide how close I stand", which is
+ * what keeps a jump from the minimap or the frame list from throwing away the
+ * zoom level you were working at.
+ */
+export function centerAt(
+  point: Point,
+  size: { height: number; width: number },
+  scale: number
+): Viewport {
+  return {
+    scale,
+    x: size.width / 2 - point.x * scale,
+    y: size.height / 2 - point.y * scale,
+  };
+}
+
+/**
+ * Project a world box into a box of screen px, with no scale clamp.
+ *
+ * The unclamped twin of `fitTo`, and the clamp is the whole reason it exists.
+ * `fitTo` produces a *zoom level*, so it is bounded by `MIN_SCALE`/`MAX_SCALE`
+ * — the range a person can usefully work at. This produces a *projection
+ * ratio* for a second, non-interactive view of the same world, where those
+ * bounds are meaningless: fitting a 6000px-wide canvas into a 200px minimap
+ * needs about 0.03, and running that through `clampScale` would floor it at 0.1
+ * and draw the frames three times wider than the card holding them.
+ *
+ * Returns `IDENTITY` for a degenerate box or a box smaller than its own
+ * padding, so a caller never has to defend against a zero or negative scale.
+ */
+export function projectInto(
+  bounds: Rect,
+  size: { height: number; width: number },
+  padding = 0
+): Viewport {
+  const width = size.width - padding * 2;
+  const height = size.height - padding * 2;
+  if (bounds.width <= 0 || bounds.height <= 0 || width <= 0 || height <= 0) {
+    return { ...IDENTITY };
+  }
+  const scale = Math.min(width / bounds.width, height / bounds.height);
   return {
     scale,
     x: (size.width - bounds.width * scale) / 2 - bounds.left * scale,

@@ -322,27 +322,36 @@ export class FrameManager {
 
   private readonly deps: FrameManagerDeps;
 
+  /**
+   * The `window.__airshipOnFrameReady` hook, held rather than written inline.
+   *
+   * Frames push their agent here rather than being polled. A frame's realm is
+   * rebuilt on every HMR full reload, so any handle the shell cached would go
+   * stale with no event to tell it — pushing makes re-registration automatic.
+   *
+   * Which frame is asking is settled by comparing the agent's own `window`
+   * against each iframe's `contentWindow`: object identity, which survives
+   * reloads and cannot be confused by a stale or missing name.
+   *
+   * A field so `destroy` has something to compare against before clearing the
+   * global — see there.
+   */
+  private readonly onFrameReady = (agent: FrameAgent): void => {
+    const frame = this.frames.find((f) => f.win === agent.window);
+    if (!frame) {
+      return;
+    }
+    frame.agent = agent;
+    this.deps.onFrameReady?.(frame);
+  };
+
   constructor(deps: FrameManagerDeps) {
     this.deps = deps;
-    // Frames push their agent here rather than being polled. A frame's realm is
-    // rebuilt on every HMR full reload, so any handle the shell cached would go
-    // stale with no event to tell it — pushing makes re-registration automatic.
-    //
-    // Which frame is asking is settled by comparing the agent's own `window`
-    // against each iframe's `contentWindow`: object identity, which survives
-    // reloads and cannot be confused by a stale or missing name.
     (
       window as unknown as {
         __airshipOnFrameReady?: (agent: FrameAgent) => void;
       }
-    ).__airshipOnFrameReady = (agent) => {
-      const frame = this.frames.find((f) => f.win === agent.window);
-      if (!frame) {
-        return;
-      }
-      frame.agent = agent;
-      this.deps.onFrameReady?.(frame);
-    };
+    ).__airshipOnFrameReady = this.onFrameReady;
   }
 
   get all(): readonly Frame[] {
@@ -449,6 +458,7 @@ export class FrameManager {
       y: at.y,
     });
     this.frames.push(frame);
+    this.applyOrder();
     // A newly added frame is not auto-selected: selection is something the user
     // does, and the highlight only means anything if it stays that way.
     this.deps.onChanged?.();
@@ -485,6 +495,7 @@ export class FrameManager {
     if (this.textFrameId === id) {
       this.textFrameId = null;
     }
+    this.applyOrder();
     this.deps.onChanged?.();
     return removed;
   }
@@ -517,6 +528,7 @@ export class FrameManager {
     // restored frame that overlaps a neighbour is selected where it is not
     // visible.
     this.frames[at + 1]?.el.before(frame.el);
+    this.applyOrder();
     if (removed.wasActive) {
       // The field, not `setActive`: the single `onChanged` below already covers
       // both the new frame and the new selection in one render.
@@ -543,6 +555,36 @@ export class FrameManager {
       presetId: src.presetId,
       width: src.width,
     });
+  }
+
+  /**
+   * Move a frame to a new position in paint order.
+   *
+   * Deliberately array-only: the DOM is left exactly as it is, and `applyOrder`
+   * republishes the new order as `z-index` instead. Re-parenting is not an
+   * option here the way it is in `restoreRemoved` — moving an `iframe` in the
+   * document tears down and rebuilds its browsing context, so a frame you
+   * merely dragged up a list would reload the app inside it and lose its route,
+   * its scroll position and whatever state you had built up. `restoreRemoved`
+   * can afford `.before()` because the frame it is placing was just built and
+   * has nothing to lose.
+   *
+   * `index` is clamped rather than rejected: a drag that overshoots the end of
+   * the list means "last", which is what the gesture looked like.
+   */
+  reorder(id: string, index: number): void {
+    const from = this.frames.findIndex((f) => f.id === id);
+    if (from === -1) {
+      return;
+    }
+    const to = Math.max(0, Math.min(Math.round(index), this.frames.length - 1));
+    if (to === from) {
+      return;
+    }
+    const [frame] = this.frames.splice(from, 1);
+    this.frames.splice(to, 0, frame);
+    this.applyOrder();
+    this.deps.onChanged?.();
   }
 
   move(id: string, x: number, y: number): void {
@@ -801,6 +843,7 @@ export class FrameManager {
       });
       this.frames.push(frame);
     }
+    this.applyOrder();
     return true;
   }
 
@@ -809,6 +852,19 @@ export class FrameManager {
       frame.el.remove();
     }
     this.frames.length = 0;
+    // The global goes too. It is a closure over `this`, hung off `window` by
+    // the constructor, so leaving it behind keeps a destroyed manager — and
+    // every frame it ever built — reachable, and points the next frame that
+    // loads at a manager whose array has just been emptied. Only the *own*
+    // hook is cleared: a second manager constructed in the meantime has already
+    // overwritten it, and dropping that one would leave the live canvas unable
+    // to hear its frames.
+    const host = window as unknown as {
+      __airshipOnFrameReady?: (agent: FrameAgent) => void;
+    };
+    if (host.__airshipOnFrameReady === this.onFrameReady) {
+      host.__airshipOnFrameReady = undefined;
+    }
   }
 
   // -- Internals -------------------------------------------------------------
@@ -887,6 +943,29 @@ export class FrameManager {
     this.applyMode(frame);
     this.deps.world.append(wrapper);
     return frame;
+  }
+
+  /**
+   * Republish paint order as `z-index`, so the array is the single authority on
+   * what paints over what.
+   *
+   * Frames were absolutely positioned with no `z-index`, which left the DOM
+   * with the last word while `frameAt` read the array — an agreement every
+   * mutation had to maintain by hand (see the note in `restoreRemoved`). That
+   * held only because every path happened to touch both in step, and it made
+   * reordering impossible to do cheaply: the one operation whose entire purpose
+   * is changing paint order was also the one that could not move an `iframe`
+   * without reloading it.
+   *
+   * Writing the index makes it explicit and costs nothing — every path already
+   * kept the two in the same order, so this changes no existing behaviour. The
+   * world element carries a transform and is therefore a stacking context, so
+   * these small integers are contained by it and cannot reach the chrome above.
+   */
+  private applyOrder(): void {
+    for (const [i, frame] of this.frames.entries()) {
+      frame.el.style.zIndex = String(i);
+    }
   }
 
   private applyBox(frame: Frame): void {

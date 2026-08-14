@@ -317,6 +317,9 @@ export class SelectionController {
   /** The eight resize grips' dnd-kit entities, torn down with the controller. */
   private readonly handleScope = new DndScope();
   private marqueeFrom: Point | null = null;
+  /** The press point of a declined pan gesture, kept only so `onMarqueeUp`
+   * can swallow the trailing click the pan leaves behind. */
+  private gestureFrom: Point | null = null;
 
   private readonly hoverBox: HTMLElement;
   private readonly hoverLabel: HTMLElement;
@@ -517,7 +520,12 @@ export class SelectionController {
       document.addEventListener("dblclick", this.onDblClick, true);
       window.addEventListener("pointerdown", this.onMarqueeDown, true);
       window.addEventListener("pointermove", this.onMarqueeMove);
-      window.addEventListener("pointerup", this.onMarqueeUp);
+      // Capture, like the down handler — and not only for symmetry. In the
+      // inline overlay `EditGuard` swallows `pointerup` over app content at
+      // document capture, which runs after window capture but before any
+      // window *bubble* listener — so a bubble-phase handler here never fired
+      // inline: the band stayed painted and the selection never landed.
+      window.addEventListener("pointerup", this.onMarqueeUp, true);
       this.unbindKeys = keys.bind({
         keys: "escape",
         label: "Deselect",
@@ -542,8 +550,9 @@ export class SelectionController {
       document.removeEventListener("dblclick", this.onDblClick, true);
       window.removeEventListener("pointerdown", this.onMarqueeDown, true);
       window.removeEventListener("pointermove", this.onMarqueeMove);
-      window.removeEventListener("pointerup", this.onMarqueeUp);
+      window.removeEventListener("pointerup", this.onMarqueeUp, true);
       this.marqueeFrom = null;
+      this.gestureFrom = null;
       hide(this.marquee);
       this.unbindKeys?.();
       this.unbindKeys = null;
@@ -862,6 +871,17 @@ export class SelectionController {
     ) {
       return;
     }
+    // A pan owns this press — space-drag or the Hand tool. The viewport's
+    // `stopPropagation` cannot decline it for us: both handlers hang on the
+    // same window node, and only `stopImmediatePropagation` silences a
+    // sibling. Checked at pointerdown because the viewport binds first (at
+    // construction, before the picker binds in mount), so `panning` is
+    // already set by the time this runs; by pointerup it is gone again, hence
+    // the latch.
+    if (this.deps.isGesturing?.()) {
+      this.gestureFrom = { x: e.clientX, y: e.clientY };
+      return;
+    }
     if (this.pick({ x: e.clientX, y: e.clientY })) {
       return;
     }
@@ -883,14 +903,28 @@ export class SelectionController {
   };
 
   private readonly onMarqueeUp = (e: PointerEvent): void => {
-    const from = this.marqueeFrom;
+    const from = this.marqueeFrom ?? this.gestureFrom;
+    const wasGesture = this.marqueeFrom === null;
     this.marqueeFrom = null;
+    this.gestureFrom = null;
     hide(this.marquee);
     if (!from) {
       return;
     }
     const box = rectBetween(from, { x: e.clientX, y: e.clientY });
     if (box.width < 4 && box.height < 4) {
+      // A stationary press is a click, and clicks own their own path.
+      return;
+    }
+    // A drag is not a click, whichever kind it was. Without this, the browser
+    // still synthesizes a `click` at release: after a completed marquee it
+    // landed in `onClick` and wiped the selection the band had just made (or
+    // collapsed N elements to the one under the release point); after a pan
+    // it selected whatever the canvas stopped over. Armed at pointer*up* on
+    // purpose — `EditGuard.onPress` clears the flag on every pointerdown, so
+    // arming it at pointerdown would be dead by now.
+    this.guard.suppressNextClick();
+    if (wasGesture) {
       return;
     }
     const hits = this.nodesIn(box);

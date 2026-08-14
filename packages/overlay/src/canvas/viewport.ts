@@ -3,6 +3,7 @@ import { isOwn } from "../edit-guard";
 import { isInsidePopover, isTypingTarget, keys } from "../keys";
 import { isFrameChrome } from "./frame-chrome";
 import {
+  centerAt,
   clampScale,
   fitTo,
   MAX_SCALE,
@@ -206,6 +207,36 @@ export class CanvasViewport {
     return { height: r.height, left: r.left + left, top: r.top, width };
   }
 
+  /**
+   * The world-space box the *uncovered* canvas is showing.
+   *
+   * `visibleWorldRect(vp, rect)` answers the same question for the whole canvas
+   * and is the wrong one for anything that has to agree with `centerOn`: that
+   * command aims at `safeRect`, so its centre is the middle of what you can
+   * see, while the full rect's centre is the middle of what the docks are
+   * partly covering. The two differ by `(rightInset - leftInset) / 2 / scale`,
+   * which is a constant offset rather than a rounding error — with the frames
+   * panel open it is ~140px of world at scale 1, and 1400 at 10%.
+   *
+   * The minimap is the caller that cares: it draws an indicator and then hands
+   * the point you pressed to `centerOn`, so drawing from anything other than
+   * what `centerOn` targets puts the box somewhere other than where you aimed.
+   * Derived here rather than by passing `safeRect` to `visibleWorldRect`,
+   * because that helper assumes the rect it is given starts at the canvas's own
+   * origin — it would take the safe area's *size* and the full rect's position.
+   */
+  get visibleSafeRect(): Rect {
+    const r = this.rect;
+    const safe = this.safeRect;
+    const { scale, x, y } = this.vp;
+    return {
+      height: safe.height / scale,
+      left: (safe.left - r.left - x) / scale,
+      top: (safe.top - r.top - y) / scale,
+      width: safe.width / scale,
+    };
+  }
+
   /** Is a pan gesture in flight? The picker suppresses hover while one is. */
   get isPanning(): boolean {
     return this.panning !== null;
@@ -310,6 +341,45 @@ export class CanvasViewport {
   }
 
   /**
+   * Fit an arbitrary world-space box — the public form of `fitInSafe`.
+   *
+   * `zoomToFit` and `zoomToSelection` both answer a question the viewport can
+   * work out for itself, from its own deps. This one is for a caller that
+   * already knows the box and wants the camera moved onto it: the frame list
+   * flying to a row, the minimap on a double-click. Kept as a command rather
+   * than exposing `fitInSafe` directly so the safe-area arithmetic stays the
+   * one thing it is, and every caller lands on `set`.
+   */
+  fitToRect(bounds: Rect, padding?: number, maxScale?: number): void {
+    if (bounds.width <= 0 || bounds.height <= 0) {
+      return;
+    }
+    this.set(this.fitInSafe(bounds, padding, maxScale));
+  }
+
+  /**
+   * Put a world point at the centre of the visible canvas, at the current zoom.
+   *
+   * The other half of "take me there", and deliberately not a fit: dragging the
+   * minimap has to move the camera *without* changing how close you are
+   * standing, or every pan would also be a zoom. Same reason a click in the
+   * frame list centres rather than fits — you keep the working scale you chose
+   * and only the position changes.
+   */
+  centerOn(point: Point): void {
+    const safe = this.safeRect;
+    this.set(
+      this.inSafe(
+        centerAt(
+          point,
+          { height: safe.height, width: safe.width },
+          this.vp.scale
+        )
+      )
+    );
+  }
+
+  /**
    * Fit a world-space box into the *uncovered* part of the canvas.
    *
    * `fitTo` only knows a size, so it centres within a box whose origin is the
@@ -321,9 +391,21 @@ export class CanvasViewport {
     padding?: number,
     maxScale?: number
   ): Viewport {
+    return this.inSafe(fitTo(bounds, this.safeRect, padding, maxScale));
+  }
+
+  /**
+   * Move a viewport computed against the safe area's *size* onto the safe
+   * area's *position*.
+   *
+   * Both `fitTo` and `centerAt` centre within a box whose origin is `(0, 0)`,
+   * which is the canvas's own top-left — so without this every aim lands in the
+   * middle of the window rather than the middle of what is not covered by a
+   * dock. Shared by the two so a future third command cannot forget the shift.
+   */
+  private inSafe(vp: Viewport): Viewport {
     const r = this.rect;
     const safe = this.safeRect;
-    const vp = fitTo(bounds, safe, padding, maxScale);
     return {
       ...vp,
       x: vp.x + (safe.left - r.left),
