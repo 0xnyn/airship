@@ -55,7 +55,8 @@ export function shadowRow(
   shadow: Shadow,
   onEdit: (next: Shadow) => void,
   gestures?: Gestures,
-  onDispose?: (fn: () => void) => void
+  onDispose?: (fn: () => void) => void,
+  node?: Element | null
 ): HTMLElement {
   let kind: EffectKind = shadow.inset ? "inner-shadow" : "drop-shadow";
 
@@ -208,6 +209,7 @@ export function shadowRow(
     ]),
     createColorRow({
       gestures,
+      node,
       onChange: (color) => onEdit({ ...shadow, color }),
       tip: "Shadow colour",
       value: shadow.color,
@@ -228,7 +230,8 @@ export function shadowRow(
 export function createShadowList(
   css: string,
   onChange: OnChange,
-  gestures?: Gestures
+  gestures?: Gestures,
+  node?: Element | null
 ): RowListHandle<Shadow> {
   return createRowList<Shadow>(
     {
@@ -239,7 +242,7 @@ export function createShadowList(
       enabled: (r) => r.enabled,
       parse: parseShadowList,
       render: (row, onEdit, onDispose) =>
-        shadowRow(row, onEdit, gestures, onDispose),
+        shadowRow(row, onEdit, gestures, onDispose, node),
       serialize: formatShadowList,
       setEnabled: (r, on) => ({ ...r, enabled: on }),
     },
@@ -262,7 +265,8 @@ export function createShadowList(
 export function fillLayerRow(
   row: Fill,
   onEdit: (next: Fill) => void,
-  gestures?: Gestures
+  gestures?: Gestures,
+  node?: Element | null
 ): HTMLElement {
   const input = el("input", {
     "aria-label": "Fill layer",
@@ -286,6 +290,7 @@ export function fillLayerRow(
     }
     openGradientEditor(glyph, {
       gestures,
+      node,
       onChange: (css) => {
         // Keep the text field in step: it is the same value, and leaving it
         // stale would make the two disagree about what the fill is.
@@ -324,11 +329,11 @@ export function fillLayerRow(
     }
     glyph = next;
     if (image) {
-      wrap.dataset.tip = "Image fill — CSS url()";
+      wrap.dataset.tip = "Image fill, from a CSS url()";
     } else {
       wrap.dataset.tip = editable
-        ? "Gradient fill — click the swatch to edit, or type CSS"
-        : "Gradient fill — CSS";
+        ? "Gradient fill. Click the swatch to edit"
+        : "Gradient fill, shown as authored";
     }
   };
   setKind(row.kind);

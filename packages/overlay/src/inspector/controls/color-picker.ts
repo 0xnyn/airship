@@ -18,14 +18,17 @@ import {
   alphaOf,
   formatColor,
   hsvToRgb,
+  isHexColor,
   isParseableColor,
   opaque,
   parseColor,
   type RGBA,
   rgbToHsl,
   rgbToHsv,
+  withAlpha,
 } from "../css-value";
 import type { Descriptor } from "../descriptors";
+import { MIXED } from "../mixed";
 import {
   onRecentColorsChange,
   pushRecentColor,
@@ -34,11 +37,8 @@ import {
 import { bindField, createNumField, createTextField } from "./num-field";
 import type { ControlHandle, Gestures, OnChange } from "./types";
 
-/** Multi-select disagreement. Mirrors `panel.ts`'s own sentinel. */
-const MIXED = "Mixed";
 /** The hex field shows and accepts bare digits; the `#` is chrome. */
 const LEADING_HASH = /^#/;
-const SHORT_OR_LONG_HEX = /^[0-9a-f]{3}$|^[0-9a-f]{6}$/i;
 
 type Mode = "hex" | "rgb" | "hsl";
 
@@ -63,6 +63,17 @@ interface HSVA {
 export interface ColorRowOptions {
   /** Brackets a slider drag into one undo step. See `Gestures`. */
   gestures?: Gestures;
+  /**
+   * The element the colour belongs to, naming the realm it resolves against.
+   *
+   * A `var()` or a named colour is read by `parseColor`'s engine probe, and a
+   * probe in the wrong document answers about the wrong `--brand`: a canvas
+   * frame's colour resolved against the overlay shell, where the custom property
+   * is undefined, so the swatch painted the shell's inherited colour and the
+   * next edit wrote that back into the frame. Optional because a row can edit a
+   * colour that belongs to no element yet — a gradient stop being composed.
+   */
+  node?: Element | null;
   onChange: (next: string) => void;
   tip?: string;
   value: string;
@@ -132,7 +143,7 @@ export function createColorRow(opts: ColorRowOptions): ColorRowHandle {
   alpha.element.classList.add(cls("paint-pct"));
 
   function paintSwatch(css: string): void {
-    const mixed = !isParseableColor(css);
+    const mixed = !isParseableColor(css, opts.node);
     swatch.toggleAttribute("data-mixed", mixed);
     // Two background layers: the colour over a checkerboard, so alpha is
     // legible without a wrapper element. A 40% fill used to read as an
@@ -155,9 +166,11 @@ export function createColorRow(opts: ColorRowOptions): ColorRowHandle {
     if (boundToken !== null) {
       return;
     }
-    if (isParseableColor(css)) {
-      hex.value = opaque(css).replace(LEADING_HASH, "").toUpperCase();
-      alpha.setValue(String(Math.round(alphaOf(css) * 100)));
+    if (isParseableColor(css, opts.node)) {
+      hex.value = opaque(css, opts.node)
+        .replace(LEADING_HASH, "")
+        .toUpperCase();
+      alpha.setValue(String(Math.round(alphaOf(css, opts.node) * 100)));
     } else {
       hex.value = "";
       hex.placeholder = MIXED;
@@ -170,30 +183,82 @@ export function createColorRow(opts: ColorRowOptions): ColorRowHandle {
     opts.onChange(css);
   }
 
+  /*
+   * The typed value is committed as hex when the alpha allows it.
+   *
+   * This used to be a hardcoded `formatColor(…, "rgb")`, which made the row the
+   * one control that performed the exact conversion the picker was fixed to stop
+   * doing — see `emit`, which honours the mode button because "editing any
+   * Tailwind 4 palette colour silently rewrote it as `rgb()` — a gamut and
+   * readability downgrade". Someone typing six hex digits has said which
+   * notation they want; writing back `rgb(…)` overrules them for no reason.
+   *
+   * `rgb()` is still the form when a partial alpha has to be carried, because
+   * hex cannot express it without appending two digits the user did not type
+   * into their source.
+   *
+   * Where that alpha comes from depends on what was typed. Four and eight digits
+   * carry one; three and six do not, and for those the alpha stays where the
+   * user last put it, in the `%` field beside this one. Reading `alphaOf(current)`
+   * unconditionally — which is what this did — meant an eight-digit hex was
+   * accepted and its alpha silently dropped, the same defect the popover's hex
+   * field had.
+   */
   function commitHex(): void {
     const raw = hex.value.trim().replace(LEADING_HASH, "");
-    if (SHORT_OR_LONG_HEX.test(raw)) {
+    if (isHexColor(`#${raw}`)) {
       const rgb = parseColor(`#${raw}`);
       if (rgb) {
+        const carriesAlpha = raw.length === 4 || raw.length === 8;
+        const a = carriesAlpha ? rgb[3] : alphaOf(current, opts.node);
         const next = formatColor(
-          [rgb[0], rgb[1], rgb[2], alphaOf(current)],
-          "rgb"
+          [rgb[0], rgb[1], rgb[2], a],
+          a >= 1 ? "hex" : "rgb"
         );
         emit(next);
-        pushRecentColor(next);
+        /*
+         * The recents row gets the `rgb()` form even when the source gets hex.
+         *
+         * `pushRecentColor` dedupes on the raw string, and every other caller
+         * pushes `formatColor(…, "rgb")` — so pushing `next` here would give the
+         * same colour two swatches depending on whether it was typed into this
+         * field or picked in the popover. What notation reaches the user's
+         * source and what keys an in-memory palette are separate questions.
+         */
+        pushRecentColor(formatColor([rgb[0], rgb[1], rgb[2], a], "rgb"));
         return;
       }
     }
     reflect(current);
   }
 
+  /*
+   * The `%` field, through the one function that folds an alpha into a paint.
+   *
+   * This was `withAlpha`'s body written out again — parse, replace the fourth
+   * channel, re-serialise — which made it the second definition of a rule that
+   * already had a name and a docstring explaining why it exists (`opacity`
+   * composites the element *and its children*, so a fill at 50% would fade the
+   * text inside it; the alpha of that one paint is the exact equivalent).
+   *
+   * The `next === current` test is doing two jobs, deliberately. `withAlpha`
+   * returns its input unchanged when the colour is unparseable, so a `Mixed` row
+   * lands here — and so does an alpha that did not actually change. Both want
+   * the same thing: put the field back to what the row is showing and record
+   * nothing. Splitting them would need a second parse to tell them apart, for a
+   * distinction with no different outcome.
+   */
   function commitPct(n: number): void {
-    const rgb = parseColor(current);
-    if (Number.isNaN(n) || !rgb) {
+    if (Number.isNaN(n)) {
       reflect(current);
       return;
     }
-    emit(formatColor([rgb[0], rgb[1], rgb[2], n / 100], "rgb"));
+    const next = withAlpha(current, n / 100, opts.node);
+    if (next === current) {
+      reflect(current);
+      return;
+    }
+    emit(next);
   }
 
   bindField(hex, commitHex, () => reflect(current));
@@ -224,13 +289,14 @@ export function createColorRow(opts: ColorRowOptions): ColorRowHandle {
     picker = openColorPicker({
       anchor: swatch,
       gestures: opts.gestures,
+      node: opts.node,
       onChange: emit,
       onClose: () => {
         picker = null;
       },
       // A `Mixed` selection is "several values, one of which you are about to
       // impose", not a read-only state — so the picker opens, seeded white.
-      value: isParseableColor(current) ? current : "#FFFFFF",
+      value: isParseableColor(current, opts.node) ? current : "#FFFFFF",
     });
   });
 
@@ -302,10 +368,12 @@ export function createColorControl(
   descriptor: Descriptor,
   initial: string,
   onChange: OnChange,
-  gestures?: Gestures
+  gestures?: Gestures,
+  node?: Element | null
 ): ControlHandle {
   const row = createColorRow({
     gestures,
+    node,
     onChange: (next) => onChange(descriptor.cssProperty, next),
     tip: descriptor.label,
     value: initial || descriptor.defaultValue,
@@ -329,6 +397,8 @@ export function createColorControl(
 export interface PickerOptions {
   anchor: HTMLElement;
   gestures?: Gestures;
+  /** The realm the seed colour resolves against. See `ColorRowOptions.node`. */
+  node?: Element | null;
   onChange: (next: string) => void;
   onClose?: () => void;
   value: string;
@@ -348,7 +418,7 @@ export interface PickerHandle {
  * the hue you were working in. Holding H separately is the only fix.
  */
 export function openColorPicker(opts: PickerOptions): PickerHandle {
-  const start = parseColor(opts.value) ?? [255, 255, 255, 1];
+  const start = parseColor(opts.value, opts.node) ?? [255, 255, 255, 1];
   const [h0, s0, v0] = rgbToHsv(start[0], start[1], start[2]);
   const state: HSVA = { a: start[3], h: h0, s: s0, v: v0 };
   let mode: Mode = "hex";
@@ -545,7 +615,7 @@ export function openColorPicker(opts: PickerOptions): PickerHandle {
   return {
     close: () => handle.close(),
     setValue(css) {
-      const rgb = parseColor(css);
+      const rgb = parseColor(css, opts.node);
       if (!rgb) {
         return;
       }
@@ -625,6 +695,14 @@ export function openColorPicker(opts: PickerOptions): PickerHandle {
           state.h = s === 0 ? state.h : h;
           state.s = s;
           state.v = v;
+          /*
+           * The alpha too. `parseColor` reads `#rrggbbaa` and this was the one
+           * of the three places holding an `RGBA` that dropped the fourth
+           * channel on the floor — `setValue` and the recents row both assign it
+           * — so typing `FF000080` produced fully opaque red and the alpha
+           * slider did not move.
+           */
+          state.a = rgb[3];
           emit();
           pushRecentColor(formatColor(rgba(), "rgb"));
           return true;
@@ -700,7 +778,7 @@ export function openColorPicker(opts: PickerOptions): PickerHandle {
         class: cls("pop-recent"),
         "data-tip": color,
         onClick: () => {
-          const rgb = parseColor(color);
+          const rgb = parseColor(color, opts.node);
           if (!rgb) {
             return;
           }

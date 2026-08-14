@@ -118,7 +118,7 @@ export function renderFill(ctx: SectionContext, node: Element): HTMLElement {
   // the DOM refused it. Binding a colour token whose `var()` did not resolve
   // blanked the computed value, and this row — the one carrying the badge that
   // had just been used — deleted itself.
-  const filled = hasFill(ctx.gate(node));
+  const filled = hasFill(ctx.gate(node), node);
 
   // Held so "remove" can take just this row out, and the `+` can put one
   // back, without either rebuilding the panel.
@@ -143,7 +143,7 @@ export function renderFill(ctx: SectionContext, node: Element): HTMLElement {
       parse: parseFillLayers,
       render: (row, onEdit, _onDispose, index) =>
         el("div", { class: cls("fill-layer") }, [
-          fillLayerRow(row, onEdit, ctx.gestures),
+          fillLayerRow(row, onEdit, ctx.gestures, node),
           // Per-layer geometry, for the layers that have any. A solid colour is
           // painted by `background-color` and has no size, position or repeat.
           ...(row.kind === "solid" ? [] : [layerGeometry(ctx, node, index)]),

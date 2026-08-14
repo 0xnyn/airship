@@ -235,7 +235,7 @@ function filterRow(
       class: cls("filter-raw"),
       text: row.value,
     });
-    text.dataset.tip = "Airship does not model this filter — shown as authored";
+    text.dataset.tip = "Shown as authored, not editable";
     return text;
   }
 
@@ -279,7 +279,7 @@ function dropShadowRow(
   // Unlike `box-shadow`, this one follows the element's alpha channel — it
   // shadows the *shape*, not the box. Worth saying, because it is the reason
   // to reach for it over the Effects section.
-  wrap.dataset.tip = "Follows the element's alpha channel, unlike a box shadow";
+  wrap.dataset.tip = "Follows the shape, not the box";
 
   /*
    * A header line, which this row is the only filter to have lost.
@@ -329,13 +329,14 @@ function dropShadowRow(
    */
   const color = createColorRow({
     gestures,
+    node,
     onChange: (next) => {
       shadow.color = next;
       commit();
     },
     tip: shadow.color
-      ? "Shadow color"
-      : "Shadow color — currently the element's own `color`",
+      ? "Shadow colour"
+      : "Shadow colour, taken from the element",
     value: shadow.color || readValue(node, "color"),
   });
   onDispose(color.destroy);

@@ -118,3 +118,78 @@ describe("hasTokensFor", () => {
     expect(hasTokensFor("cursor")).toBe(false);
   });
 });
+
+/*
+ * Colour tokens, against the value a control actually holds.
+ *
+ * The suite above only ever compared a hex token to a hex value, which is the
+ * one colour case that always worked — and it hid the fact that the feature did
+ * not. `readValue` returns *computed* style, so a control's value is
+ * `rgb(0, 170, 255)` while the registry is keyed on the authored `#0af`. Those
+ * hashed to different keys and `sameValue` compared them as strings, so no
+ * hex-authored colour token ever bound to a control. The badge never appeared.
+ *
+ * Two layers fix it, and both are exercised here: `normalizeTokenValue` collapses
+ * hex in `@airship/protocol` (pure string math, so it works on the server scan
+ * too), and `sameColor` catches everything needing an engine.
+ */
+describe("colour tokens against a computed value", () => {
+  beforeEach(() => {
+    load([token("--brand", "#0af", "colors")]);
+  });
+
+  it("matches the computed rgb() a control really holds", () => {
+    // The regression. Every spelling a browser or a stylesheet can produce.
+    for (const value of [
+      "rgb(0, 170, 255)",
+      "rgb(0 170 255)",
+      "#0af",
+      "#00AAFF",
+    ]) {
+      expect(findToken("background-color", value)?.name, value).toBe("--brand");
+    }
+  });
+
+  it("reports the match as exact, not as a near miss", () => {
+    // `exact` is what lets the prompt phrase it as a fact rather than a
+    // suggestion, and a spelling difference is not an approximation.
+    expect(findToken("color", "rgb(0, 170, 255)")?.exact).toBe(true);
+  });
+
+  it("matches a token an engine has to resolve", () => {
+    /*
+     * The half that has to live in the overlay. `oklch()` — Tailwind 4's entire
+     * default palette — and named colours are both past what
+     * `normalizeTokenValue` can do without a DOM, so only `sameColor` can settle
+     * them, and this asserts `sameValue` actually consults it.
+     *
+     * A *named* colour rather than `oklch()`, because happy-dom's CSSOM rejects
+     * `oklch()` at the setter, so the probe returns before it reads anything and
+     * the case cannot be expressed here at all. `red` takes the identical path —
+     * fast paths decline, `viaEngine` asks the engine — and is the same
+     * assertion about our side of the boundary. `oklch()` is covered for real in
+     * the Storybook browser tier.
+     *
+     * The engine is stubbed because no test environment normalises colours.
+     */
+    load([token("--brand", "red", "colors")]);
+    const real = globalThis.getComputedStyle;
+    globalThis.getComputedStyle = (() =>
+      ({ color: "rgb(255, 0, 0)" }) as CSSStyleDeclaration) as typeof real;
+    try {
+      expect(findToken("background-color", "rgb(255, 0, 0)")?.name).toBe(
+        "--brand"
+      );
+    } finally {
+      globalThis.getComputedStyle = real;
+    }
+  });
+
+  it("still refuses a colour that is merely close", () => {
+    // The tolerance that applies to lengths must never reach colours.
+    expect(findToken("background-color", "rgb(0, 170, 254)")).toBeUndefined();
+    expect(findToken("background-color", "rgba(0, 170, 255, 0.5)")).toBe(
+      undefined
+    );
+  });
+});

@@ -17,7 +17,7 @@
  * rounds every stop to a whole percent, and mishandles `turn`, `rad` and
  * negative angles — all of which are silent data loss on save.
  */
-import { splitTop, splitWords } from "./css-value";
+import { formatColor, parseColor, splitTop, splitWords } from "./css-value";
 
 export type GradientKind = "linear" | "radial" | "conic";
 
@@ -278,8 +278,18 @@ export function sortedStops(gradient: Gradient): GradientStop[] {
     .map((entry) => entry.stop);
 }
 
-/** Linear RGB interpolation, for the colour of a stop added by clicking. */
-export function interpolate(gradient: Gradient, fraction: number): string {
+/**
+ * Linear RGB interpolation, for the colour of a stop added by clicking.
+ *
+ * `node` names the realm the stop colours resolve against — a stop can be
+ * `var(--brand)`, and a probe run in the wrong document answers about the wrong
+ * custom property. See `parseColor`.
+ */
+export function interpolate(
+  gradient: Gradient,
+  fraction: number,
+  node?: Element | null
+): string {
   const { stops } = gradient;
   let [before] = stops;
   let after = stops.at(-1) as GradientStop;
@@ -298,40 +308,38 @@ export function interpolate(gradient: Gradient, fraction: number): string {
   });
   const span = afterAt - beforeAt;
   const t = span > 0 ? (fraction - beforeAt) / span : 0;
-  return mix(before.color, after.color, t);
+  return mix(before.color, after.color, t, node);
 }
 
-const HEX = /^#([\da-f]{3}|[\da-f]{6})$/i;
-
-/** Mix two colours, when both are hex. Otherwise the nearer one wins. */
-function mix(a: string, b: string, t: number): string {
-  const ca = hexToRgb(a);
-  const cb = hexToRgb(b);
+/**
+ * Mix two colours. The nearer one wins only when a stop is genuinely unreadable.
+ *
+ * This used to carry its own `HEX` regex and `hexToRgb`, accepting three- and
+ * six-digit hex and nothing else — a second, weaker colour parser living one
+ * directory away from the real one. Everything it could not read fell into the
+ * "nearer one wins" branch, and that branch is silent: clicking the gradient bar
+ * inserted a stop that was an exact copy of one end instead of the blend at the
+ * point clicked, with no indication anything had been approximated.
+ *
+ * What it could not read turned out to be most things. `oklch()` is Tailwind 4's
+ * entire default palette, so no Tailwind project's gradients interpolated at
+ * all; `rgb()`, `hsl()` and named colours were equally invisible. And because
+ * the old serialiser emitted six-digit hex, mixing two `#rrggbbaa` stops threw
+ * away both alphas.
+ *
+ * `parseColor` reads all of those, so the fallback now means what it says: a
+ * `var()` that does not resolve, or a `currentColor` with no element to resolve
+ * against. Alpha is the fourth channel and interpolates with the rest;
+ * `formatColor` rounds and clamps, so the fractional results go straight to it.
+ */
+function mix(a: string, b: string, t: number, node?: Element | null): string {
+  const ca = parseColor(a, node);
+  const cb = parseColor(b, node);
   if (!(ca && cb)) {
     return t < 0.5 ? a : b;
   }
-  const channel = (i: number): number =>
-    Math.round(ca[i] + (cb[i] - ca[i]) * t);
-  return `#${[0, 1, 2].map((i) => channel(i).toString(16).padStart(2, "0")).join("")}`;
-}
-
-function hexToRgb(color: string): [number, number, number] | null {
-  const match = HEX.exec(color.trim());
-  if (!match) {
-    return null;
-  }
-  const hex =
-    match[1].length === 3
-      ? match[1]
-          .split("")
-          .map((c) => c + c)
-          .join("")
-      : match[1];
-  return [
-    Number.parseInt(hex.slice(0, 2), 16),
-    Number.parseInt(hex.slice(2, 4), 16),
-    Number.parseInt(hex.slice(4, 6), 16),
-  ];
+  const channel = (i: number): number => ca[i] + (cb[i] - ca[i]) * t;
+  return formatColor([channel(0), channel(1), channel(2), channel(3)], "rgb");
 }
 
 /** A left-to-right preview of the stops, for the editor's bar. */

@@ -114,7 +114,7 @@ describe("the token picker", () => {
     // which is exactly the case that must not disappear.
     const marked = all.every((r) => r.node.dataset.outOfScope !== undefined);
     expect(marked).toBe(true);
-    expect(all[0].node.dataset.tip).toContain("Not defined on this element");
+    expect(all[0].node.dataset.tip).toContain("Not defined here");
   });
 
   it("still applies an out-of-scope token", () => {
