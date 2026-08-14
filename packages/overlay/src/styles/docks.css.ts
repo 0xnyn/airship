@@ -30,6 +30,14 @@ export const css = `
    \`.hidden\`'s \`display: none !important\` still outranks it when the mode hides
    the host. */
 .${PREFIX}-bar-frame-tools { display: contents; }
+/* Same bargain for the Apply/Discard pair: the outer host is mode-hidden by
+   syncBar, the inner group is pending-hidden by syncApplyGroup — one element
+   per owner, so neither clobbers the \`hidden\` the other wrote. */
+.${PREFIX}-bar-apply-host,
+.${PREFIX}-bar-apply-group { display: contents; }
+/* And once more for the job chip: the host is mode-hidden by \`syncBar\`, the
+   chip inside is state-hidden by \`syncJobChip\`. */
+.${PREFIX}-bar-job-host { display: contents; }
 /* Inline has no stage controls, and a separator with nothing after it is just a
    stub of hairline hanging off the mode toggle. Scoped to \`bar-sep-tools\` — the
    one that divides the mode toggle from the stage slot — rather than to every
@@ -37,6 +45,22 @@ export const css = `
    tool, inspect and mode groups into one undivided row inline. */
 .${PREFIX}-bar-bare .${PREFIX}-bar-sep-tools,
 .${PREFIX}-bar-bare .${PREFIX}-bar-tools { display: none; }
+
+/* "Working" — view mode's one word about a running job.
+
+   Borrows \`.dot\` and its pulse from the transcript rather than restating them,
+   so the thing in the bar and the status inside the assistant bubble are
+   visibly one state rather than two things that happen to agree. Sized against
+   \`.tool\` so it sits in the row without changing the bar's height. */
+.${PREFIX}-bar-job {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 26px; padding: 0 9px; margin-left: 2px;
+  border: none; border-radius: var(--ap-radius-xs);
+  background: var(--ap-surface-active); color: var(--ap-text-secondary);
+  font-size: var(--ap-font-size-label); cursor: pointer;
+  transition: background var(--ap-motion-dur-micro) var(--ap-motion-ease);
+}
+.${PREFIX}-bar-job:hover { background: var(--ap-surface-selected); color: var(--ap-text-primary); }
 
 /* Edit/View mode segmented toggle — compact, restrained, border over shadow. */
 .${PREFIX}-seg-group {
@@ -72,6 +96,25 @@ export const css = `
    localStorage; the literals here are the same defaults, for the first paint. */
 .${PREFIX}-dock-left { left: var(--ap-space-md); width: var(--${PREFIX}-left-w, 340px); }
 .${PREFIX}-dock-right { right: var(--ap-space-md); width: var(--${PREFIX}-right-w, 360px); }
+
+/* A swappable dock body — the chat and the frame list share the left dock, one
+   per mode (see \`AirshipApp.syncDocks\`).
+
+   \`display: contents\` and not a box of its own, which is load-bearing twice
+   over. The dock is a flex column whose transcript takes the remaining height;
+   a real wrapper would take that height instead and leave the composer
+   floating in the middle. And the past-chats drawer is \`inset: 0\` against the
+   dock, so a wrapper with a box would become its containing block and shrink it
+   to whatever the chat happened to measure. \`.hidden\`'s
+   \`display: none !important\` still outranks this, which is the whole point —
+   same bargain \`.bar-frame-tools\` makes in the bar. */
+.${PREFIX}-dock-body { display: contents; }
+
+/* The minimap's slot. Nothing but a mode gate: the card inside is
+   \`position: fixed\` and places itself, so this element has no geometry to
+   contribute and only exists so the app can hide the stage's content without
+   writing to a class the stage also writes to. */
+.${PREFIX}-minimap-host { display: contents; }
 
 /* Torn off its edge and floating.
    Position and height come from three more custom properties written by
@@ -203,18 +246,4 @@ ${ROOT} .${PREFIX}-tool-on .${PREFIX}-ic { --${PREFIX}-ic-tone: var(--ap-text-pr
    twin, and the mark is symmetric about its vertical axis, so the flip is exact
    rather than approximate — cheaper and more honest than hand-authoring a
    near-copy into \`icons.ts\`'s \`LEGACY\` block. */
-.${PREFIX}-bar-redo .${PREFIX}-ic { transform: scaleX(-1); }
-
-/* Tooltip. Sits above everything, carries its own shortcut hint. */
-.${PREFIX}-tip {
-  position: absolute; z-index: ${Z}; pointer-events: none;
-  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
-  max-width: 280px; padding: 4px 8px;
-  background: var(--ap-surface-selected); color: var(--ap-text-primary);
-  border: 1px solid var(--ap-border-default); border-radius: var(--ap-radius-xs);
-  box-shadow: var(--ap-elevation-floating);
-  font-family: var(--ap-font-sans); font-size: var(--ap-font-size-body); line-height: 1.5;
-}
-.${PREFIX}-tip-key {
-  font-family: var(--ap-font-mono); color: var(--ap-text-tertiary);
-}`;
+.${PREFIX}-bar-redo .${PREFIX}-ic { transform: scaleX(-1); }`;

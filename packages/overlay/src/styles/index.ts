@@ -9,7 +9,9 @@ import { css as controls } from "./controls.css";
 import { css as cssPane } from "./css-pane.css";
 import { css as docks } from "./docks.css";
 import { css as empty } from "./empty.css";
+import { css as framesPanel } from "./frames-panel.css";
 import { css as inspector } from "./inspector.css";
+import { css as minimap } from "./minimap.css";
 import { css as motion } from "./motion.css";
 import { css as pop } from "./pop.css";
 import { css as portable } from "./portable.css";
@@ -93,8 +95,15 @@ const CSS = [
   base,
   portable,
   canvas,
+  // Canvas furniture, so it sits with the substrate it reports on rather than
+  // with the docks it borrows its surface recipe from.
+  minimap,
   docks,
   chat,
+  // The left dock's other body. Beside `chat` because it is the same kind of
+  // thing — the contents of a panel, not the panel — and the two are never on
+  // screen together, so the order between them is documentation, not cascade.
+  framesPanel,
   inspector,
   cssPane,
   // Empty states are surface-agnostic — the same block renders in the chat
