@@ -114,6 +114,30 @@ On the canvas:
 | ⌘/ctrl-wheel, pinch | zoom at cursor |
 | space-drag, middle-drag | pan |
 | ⇧1 / ⇧2 / ⇧0 | fit / zoom to selection / 100% |
+| `H` | hand tool (view mode) |
+| `F` | add a frame |
+
+## Edit and View
+
+The two modes point the editor at different things, and the panels follow.
+
+**Edit** is about an element: hover to highlight, click to select, and the agent panel and
+inspector are open on either side of it.
+
+**View** is about your frames. The page underneath is fully interactive — click through it,
+fill in forms, scroll — so there is no element selection, and the two panels that depend on
+one step aside. In their place the left panel lists every frame, and a minimap appears in
+the bottom-right corner:
+
+- Click a frame in the list to go to it without changing your zoom; double-click to zoom
+  to it. Rename it in place, and use `⋯` for its device size, rotate, duplicate and delete.
+- The list is stacking order, front-most at the top. Drag a row anywhere along it — or
+  press ↑↓ on its handle — to restack frames that overlap on the canvas; up is forward.
+- Drag the minimap's indicator and the canvas travels with it; press anywhere else on the
+  map to jump there. Pan far off your frames and it keeps pointing back at them.
+
+Your panel arrangement is remembered per mode, so switching back returns the inspector
+exactly as you left it.
 
 ## Inspector
 
@@ -148,6 +172,12 @@ you what you're giving up at startup.
 Undo is Airship's, not the agent's. It keeps the previous version of every file it touches, so
 undo works on all three. One catch: `codex` and `opencode` get that previous version from Git,
 so **undo needs your project to be a Git repo on those two**. Airship warns you at startup.
+
+One more `opencode` quirk: the one-line summary and the follow-up suggestion chips come from a
+JSON block the model is asked to append to its reply. A model that ignores the instruction
+loses the chips and gets a plainer commit message — never the edit itself. Models with thinking
+enabled reject opencode's own structured-output request outright; Airship detects that, retries
+the turn without it, and remembers not to ask that model again.
 
 ### Authentication
 
@@ -373,6 +403,28 @@ first one that answers:
 
 With `--exec` it's the opposite: the port has to be *free*, since Airship is about to start your
 dev server on it. It won't start one on a port that's already taken.
+
+## Troubleshooting
+
+**Every `opencode` turn fails with "Thinking mode does not support this tool_choice".**
+The provider is rejecting the structured-output request opencode sends — it is implemented as a
+forced tool call, which models with thinking/reasoning enabled refuse (opencode issue #15226,
+closed upstream). Airship retries the turn without that request and remembers the model, so you
+should see one warning row and a working edit. If it persists, pick a model without thinking
+enabled, or disable thinking for your provider via `--opencode-config`.
+
+**"No `opencode` binary found on PATH."**
+The `opencode` CLI is a separate install (`brew install sst/tap/opencode`); Airship finds it on
+PATH rather than bundling it.
+
+**"No provider credentials found."**
+Airship reuses the chosen agent's own login — see [Authentication](#authentication). For
+`opencode` that means a provider key or `opencode auth login`; for `codex`, a `codex login` or
+an API key; for `claude`, a `claude` login or `ANTHROPIC_API_KEY`.
+
+**Undo does nothing, or diffs come back empty, on `codex` or `opencode`.**
+Both reconstruct their diff baseline from Git, so the project must be a Git repository. Airship
+warns about this at startup.
 
 ## Questions
 

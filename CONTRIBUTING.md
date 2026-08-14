@@ -196,11 +196,15 @@ Gaps handled explicitly rather than faked:
   inlined in the prompt as it is for Codex.
 - **`--model` wants `provider/model`.** A bare id cannot be resolved to a provider, so it is
   dropped with a warning rather than silently ignored.
-- **Structured output is a prompt convention, not a constrained decode.** The model emits its
-  JSON inside `<structuredoutput>` tags within ordinary prose, and opencode's own extractor
-  frequently fails to lift it back out. The adapter parses the tag itself and strips it from the
-  streamed transcript on the way past — including when the opening tag arrives split across two
-  deltas.
+- **Structured output is fragile twice over.** On the wire, `format` is a *forced tool call* —
+  opencode registers an internal StructuredOutput tool and sets `toolChoice: "required"`, which
+  providers reject outright on thinking/reasoning models (opencode#15226, closed upstream). The
+  adapter classifies that rejection, retries the turn once without `format`, and remembers the
+  model. In the text, the JSON arrives inside `<structuredoutput>` tags within ordinary prose —
+  a convention the system prompt now carries too, so it survives `format` being dropped — and
+  opencode's own extractor frequently fails to lift it back out. The adapter parses the tag
+  itself and strips it from the streamed transcript on the way past — including when the
+  opening tag arrives split across two deltas.
 
 The wire types are declared in `providers/opencode-wire.ts` rather than imported from the SDK:
 the SDK's generated `Event` union omits `message.part.delta` entirely (237 of 313 events in a
@@ -389,6 +393,23 @@ Conscious engineering choices, not oversights:
 - **Session persistence uses the SDK's own `persistSession`** plus Airship's `~/.airship/history`
   bundles (which record each `sessionId`), so resume survives a daemon restart — without a custom
   `SessionStore`. A `SessionStore` adapter (S3/Redis) is the path for multi-host hosted mode.
+- **The minimap draws rectangles, not thumbnails.** Every frame is a live same-origin
+  `iframe` running a full instance of the user's app. There is no paint capture anywhere in
+  the overlay and no cheap way to add one — `FrameAgent` exposes DOM, not pixels — an
+  `iframe` cannot be duplicated, and cloning one would boot a ninth app against a cap of
+  eight. So `canvas/minimap.ts` positions plain `div`s, the way `chrome-layer.ts` draws
+  every other piece of canvas chrome.
+- **Frame reorder publishes `z-index`; it never moves DOM nodes.** Moving an `iframe` in the
+  document tears down and rebuilds its browsing context, so the obvious implementation of
+  drag-to-restack would reload the app inside whichever frame you dragged, losing its route
+  and scroll position. `FrameManager.reorder` splices the array and `applyOrder` writes the
+  index as `z-index` instead; `frames.test.ts` asserts that no element moves.
+- **A `feedback: "none"` draggable must be registered `POINTER_ONLY`.** dnd-kit's
+  `KeyboardSensor` needs `dragOperation.shape`, which only the Feedback plugin publishes —
+  so a "none" draggable starts a keyboard drag that no arrow key can move, and swallows the
+  Tab out of it. Nine of the overlay's draggables have no keyboard route for this reason;
+  where one is wanted it is a real command beside the drag, not a keyboard drag (see
+  `FramesPanel.moveBy`, and `num-field.ts`'s `stepBy` beside its scrub).
 - **Deferred for now:** multi-element select, `startup()` pre-warm (a latency optimization that
   requires threading a warm handle through each edit), and the Vite/Next plugin wrappers plus
   hosted mode.
