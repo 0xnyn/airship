@@ -452,6 +452,19 @@ const LINE_STYLES = new Set([
  * The three are order-independent and all optional, so each word is classified
  * rather than positioned: a line-style keyword is the style, something that parses as
  * a length (or a width keyword) is the width, and whatever is left is the colour.
+ *
+ * The `out.width === undefined` guard is what stops `var()` eating the colour.
+ * `LOOKS_LIKE_LENGTH` matches `^var\(` — it has to, because `border-width:
+ * var(--w)` is ordinary — but so is `border: 1px solid var(--border)`, and there
+ * the *colour* is the `var()`. With no guard the last matching word won, so
+ * `var(--border)` overwrote the `1px` and `out.color` was left undefined
+ * entirely: the forced-state preview for such a rule got `border-*-width:
+ * var(--border)` and no colour at all.
+ *
+ * A `var()` in this position is genuinely ambiguous — nothing in the string says
+ * which slot it fills. But a shorthand has at most one width, so first-wins is
+ * strictly better than last-wins: it keeps the unambiguous `1px` where it
+ * belongs and leaves the ambiguous word in the only slot still open.
  */
 function splitBorder(value: string): {
   color?: string;
@@ -463,7 +476,10 @@ function splitBorder(value: string): {
     const lower = word.toLowerCase();
     if (LINE_STYLES.has(lower)) {
       out.style = lower;
-    } else if (WIDTH_KEYWORD.has(lower) || LOOKS_LIKE_LENGTH.test(word)) {
+    } else if (
+      out.width === undefined &&
+      (WIDTH_KEYWORD.has(lower) || LOOKS_LIKE_LENGTH.test(word))
+    ) {
       out.width = word;
     } else {
       out.color = word;

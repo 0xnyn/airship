@@ -104,6 +104,55 @@ describe("expandShorthands", () => {
       "padding-top": "4px",
     });
   });
+
+  /*
+   * `border`'s three parts are order-independent and all optional, so each word
+   * is classified rather than positioned — and a `var()` is the one word that
+   * could be any of them.
+   *
+   * `LOOKS_LIKE_LENGTH` matches `^var\(`, which it has to: `border-width:
+   * var(--w)` is ordinary. But so is `border: 1px solid var(--border)`, and
+   * there the `var()` is the *colour*. With no guard the last matching word won,
+   * so `var(--border)` overwrote the `1px` and the colour was dropped entirely —
+   * a forced-state preview for such a rule got `border-*-width: var(--border)`
+   * and no colour at all.
+   */
+  it("does not let a var() colour overwrite the border width", () => {
+    expect(expand({ border: "1px solid var(--border)" })).toEqual({
+      "border-bottom-color": "var(--border)",
+      "border-bottom-style": "solid",
+      "border-bottom-width": "1px",
+      "border-left-color": "var(--border)",
+      "border-left-style": "solid",
+      "border-left-width": "1px",
+      "border-right-color": "var(--border)",
+      "border-right-style": "solid",
+      "border-right-width": "1px",
+      "border-top-color": "var(--border)",
+      "border-top-style": "solid",
+      "border-top-width": "1px",
+    });
+  });
+
+  it("still reads a lone var() as the width, which is the ambiguous case", () => {
+    // Nothing in the string says which slot it fills, and first-wins puts it in
+    // the one a single `var()` most often means.
+    expect(expand({ "border-top": "var(--w) solid" })).toEqual({
+      "border-top-style": "solid",
+      "border-top-width": "var(--w)",
+    });
+  });
+
+  it("keeps a calc() width beside a var() colour", () => {
+    // `calc(` is in the same regex as `var(` and took the same wrong branch.
+    expect(expand({ "border-top": "calc(1px + 1px) dashed var(--c)" })).toEqual(
+      {
+        "border-top-color": "var(--c)",
+        "border-top-style": "dashed",
+        "border-top-width": "calc(1px + 1px)",
+      }
+    );
+  });
 });
 
 describe("stripStates", () => {

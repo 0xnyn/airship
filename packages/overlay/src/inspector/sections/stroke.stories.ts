@@ -97,3 +97,28 @@ export const Narrow: StoryObj = {
       narrow: true,
     }),
 };
+
+/**
+ * Four edges that disagree — the specimen the catalogue was missing.
+ *
+ * None of the five stories above uses an element whose edges differ, which is
+ * why nothing here caught the section answering for the whole box from
+ * `border-top-*`. This one shows a red top, teal right, blue bottom and amber
+ * left: the colour row must read `Mixed` and the width field must open split.
+ *
+ * Two things to try, both of which used to be wrong. Picking a colour imposes
+ * it on all four edges — that is the point of `Mixed`, "several values, one of
+ * which you are about to impose". And the eye must still hide the stroke after
+ * `+` Add stroke has been pressed: it wrote the `border-style` shorthand while
+ * `hasStroke` reads the longhands through `ctx.gate`, so a pending `solid`
+ * shadowed it forever and the eye did nothing.
+ */
+export const MixedEdges: StoryObj = {
+  render: () =>
+    sectionStory(renderStroke, "mixedBorder", {
+      caption: {
+        try: "pick a colour — it must land on all four edges; then press the eye, `+` Add stroke, and the eye again",
+        what: "Four differing edges. The colour row reads `Mixed` rather than claiming the top edge's red for the box.",
+      },
+    }),
+};

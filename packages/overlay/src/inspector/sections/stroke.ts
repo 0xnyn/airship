@@ -5,8 +5,10 @@ import { createTextField } from "../controls/num-field";
 import { createQuadField } from "../controls/quad-field";
 import { createSegmented } from "../controls/segmented";
 import { createSelect } from "../controls/select";
+import { sameColor } from "../css-value";
 import { STROKE_POSITION, STROKE_SIDES, STROKE_STYLE } from "../descriptors";
 import { hasStroke } from "../gates";
+import { agreed } from "../mixed";
 import { readValue } from "../style-model";
 import type { SectionContext } from "./context";
 
@@ -37,6 +39,16 @@ import type { SectionContext } from "./context";
  * A shorthand also cannot be taken back cleanly — `border-width: 0px` leaves the four
  * longhands in place and merely loses to them — which is why Remove looked like it had
  * worked while the quad field still read `8`.
+ *
+ * The first line was aspirational for a long time. Three writes still used the
+ * shorthand — the eye, the width field's implied `solid`, and the Style select —
+ * and the eye's was a live bug: `hasStroke` reads the longhands through
+ * `ctx.gate`, which does no shorthand expansion, so once *Add stroke* had
+ * written a pending `solid` on them the shorthand `none` could never win, and
+ * the eye did nothing. All three go through `writeAllEdges` now.
+ *
+ * The reads had the mirror-image problem and are fixed the same way: every one
+ * of them asked `border-top-*` and answered for the box. See `edgeValue`.
  */
 const EDGES = ["top", "right", "bottom", "left"] as const;
 
@@ -50,8 +62,41 @@ function writeAllEdges(
   }
 }
 
+/**
+ * What all four edges say, or `MIXED` when they disagree.
+ *
+ * Every read in this section used to be `readValue(node, "border-top-*")` — the
+ * top edge speaking for the box. That is the same mistake the *writes* were
+ * fixed for: `.header { border-bottom: 1px solid #eee }` is the canonical
+ * divider, and this section showed it as an unstroked element with a black
+ * colour. Set three sides to red and the fourth to blue and the row claimed red
+ * for all four, then imposed it on the first edit.
+ *
+ * Colours compare through `sameColor`, not `===`. These four values do not all
+ * come from the same place once an edit is pending: `applyPreview` writes the
+ * picker's `rgb(r g b / a)` into the inline style of the edges just written,
+ * while the rest still read back the engine's legacy `rgb(r, g, b)`. String
+ * equality calls that a disagreement and shows `Mixed` on a box the user just
+ * made uniform. Note `panel.seed` compares with `===`, which is right for the
+ * keywords and lengths it handles and would be wrong here.
+ */
+function edgeValue(
+  node: Element,
+  suffix: "width" | "style" | "color",
+  fallback: string
+): string {
+  return agreed(
+    EDGES.map((edge) => readValue(node, `border-${edge}-${suffix}`)),
+    fallback,
+    suffix === "color" ? (a, b) => sameColor(a, b, node) : undefined
+  );
+}
+
 export function renderStroke(ctx: SectionContext, node: Element): HTMLElement {
   const body = el("div", { class: cls("sect-body") });
+
+  /** The stroke's colour, or `MIXED`. Used as both the seed and the re-seed. */
+  const strokeColor = (): string => edgeValue(node, "color", "#000000");
 
   // Colour writes the four longhands, not the `border-color` shorthand.
   // The widths beside it have always been longhands, so the shorthand was the
@@ -71,7 +116,7 @@ export function renderStroke(ctx: SectionContext, node: Element): HTMLElement {
     rows.replaceChildren(
       el("div", { class: cls("rows-row") }, [
         ctx.colorRow(
-          readValue(node, "border-top-color") || "#000000",
+          strokeColor(),
           "Stroke colour",
           (next) => {
             for (const side of STROKE_SIDES) {
@@ -79,7 +124,22 @@ export function renderStroke(ctx: SectionContext, node: Element): HTMLElement {
             }
           },
           node,
-          STROKE_SIDES.map((side) => `border-${side.name}-color`)
+          STROKE_SIDES.map((side) => `border-${side.name}-color`),
+          /*
+           * The sixth argument, and it is not optional here.
+           *
+           * Without it the re-seed pass pushes the raw per-property value
+           * (`panel.colorRow`'s `setValue`), and this row registers *four*
+           * properties — so it takes four `setValue` calls, one per edge, and
+           * `border-left-color` wins. A `Mixed` row would settle on the left
+           * edge's colour after the first undo, refresh or discard, which is
+           * the panel changing what it claims for no reason the user can see.
+           *
+           * The same expression as the seed, deliberately: `vector.ts` states
+           * the invariant — "the seed and the re-seed `read` have to agree on
+           * this" — and the only way to keep it is to have one function.
+           */
+          strokeColor
         ),
         // The eye keeps the widths and drops the stroke out of what gets
         // painted — the same contract `row-list`'s disabled rows have. It
@@ -92,7 +152,21 @@ export function renderStroke(ctx: SectionContext, node: Element): HTMLElement {
             class: cls("row-icon"),
             "data-tip": "Hide stroke",
             onClick: () => {
-              ctx.onChange("border-style", "none");
+              /*
+               * Longhands, like everything else here — this wrote the
+               * `border-style` shorthand and was a no-op after the first
+               * *Add stroke*.
+               *
+               * `hasStroke` asks `ctx.gate` for each `border-<edge>-style`, and
+               * the gate is `changeSet.snapshot(node, property)?.to ??
+               * readValue(node, property)` — a per-property lookup with no
+               * shorthand expansion. Add writes the four longhands, so once a
+               * pending `solid` exists on them it shadows a pending `none` on
+               * the shorthand forever: the inline preview applied,
+               * `borderTopStyle` computed to `none`, and the section went on
+               * showing a stroke the element was not painting.
+               */
+              writeAllEdges(ctx.onChange, "style", "none");
               paintRows();
               paintAdd();
             },
@@ -136,11 +210,20 @@ export function renderStroke(ctx: SectionContext, node: Element): HTMLElement {
       // A border with no style is invisible however wide it is; setting one
       // implies the other, and leaving that to the user is a trap.
       onWrote: (_property, css) => {
+        /*
+         * All four edges, and longhands out.
+         *
+         * `edgeValue` returns `none` only when every edge agrees on it, so an
+         * element that already paints one edge is left alone — widening it
+         * should not silently draw the other three. The old
+         * `border-top-style === "none"` test asked one edge and then wrote the
+         * shorthand across all four, which is both halves of the same mistake.
+         */
         if (
           Number.parseFloat(css) > 0 &&
-          readValue(node, "border-top-style") === "none"
+          edgeValue(node, "style", "none") === "none"
         ) {
-          ctx.onChange("border-style", "solid");
+          writeAllEdges(ctx.onChange, "style", "solid");
           paintRows();
           paintAdd();
         }
@@ -208,9 +291,7 @@ export function renderStroke(ctx: SectionContext, node: Element): HTMLElement {
   const paintAdd = (): void => {
     const on = hasStroke(ctx.gate(node));
     add.toggleAttribute("disabled", on);
-    add.dataset.tip = on
-      ? "An element has one CSS border. For a second ring, use an outline or a spread-only shadow"
-      : "Add stroke";
+    add.dataset.tip = on ? "CSS gives an element one border" : "Add stroke";
   };
   paintAdd();
 
@@ -270,8 +351,7 @@ function openStrokeSettings(
   );
   if (centre) {
     centre.toggleAttribute("disabled", true);
-    centre.dataset.tip =
-      "CSS borders sit inside or outside the box — there is no centre";
+    centre.dataset.tip = "CSS has no centre border";
   }
   body.append(popRow("Position", position.element));
 
@@ -281,10 +361,26 @@ function openStrokeSettings(
    * only solid and dash — so a segmented group would mix icon cells and text
    * pills, which is exactly the shape `segmented.ts` warns against.
    */
+  /*
+   * Seeded from all four edges and writing all four, like the rest of the
+   * section.
+   *
+   * `STROKE_STYLE.cssProperty` is the `border-style` shorthand, so
+   * `createSelect` emits that — the third and last place this section wrote a
+   * declaration it could not read back. The `OnChange` is wrapped rather than
+   * the descriptor changed or `createSelect` taught a new trick: the select's
+   * job is to pick one of five keywords, and which properties that lands on is
+   * the section's business.
+   *
+   * A `MIXED` seed needs no handling here either. `createSelect` renders
+   * `options.find(o => o.value === current)?.label ?? current`, so it shows the
+   * word and marks nothing active — which is exactly right, and is why
+   * `panel.seed` made the sentinel a plain string.
+   */
   const style = createSelect(
     STROKE_STYLE,
-    readValue(node, "border-top-style") || "none",
-    ctx.onChange
+    edgeValue(node, "style", "none"),
+    (_property, value) => writeAllEdges(ctx.onChange, "style", value)
   );
   body.append(popRow("Style", style.element));
 
@@ -305,7 +401,7 @@ function openStrokeSettings(
     const field = createTextField({ glyph: label[0], label });
     field.input.disabled = true;
     field.input.placeholder = "—";
-    field.element.dataset.tip = `${label} length is chosen by the browser; CSS cannot set it`;
+    field.element.dataset.tip = `The browser picks the ${label.toLowerCase()} length`;
     dashes.append(field.element);
   }
   body.append(popRow("Dashes", dashes));
