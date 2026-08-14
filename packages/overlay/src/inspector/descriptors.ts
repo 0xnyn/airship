@@ -711,9 +711,9 @@ export const MODE_TEXT: Record<ResizeMode, string> = {
 };
 
 export const MODE_NOTE: Record<ResizeMode, string> = {
-  fill: "takes the remaining space",
-  fixed: "a set length",
-  hug: "as small as the content allows",
+  fill: "Takes the remaining space",
+  fixed: "A set length",
+  hug: "As small as the content allows",
 };
 
 /**

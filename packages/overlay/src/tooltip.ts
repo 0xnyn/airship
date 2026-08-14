@@ -128,7 +128,9 @@ export class Tooltips {
     if (!(text && target.isConnected)) {
       return;
     }
-    this.node.replaceChildren(el("span", { text }));
+    // The class is a contract, not decoration: it is what the line clamp in
+    // `pop.css.ts` targets, and a bare span would wrap without ever clamping.
+    this.node.replaceChildren(el("span", { class: cls("tip-text"), text }));
 
     // The shortcut is looked up by the tooltip's own text, so a control and its
     // binding agree by construction: `data-tip="Undo"` finds the binding
@@ -145,6 +147,18 @@ export class Tooltips {
 
   /** Centred on the control, kept inside the panel it belongs to. */
   private place(anchor: DOMRect): void {
+    /*
+     * Measured from a known origin.
+     *
+     * `placePopover` writes a `left` and never clears it, and an absolutely
+     * positioned box with `left` set has only `containing block - left` to lay
+     * out in. The host is `inset: 0`, so a tip last placed near the right edge
+     * measures against the sliver beyond it: the text wraps into a narrow column
+     * and `offsetWidth` reports the column. Under the old `nowrap` this was
+     * invisible — min-content and max-content were the same number, so the box
+     * never shrank — which is why it surfaces now and not before.
+     */
+    this.node.style.left = "0px";
     const w = this.node.offsetWidth;
     const bounds = this.bounds();
     /*
