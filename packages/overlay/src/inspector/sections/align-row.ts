@@ -13,7 +13,7 @@ export function renderAlignRow(
     label: string
   ): HTMLElement => {
     const plan = planAlign(node, action);
-    const tip = plan?.note ? `${label} — ${plan.note}` : label;
+    const tip = plan?.note ? `${label}. ${plan.note}` : label;
     const btn = el("button", {
       "aria-label": label,
       class: cls("align-btn"),
@@ -64,9 +64,28 @@ function applyAlign(
   if (!target) {
     return;
   }
-  for (const { property, value } of plan.decls) {
-    ctx.recordOn(target, property, value);
-  }
+  /*
+   * One click, one undo step.
+   *
+   * `recordOn` journals each declaration on its own, and an unbatched
+   * `history.push` commits immediately — so a plan's declarations became that
+   * many separate entries on the undo stack. Most buttons here write one and
+   * were fine by accident; Tidy up writes `display`, `flex-direction`, `gap`
+   * and `align-items`, so taking it back took four presses, each reverting a
+   * quarter of the layout.
+   *
+   * Deliberately *not* `writeOn`, which is the other way to get a bracket.
+   * `writeOn` also passes `standIn`'s question — whose scope and state does this
+   * belong to — and the answer here is "not the selection's": a flex parent is a
+   * different element being edited on the selection's behalf, not a stand-in for
+   * it. `RecordOpts.standIn` spells that distinction out. A bare bracket is what
+   * this needs and all it needs.
+   */
+  ctx.batch(() => {
+    for (const { property, value } of plan.decls) {
+      ctx.recordOn(target, property, value);
+    }
+  });
   if (plan.target === "parent") {
     ctx.flash(target);
   }

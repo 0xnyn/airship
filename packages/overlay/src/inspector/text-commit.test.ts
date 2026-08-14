@@ -255,6 +255,109 @@ describe("grab-to-move while editing", () => {
   });
 });
 
+describe("Content field", () => {
+  /*
+   * The panel-side text editor. Its one non-negotiable difference from the
+   * in-frame path: it must write the DOM itself. The contenteditable has
+   * already written the page by commit time; this field has not, and a
+   * version that recorded without writing produced an edit the chip claimed
+   * and the page never showed — with redo applying an edit undo never
+   * reverted, because `applyText` writes `textContent` in both directions.
+   */
+  const fieldOf = (panel: DesignPanel): HTMLInputElement | null =>
+    panel.element.querySelector('input[aria-label="Content"]');
+
+  it("commits on blur: records the edit and writes the page", () => {
+    const { nodes, panel, select, structureSet } = harness();
+    select(nodes.a);
+    const field = fieldOf(panel);
+    expect(field).not.toBeNull();
+    if (!field) {
+      return;
+    }
+    field.value = "Retitled";
+    field.dispatchEvent(new Event("blur"));
+    const targets = structureSet.textTargets();
+    expect(targets).toHaveLength(1);
+    expect(targets[0].from).toBe("Alpha");
+    expect(targets[0].to).toBe("Retitled");
+    expect(targets[0].source?.file).toBe("Alpha.tsx");
+    // The DOM write — the half the record layer cannot do for it.
+    expect(nodes.a.textContent).toBe("Retitled");
+  });
+
+  it("commits on Enter, exactly once", () => {
+    const { nodes, panel, select, structureSet } = harness();
+    select(nodes.a);
+    const field = fieldOf(panel);
+    if (!field) {
+      throw new Error("Content field missing");
+    }
+    field.value = "Retitled";
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    // Enter commits through blur; a second blur must not re-commit.
+    field.dispatchEvent(new Event("blur"));
+    expect(structureSet.textTargets()).toHaveLength(1);
+    expect(nodes.a.textContent).toBe("Retitled");
+  });
+
+  it("reverts on Escape and records nothing", () => {
+    const { nodes, panel, select, structureSet } = harness();
+    select(nodes.a);
+    const field = fieldOf(panel);
+    if (!field) {
+      throw new Error("Content field missing");
+    }
+    field.value = "Discarded";
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    field.dispatchEvent(new Event("blur"));
+    expect(structureSet.textTargets()).toHaveLength(0);
+    expect(field.value).toBe("Alpha");
+    expect(nodes.a.textContent).toBe("Alpha");
+  });
+
+  it("records nothing for a blur with the text unchanged", () => {
+    // Blur fires on every tab-through; a chip for that is noise.
+    const { nodes, panel, select, structureSet } = harness();
+    select(nodes.a);
+    fieldOf(panel)?.dispatchEvent(new Event("blur"));
+    expect(structureSet.textTargets()).toHaveLength(0);
+    expect(nodes.a.textContent).toBe("Alpha");
+  });
+
+  it("does not render for a node with element children", () => {
+    // `<p><span>Nested</span></p>` passes `hasText`, but a `textContent`
+    // write would delete the <span> — the field is gated on the same
+    // predicate the in-place editor uses, and offers no disabled stub.
+    const { nodes, panel, select } = harness();
+    nodes.a.innerHTML = "<span>Nested</span>";
+    select(nodes.a);
+    expect(fieldOf(panel)).toBeNull();
+  });
+
+  it("commits a live in-frame edit before writing its own", () => {
+    // Two writers on one node: a panel commit landing while the in-frame
+    // editor holds a caret would blow away the text node under it. The
+    // in-frame edit is committed first, then the field's lands on top.
+    const { nodes, panel, select, structureSet } = harness();
+    select(nodes.a);
+    panel.beginTextEdit(nodes.a);
+    nodes.a.textContent = "Typed in frame";
+    const field = fieldOf(panel);
+    if (!field) {
+      throw new Error("Content field missing");
+    }
+    field.value = "Panel wins";
+    field.dispatchEvent(new Event("blur"));
+    expect(nodes.a.hasAttribute("contenteditable")).toBe(false);
+    expect(nodes.a.textContent).toBe("Panel wins");
+    const [target] = structureSet.textTargets();
+    // One coalesced target per node: Alpha → Panel wins, in-frame step folded.
+    expect(target.from).toBe("Alpha");
+    expect(target.to).toBe("Panel wins");
+  });
+});
+
 describe("pruneTextEdit", () => {
   it("tears down an edit whose node has left the DOM, recording nothing", () => {
     const { nodes, panel, select, structureSet } = harness();

@@ -54,6 +54,16 @@ export type TokenSlotFor = (properties: readonly string[]) => TokenSlot | null;
  * `this.gestures` already used to hand its history brackets to a control.
  */
 export interface SectionContext {
+  /**
+   * One undo step around several `recordOn` calls.
+   *
+   * `onChange` brackets its own multi-node fan internally; a section that fans
+   * one write across nodes the selection does not contain — the SVG paint
+   * rows writing to the shapes inside a root — needs the same bracket, or a
+   * twelve-path icon costs twelve ⌘Z presses. A category of write rather than
+   * one section's convenience, which is the bar for widening this seam.
+   */
+  batch: (run: () => void) => void;
   /** Build the control a descriptor asks for, seeded from the selection. */
   buildControl: (
     descriptor: Descriptor,
@@ -67,13 +77,19 @@ export interface SectionContext {
    * row with no property behind it stays expressible. Passing them is what
    * gives the row a token affordance — without it a colour has no way to reach
    * the project's palette, which is the scale people reach for most.
+   *
+   * `read`, when given, replaces the value the re-seed pass pushes: the pass
+   * reads the *selection*, and a row whose value lives elsewhere (an `<svg>`
+   * root's paint lives on its shapes) would be snapped back to a wrong value
+   * on every refresh otherwise. Mirrors `numControl`'s `read`.
    */
   colorRow: (
     value: string,
     tip: string,
     onChange: (next: string) => void,
     node?: Element,
-    properties?: readonly string[]
+    properties?: readonly string[],
+    read?: () => string
   ) => HTMLElement;
   /** One cell of the two-column field grid. */
   fieldCell: (descriptor: Descriptor, node: Element) => HTMLElement;
@@ -116,7 +132,25 @@ export interface SectionContext {
   onAttr: (node: Element, attribute: string, value: string | null) => void;
   /** Preview + record one declaration on the selection. */
   onChange: OnChange;
-  /** Preview + record on an arbitrary node — the alignment row writes to the parent. */
+  /**
+   * Record a text-content edit on the selection. `null` is not a value here —
+   * emptying the field writes the empty string.
+   *
+   * A third write verb beside `onChange` (a declaration) and `onAttr` (an
+   * attribute): a text edit lands in `StructureSet`, ships to the agent as an
+   * old-string/new-string pair, and is journalled as its own op kind — a
+   * category of edit, which is the bar for widening this seam. The panel
+   * writes the DOM itself on this path; only the in-frame contenteditable
+   * pre-writes it.
+   */
+  onText: (node: Element, value: string) => void;
+  /**
+   * Preview + record on an arbitrary node — the alignment row writes to the parent.
+   *
+   * The bare recording verb, and rarely the one you want: it does none of the
+   * bookkeeping a write implies. Prefer {@link SectionContext.writeOn}, which is
+   * the same thing with the rest of the sequence attached.
+   */
   recordOn: (node: Element, cssProperty: string, value: string) => void;
   /** Re-pin the selection outline after an edit that moved or resized the node. */
   redrawOutline: () => void;
@@ -175,4 +209,31 @@ export interface SectionContext {
    * write several longhands from a single input.
    */
   tokenSlot: (node: Element, properties: readonly string[]) => TokenSlot | null;
+  /**
+   * Write one declaration to nodes the selection does not contain, as one undo
+   * step and with the same bookkeeping an ordinary `onChange` gets.
+   *
+   * `onChange` is this over the selection; this is the same write aimed
+   * somewhere else. What "the same bookkeeping" means is the point of the
+   * member: re-pin the outline, tell the composer a change is pending, and
+   * rebuild the CSS pane. The SVG paint fan hand-assembled `batch` + `recordOn`
+   * instead and got only the first half, so a fanned edit recorded changes
+   * whose chips did not appear until some unrelated event fired.
+   *
+   * The alignment row is the one caller that legitimately does not want this. It
+   * writes several *different* declarations to one node rather than one
+   * declaration to several, and it writes them to a node — a flex parent —
+   * whose scope and state are not the selection's. It brackets with `ctx.batch`
+   * and calls `redrawOutline`/`refresh` itself, which is the honest spelling of
+   * a different operation rather than a subset of this one.
+   *
+   * `standIn` says these nodes are standing in for the selection, so the edit
+   * keeps its scope and forced state. See `RecordOpts.standIn`.
+   */
+  writeOn: (
+    nodes: readonly Element[],
+    cssProperty: string,
+    value: string,
+    opts?: { standIn?: boolean }
+  ) => void;
 }

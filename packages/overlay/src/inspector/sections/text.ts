@@ -17,6 +17,7 @@ import {
 } from "../descriptors";
 import { firstFamily, replaceFirstFamily } from "../font-stack";
 import { readValue } from "../style-model";
+import { isEditableText } from "../text-edit";
 import type { SectionContext, TokenSlot } from "./context";
 import { labelled } from "./row";
 
@@ -446,12 +447,79 @@ function renderTextExtras(ctx: SectionContext, node: Element): HTMLElement {
   return wrap;
 }
 
+/**
+ * The Content field — the selection's text, editable from the panel.
+ *
+ * In-frame editing needs a double-click that `textTargetIn` may refuse
+ * (silently, when a node has two text-bearing children), and select-then-edit
+ * is two gestures; this is the one-field answer. Gated on `isEditableText`,
+ * the same predicate the in-place editor uses: for anything with element
+ * children a `textContent` write would delete the markup — `<p>Hello
+ * <b>world</b></p>` passes `hasText` and must not get this field — and a
+ * disabled control offering no route is worse than none.
+ *
+ * Shaped after `media.ts`'s `textAttr`, with two deliberate differences.
+ * No `trim()`: whitespace in inline text is meaningful, and trimming would
+ * also defeat the record layer's `from === to` no-op check. And Enter commits
+ * through blur, so the commit runs exactly once, from a field still in the
+ * DOM — a text commit can change `shapeKey`, and the refresh that follows
+ * clear-and-rebuilds the body under the field.
+ */
+function contentField(ctx: SectionContext, node: Element): HTMLElement {
+  const field = createTextField({ label: "Content", placeholder: "" });
+  const reflect = (): void => {
+    field.input.value = node.textContent ?? "";
+  };
+  reflect();
+  let skipBlur = false;
+  field.input.addEventListener("blur", () => {
+    if (skipBlur) {
+      skipBlur = false;
+      return;
+    }
+    const { value } = field.input;
+    if (value === (node.textContent ?? "")) {
+      // Unchanged. Blur fires either way, and re-committing would write a
+      // composer chip for something the user only tabbed through.
+      return;
+    }
+    ctx.onText(node, value);
+  });
+  field.input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      field.input.blur();
+    } else if (e.key === "Escape") {
+      // Revert, and stop the key from also closing whatever else is open.
+      // `skipBlur` because `blur()` would otherwise commit the value Escape
+      // just discarded — same guard the attribute fields carry.
+      e.stopPropagation();
+      reflect();
+      skipBlur = true;
+      field.input.blur();
+    }
+  });
+  // Re-read on every refresh: an undo, an in-frame edit, or an agent edit
+  // that HMR brought back changes the text under a field that would otherwise
+  // keep showing — and on the next blur re-commit — the old string.
+  ctx.register({
+    element: field.element,
+    resync: reflect,
+    setValue: () => undefined,
+    virtual: true,
+  });
+  return labelled("Content", field.element);
+}
+
 export function renderText(
   ctx: SectionContext,
   node: Element,
   group: Group
 ): HTMLElement {
   const body = el("div", { class: cls("sect-body") });
+
+  if (group.id === "typography" && isEditableText(node)) {
+    body.append(contentField(ctx, node));
+  }
 
   // Two-column grid. Glyph-fielded controls are cells with no label of their
   // own; the few that genuinely need a word (Weight, Align) declare
