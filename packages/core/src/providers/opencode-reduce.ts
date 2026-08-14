@@ -55,7 +55,15 @@ export interface ReduceState {
   closedTools: Set<string>;
   cost?: number;
   error?: string;
+  /**
+   * The raw error object behind `error`, kept so a provider rejection can be
+   * classified by structure (status code, response body) rather than by the
+   * words in its message.
+   */
+  errorInfo?: OcMessageError;
   idle: boolean;
+  /** `provider/model` of the latest assistant message, for per-model memos. */
+  lastModel?: string;
   /** Prose from the latest assistant text part, used when there is no JSON. */
   lastProse: string;
   nextBlockIndex: number;
@@ -433,6 +441,9 @@ function reduceMessage(info: OcMessageInfo, state: ReduceState): void {
   if (typeof info.cost === "number") {
     state.cost = info.cost;
   }
+  if (info.providerID && info.modelID) {
+    state.lastModel = `${info.providerID}/${info.modelID}`;
+  }
   // A `StructuredOutputError` is not a turn failure: the edit has already been
   // made, and throwing away a good diff plus its summary because opencode's own
   // extractor could not find the JSON — which it routinely cannot, even when
@@ -440,6 +451,7 @@ function reduceMessage(info: OcMessageInfo, state: ReduceState): void {
   // recovered from the text part instead.
   if (info.error && info.error.name !== "StructuredOutputError") {
     state.error ??= messageText(info.error);
+    state.errorInfo ??= info.error;
   }
 }
 
@@ -512,6 +524,9 @@ export function reduceEvent(
 
     case "session.error": {
       state.error ??= messageText(event.properties.error) ?? "session error";
+      if (event.properties.error) {
+        state.errorInfo ??= event.properties.error;
+      }
       return;
     }
 

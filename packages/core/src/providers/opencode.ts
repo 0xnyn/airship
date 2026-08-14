@@ -30,11 +30,18 @@
  * - No bundled binary. The `opencode` CLI is a separate install; `checkAuth`
  *   looks for it on PATH and says so when it is missing.
  *
- * One further quirk shapes the code below: `format: { type: "json_schema" }` is
- * a prompt convention, not a constrained decode. The model emits the JSON
- * inside `<structuredoutput>` tags within ordinary prose, and opencode's own
- * extractor frequently fails to lift it back out — so the payload is recovered
- * here, from the text, and kept out of the transcript on the way past.
+ * One further quirk shapes the code below: `format: { type: "json_schema" }`
+ * is two things at once, and both matter. On the wire it is a *forced tool
+ * call* — opencode registers an internal StructuredOutput tool and sets
+ * `toolChoice: "required"` — which providers reject outright on thinking
+ * models (opencode#15226, closed upstream); the adapter classifies that
+ * rejection, retries the turn without `format`, and remembers the model. In
+ * the text it is a tag convention: the model emits the JSON inside
+ * `<structuredoutput>` tags within ordinary prose, and opencode's own
+ * extractor frequently fails to lift it back out, so the payload is recovered
+ * here, from the text, and kept out of the transcript on the way past. The
+ * system prompt carries the same tag instruction now, which is what keeps the
+ * recovery path alive when `format` was never sent.
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -53,7 +60,12 @@ import {
 import { isPathInside } from "../paths";
 import { systemPrompt } from "../prompt";
 import { screenBash, screenEdit } from "../sandbox";
-import { modelRefFor, sessionIdOf } from "./opencode-events";
+import {
+  isForcedToolChoiceRejection,
+  modelRefFor,
+  sessionIdOf,
+  toMessageError,
+} from "./opencode-events";
 import {
   finishBlocks,
   newReduceState,
@@ -361,7 +373,17 @@ async function runTurn(
     const res = (await client.session.prompt(
       { ...body, directory: input.cwd, sessionID },
       { signal: request.signal }
-    )) as { data?: TurnResult };
+    )) as { data?: TurnResult; error?: unknown };
+    // The client is created without `throwOnError`, so a non-2xx response
+    // arrives as `{ error }` with no data. Left unread, an HTTP-level
+    // rejection that never surfaces on the SSE stream would fall through to
+    // `finishOutcome` as a clean turn — "Edit applied.", ok, zero diffs.
+    if (res.error !== undefined && res.data === undefined) {
+      const err = toMessageError(res.error);
+      state.error ??=
+        err.data?.message ?? err.name ?? "opencode request failed";
+      state.errorInfo ??= err;
+    }
     await Promise.race([idle.promise, delay(TRAILING_GRACE_MS)]);
     return res.data ?? {};
   } finally {
@@ -415,13 +437,85 @@ async function openSession(
   return id;
 }
 
-async function run(ctx: AgentRunContext): Promise<AgentRunOutcome> {
+/**
+ * Models whose provider rejects opencode's `format` request — it is
+ * implemented upstream as a forced tool call, which thinking/reasoning models
+ * refuse with a 400 (see `isForcedToolChoiceRejection`). Keyed
+ * `providerID/modelID` off the rejecting assistant message, with `(default)`
+ * standing in when no `--model` was given: the server's configured default is
+ * what such a turn ran on, and it is stable for the daemon's lifetime.
+ * Module-level on purpose — the opencode server is a process-wide singleton,
+ * so the memo spares every later turn the doubled first attempt.
+ */
+const noFormat = new Set<string>();
+
+/** Models the timeline has already carried the "format disabled" row for. */
+const warnedNoFormat = new Set<string>();
+
+/** The memo key a turn's `format` rejection is remembered under. */
+function formatKeyFor(model?: string): string {
+  const ref = toModelBody(model);
+  return ref ? `${ref.providerID}/${ref.modelID}` : "(default)";
+}
+
+/**
+ * Why the turn failed, said usefully. The provider's own words — e.g.
+ * "Thinking mode does not support this tool_choice" — used to be printed
+ * verbatim into the chat bubble, reading as if the model had replied with
+ * that sentence.
+ */
+function formatRejectedError(
+  raw: string | undefined,
+  retried: boolean
+): string {
+  const outcome = retried
+    ? "Airship retried the turn without that request and the provider rejected it again."
+    : "Airship could not retry this turn automatically because work had already started.";
+  return (
+    "The model's provider rejected the structured-output request opencode sends — it is implemented as a forced tool call, which models with thinking/reasoning enabled refuse (opencode issue #15226, closed upstream). " +
+    `${outcome} Pick a model without thinking enabled, or disable thinking for your provider via --opencode-config.` +
+    (raw ? ` (${raw})` : "")
+  );
+}
+
+/** One prompt → reconcile → close-blocks pass; both attempts run through it. */
+async function attemptTurn(
+  client: OpencodeClientLike,
+  sessionId: string,
+  body: Record<string, unknown>,
+  ctx: AgentRunContext,
+  state: ReduceState,
+  hooks: ReduceHooks
+): Promise<OcMessageInfo | undefined> {
+  const { info, parts } = await runTurn(
+    client,
+    sessionId,
+    body,
+    ctx,
+    state,
+    hooks
+  );
+  // The authoritative parts array, replayed through the same reducer. Every
+  // write is id-guarded, so this repairs a dropped frame without duplicating
+  // anything the stream already delivered.
+  reconcileParts(parts, ctx, state, hooks);
+  finishBlocks(state, ctx);
+  return info;
+}
+
+/**
+ * The body of a run, split from `run` so tests can hand it a fake
+ * `OpencodeClientLike` instead of standing up a server.
+ */
+export async function runWithClient(
+  client: OpencodeClientLike,
+  ctx: AgentRunContext
+): Promise<AgentRunOutcome> {
   const { input } = ctx;
-  const state = newReduceState();
+  let state = newReduceState();
   let sessionId: string | null = input.resumeSessionId ?? null;
 
   try {
-    const { client } = await acquireServer(input.opencode, input.safe ?? false);
     sessionId = await openSession(client, ctx);
     ctx.events.onSessionId?.(sessionId);
 
@@ -448,22 +542,79 @@ async function run(ctx: AgentRunContext): Promise<AgentRunOutcome> {
       rescanDirty: () => dirtyFiles(input.cwd),
     };
 
-    const { info, parts } = await runTurn(
+    const formatKey = formatKeyFor(input.model);
+    const withFormat = !noFormat.has(formatKey);
+    let info = await attemptTurn(
       client,
       sessionId,
-      promptBody(ctx),
+      promptBody(ctx, withFormat),
       ctx,
       state,
       hooks
     );
 
-    // The authoritative parts array, replayed through the same reducer. Every
-    // write is id-guarded, so this repairs a dropped frame without duplicating
-    // anything the stream already delivered.
-    reconcileParts(parts, ctx, state, hooks);
-    finishBlocks(state, ctx);
+    const rejected = () =>
+      isForcedToolChoiceRejection(info?.error) ||
+      isForcedToolChoiceRejection(state.errorInfo);
+    const aborted = () => input.abortController?.signal.aborted ?? false;
+    let retried = false;
+
+    // The rejection is deterministic per model, so the turn is retried once
+    // without `format` — and the model is remembered, so later turns skip the
+    // doomed first attempt. Gated on the turn having done no work: if opencode
+    // forced the tool choice on a later step, tools have run and the edit may
+    // already be on disk, and a blind re-prompt would redo it. No
+    // `session.revert` first: an errored assistant reply is opencode's normal
+    // steady state, and revert *restores files* (see `rewind`), which a retry
+    // must never do.
+    if (
+      withFormat &&
+      rejected() &&
+      state.openedTools.size === 0 &&
+      !aborted()
+    ) {
+      noFormat.add(formatKey);
+      if (state.lastModel) {
+        noFormat.add(state.lastModel);
+      }
+      retried = true;
+      const fresh = newReduceState();
+      // The one field carried forward: the recorder keys rows by index and
+      // no-ops on a repeat, so restarting at 0 would patch attempt 1's closed
+      // rows instead of opening new ones. Everything else must reset —
+      // `state.error ??=` would otherwise let attempt 1's provider string
+      // survive a clean retry and still mark the job failed.
+      fresh.nextBlockIndex = state.nextBlockIndex;
+      state = fresh;
+      info = await attemptTurn(
+        client,
+        sessionId,
+        promptBody(ctx, false),
+        ctx,
+        state,
+        hooks
+      );
+    }
 
     const outcome = finishOutcome(state, info, sessionId);
+
+    // A successful retry gets one explanatory row, once per model — never an
+    // `outcome.error`, which would flip a turn that succeeded into a failure.
+    // The id is deliberately not `${sessionId}:schema`: openTool no-ops on a
+    // duplicate id, and both warnings can fire in one turn.
+    if (
+      retried &&
+      !(state.error || rejected()) &&
+      !warnedNoFormat.has(formatKey)
+    ) {
+      warnedNoFormat.add(formatKey);
+      ctx.recorder.openTool(`${sessionId}:format`, "Warning", {}, null);
+      ctx.recorder.closeTool(
+        `${sessionId}:format`,
+        true,
+        "structured output is disabled for this model — its provider rejects the forced tool call opencode uses for it; the summary and follow-ups now come from a prompt instruction instead"
+      );
+    }
 
     // Only worth a row when the payload is genuinely gone. opencode reports
     // `StructuredOutputError` routinely — its extractor misses JSON the model
@@ -479,6 +630,20 @@ async function run(ctx: AgentRunContext): Promise<AgentRunOutcome> {
       );
     }
 
+    // Still classified after the dance: explain it instead of echoing the
+    // provider. And when the rejected turn did no work, do not hand its
+    // session forward — resuming it replays the rejected exchange, which is
+    // how one bad turn used to poison every message after it. A turn that
+    // did real work keeps its session: continuity is worth more than
+    // cleanliness once the edit is on disk.
+    if (rejected() && !aborted()) {
+      outcome.error = formatRejectedError(state.error, retried);
+      if (state.openedTools.size === 0) {
+        outcome.checkpointId = null;
+        outcome.sessionId = null;
+      }
+    }
+
     return outcome;
   } catch (err) {
     finishBlocks(state, ctx);
@@ -489,16 +654,40 @@ async function run(ctx: AgentRunContext): Promise<AgentRunOutcome> {
   }
 }
 
-function promptBody(ctx: AgentRunContext): Record<string, unknown> {
+async function run(ctx: AgentRunContext): Promise<AgentRunOutcome> {
   const { input } = ctx;
-  const resuming = Boolean(input.resumeSessionId) && !input.fork;
+  try {
+    const { client } = await acquireServer(input.opencode, input.safe ?? false);
+    return await runWithClient(client, ctx);
+  } catch (err) {
+    return {
+      ...finishOutcome(
+        newReduceState(),
+        undefined,
+        input.resumeSessionId ?? null
+      ),
+      error: failureText(err, input.abortController),
+    };
+  }
+}
+
+export function promptBody(
+  ctx: AgentRunContext,
+  withFormat: boolean
+): Record<string, unknown> {
+  const { input } = ctx;
   return {
     agent: input.opencode?.agent,
-    format: {
-      retryCount: 2,
-      schema: EDIT_OUTPUT_JSON_SCHEMA,
-      type: "json_schema",
-    },
+    // Omitted entirely — never `format: { type: "text" }` — when the model's
+    // provider is known to reject it: omission cannot hit a second upstream
+    // code path. The old `retryCount: 2` is gone too; against a
+    // deterministic rejection it just tripled the doomed requests.
+    ...(withFormat && {
+      format: {
+        schema: EDIT_OUTPUT_JSON_SCHEMA,
+        type: "json_schema",
+      },
+    }),
     model: toModelBody(input.model),
     parts: [
       { text: ctx.promptText, type: "text" },
@@ -511,9 +700,11 @@ function promptBody(ctx: AgentRunContext): Record<string, unknown> {
         url: `data:${image.mediaType};base64,${image.dataBase64}`,
       })),
     ],
-    // The preamble is skipped on resume: the session history already carries
-    // it, and repeating instructions the model already followed is pure noise.
-    system: resuming ? undefined : systemPrompt("opencode"),
+    // Sent on every turn, resumes included. The system prompt carries the
+    // structured-output contract (prompt.ts) now that `format` cannot be
+    // relied on to, and re-sending is cheap — while a resumed turn running
+    // with no contract at all is how the summary chips silently die.
+    system: systemPrompt("opencode"),
     // There is no interactive channel back to the user from inside a job, so a
     // model that asks a question would hang the turn until the HTTP request
     // gave up. The permission ruleset denies it too, as a second lock.

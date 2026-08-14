@@ -622,26 +622,51 @@ function jobStatus(aborted: boolean, ok: boolean): JobStatus {
 }
 
 /**
+ * How far up the parent chain to look for a resumable session. Adapters now
+ * withhold `sessionId` from a bundle whose turn a provider rejected outright
+ * (the session is poisoned — resuming it replays the rejected exchange), so
+ * one bad turn mid-thread should fall through to the last good session, not
+ * lose the whole conversation. Bounded because bundles written before
+ * `sessionId` existed would otherwise let the walk reach arbitrarily far into
+ * unrelated history.
+ */
+const RESUME_WALK_LIMIT = 3;
+
+/**
  * The session to resume, or null to start clean.
  *
  * `sessionId` names a Claude session on one backend and a Codex thread on the
  * other, so resuming across a switch would hand an id to a backend that has
- * never seen it. Dropping it starts a clean session instead — the conversation
- * is lost either way, but the turn still runs. Bundles written before `agent`
- * existed are Claude by construction.
+ * never seen it — the agent check runs per hop for the same reason. Dropping
+ * it starts a clean session instead: the conversation is lost either way, but
+ * the turn still runs. Bundles written before `agent` existed are Claude by
+ * construction.
  */
-function resolveResume(
+export function resolveResume(
   cwd: string,
   parentJobId: string | undefined,
   agent: AgentKind
 ): string | null {
-  const parent = parentJobId ? readBundle(cwd, parentJobId) : null;
-  if (!parent) {
-    return null;
+  const seen = new Set<string>();
+  let jobId = parentJobId;
+  for (let hop = 0; jobId && hop < RESUME_WALK_LIMIT; hop += 1) {
+    if (seen.has(jobId)) {
+      return null;
+    }
+    seen.add(jobId);
+    const parent = readBundle(cwd, jobId);
+    if (!parent) {
+      return null;
+    }
+    if ((parent.agent ?? "claude") !== agent) {
+      return null;
+    }
+    if (parent.sessionId) {
+      return parent.sessionId;
+    }
+    jobId = parent.parentJobId;
   }
-  return (parent.agent ?? "claude") === agent
-    ? (parent.sessionId ?? null)
-    : null;
+  return null;
 }
 
 function buildBundle(args: {
