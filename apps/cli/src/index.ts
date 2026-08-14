@@ -52,7 +52,7 @@ const SECTIONS = [
   {
     body: `By default the agent runs unsandboxed — it can write anywhere you can and reach the network. Pass --safe to confine edits to the project directory, cut network access, and screen destructive shell commands.
 
-Only codex confines writes at the OS level. On claude and opencode --safe screens edits by path and commands by pattern, which does not parse shell — a write redirected out of the project is not caught. Neither cuts raw network access; opencode additionally disables its network tools.`,
+Only codex confines writes at the OS level. On claude and opencode --safe screens edits by path and commands by pattern, which does not parse shell — a write redirected out of the project is not caught. Neither cuts raw network access, though both disable their built-in web tools.`,
     title: "Sandboxing",
   },
   {

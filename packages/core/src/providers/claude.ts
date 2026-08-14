@@ -9,7 +9,7 @@
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   EDIT_OUTPUT_JSON_SCHEMA,
   type EditStructuredOutput,
@@ -30,27 +30,48 @@ import {
   type AgentRunOutcome,
   failureText,
 } from "../agent";
-import { isPathInside } from "../paths";
 import { systemPrompt } from "../prompt";
-import { EDIT_TOOLS, makeSandboxHook } from "../sandbox";
+import { editPathOf, makeSandboxHook, screenTool } from "../sandbox";
 import type { TimelineRecorder } from "../timeline";
 import { describeTool } from "../tool-summary";
 import { buildAirshipMcpServer } from "../tools";
 
-const ALLOWED_TOOLS = [
+/**
+ * The built-in toolset the agent runs with, passed as the SDK's `tools`
+ * option — which genuinely restricts availability (the CLI narrows via deny
+ * rules, in every permission mode) — not as `allowedTools`, which only
+ * auto-approves and restricts nothing. Grep and Glob stay listed: native
+ * builds otherwise fall back to Bash `find`/`grep`. BashOutput and KillShell
+ * ride along with Bash so a background command can still be read and
+ * stopped. The `mcp__airship__*` tools need no entry: MCP tools are exempt
+ * from narrowing, and their permission is `canUseTool`'s to grant.
+ *
+ * Deliberately absent: Task/agent spawning, Skill, SlashCommand, plan-mode
+ * tools, and AskUserQuestion — there is no interactive channel back to the
+ * user from inside a job, so a model that asks would hang the turn.
+ */
+const BUILTIN_TOOLS = [
   "Read",
   "Glob",
   "Grep",
   "Edit",
   "Write",
-  "MultiEdit",
   "NotebookEdit",
   "TodoWrite",
   "Bash",
+  "BashOutput",
+  "KillShell",
   "WebFetch",
   "WebSearch",
-  "mcp__airship__get_element_context",
 ];
+
+/**
+ * Under `--safe` the built-in web tools go too, matching opencode's posture
+ * (its `--safe` denies webfetch/websearch) so the launch banner's "same
+ * guards" claim holds. Raw network access via the shell is still not cut on
+ * either backend; the banner says that too.
+ */
+const SAFE_EXCLUDED_TOOLS = new Set(["WebFetch", "WebSearch"]);
 
 const EDIT_TOOL_MATCHER = "Write|Edit|MultiEdit|NotebookEdit";
 
@@ -169,9 +190,13 @@ async function run(ctx: AgentRunContext): Promise<AgentRunOutcome> {
     hooks: [
       (i: { hook_event_name?: string; tool_input?: unknown }) => {
         if (i.hook_event_name === "PreToolUse") {
-          const fp = (i.tool_input as Record<string, unknown> | undefined)
-            ?.file_path;
-          if (typeof fp === "string") {
+          // `editPathOf`, not `.file_path`: NotebookEdit names its target
+          // `notebook_path`, and a notebook edit captured under the wrong key
+          // is a notebook edit with no diff and no undo.
+          const fp = editPathOf(
+            (i.tool_input as Record<string, unknown> | undefined) ?? {}
+          );
+          if (fp !== undefined) {
             diffCapture.recordBefore(fp);
           }
         }
@@ -190,7 +215,11 @@ async function run(ctx: AgentRunContext): Promise<AgentRunOutcome> {
 
   const options: Options = {
     abortController: input.abortController,
-    allowedTools: ALLOWED_TOOLS,
+    // The SDK requires this alongside `bypassPermissions`. It also matters
+    // when bypass is downgraded (background sessions, hardened settings):
+    // without it, non-safe mode would run permission asks with no canUseTool
+    // installed, and every ask would become a terminal auto-deny.
+    allowDangerouslySkipPermissions: !safe,
     cwd: input.cwd,
     effort: toClaudeEffort(input.effort),
     enableFileCheckpointing: true,
@@ -207,9 +236,10 @@ async function run(ctx: AgentRunContext): Promise<AgentRunOutcome> {
       schema: EDIT_OUTPUT_JSON_SCHEMA as unknown as Record<string, unknown>,
       type: "json_schema",
     },
-    // Under `--safe`, edits are auto-accepted but the sandbox hook and
-    // canUseTool still screen them. Otherwise nothing screens anything.
-    permissionMode: safe ? "acceptEdits" : "bypassPermissions",
+    // Under `--safe`, "default" routes every tool decision through
+    // `canUseTool` below — `acceptEdits` would auto-accept in-project edits
+    // before the callback ever ran. Otherwise nothing screens anything.
+    permissionMode: safe ? "default" : "bypassPermissions",
     persistSession: true,
     settingSources: ["project"],
     stderr: (data) => {
@@ -222,23 +252,29 @@ async function run(ctx: AgentRunContext): Promise<AgentRunOutcome> {
       preset: "claude_code",
       type: "preset",
     },
+    tools: safe
+      ? BUILTIN_TOOLS.filter((t) => !SAFE_EXCLUDED_TOOLS.has(t))
+      : BUILTIN_TOOLS,
   };
 
-  // Programmatic permission catch-all. The sandbox hook is the primary guard
-  // (hooks run first); this is defense-in-depth in case ordering ever changes.
-  // Both belong to the same posture, so both are gated together.
+  // Two screens, one `screenTool` ruleset. The sandbox hook is the primary
+  // guard: hooks run ahead of permission evaluation, and unlike this callback
+  // they cannot be shadowed by a target project's own `permissions.allow`
+  // settings (which `settingSources: ["project"]` loads). This is the second,
+  // genuinely reachable layer — under `permissionMode: "default"` every tool
+  // decision funnels through it, Bash included. It must resolve on every
+  // path: an unresolved permission request parks the tool call forever.
   if (safe) {
+    const root = resolve(input.cwd);
     options.canUseTool = (toolName, toolInput) => {
-      if (EDIT_TOOLS.has(toolName)) {
-        const fp = (toolInput as Record<string, unknown>).file_path;
-        if (typeof fp === "string" && !isPathInside(input.cwd, fp)) {
-          return Promise.resolve({
-            behavior: "deny",
-            message: `Refusing to modify a path outside the project: ${fp}`,
-          });
-        }
+      const verdict = screenTool(root, toolName, toolInput);
+      if (verdict.allowed) {
+        return Promise.resolve({ behavior: "allow", updatedInput: toolInput });
       }
-      return Promise.resolve({ behavior: "allow", updatedInput: toolInput });
+      return Promise.resolve({
+        behavior: "deny",
+        message: verdict.reason ?? "denied",
+      });
     };
   }
 
