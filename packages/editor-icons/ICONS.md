@@ -447,6 +447,7 @@ icons:
   gutter: local/gutter.svg
   lock: local/lock.svg
   unlock: local/unlock.svg
+  trash: local/trash.svg
   claude: local/claude.svg
   codex: local/codex.svg
   opencode: local/opencode.svg
@@ -601,7 +602,7 @@ is the control, not the bundler.
 
 ## Marks we draw ourselves
 
-Ten slugs under `assets/local/` are not from the imported set. They go through the same
+Eleven slugs under `assets/local/` are not from the imported set. They go through the same
 manifest and the same normalisation as everything else — which is the point.
 They previously lived as hand-authored strings in the overlay's `icons.ts`,
 inset "roughly 4..20" (a **16-unit** span) to match the set by eye. The set's
@@ -656,6 +657,17 @@ conventions with nothing reconciling them.
   and sits next to the eye and the layer-kind glyphs, which are filled. These
   are the mask's own silhouette painted directly, with the shackle as an
   even-odd counter, so the pair matches the family it lives in.
+- **`trash`** — a bin, because the imported set has no delete glyph. It publishes
+  `general/remove.svg` (a bare horizontal rule → `minus`) and `general/x.svg`
+  (→ `close`), and both were pressed into service: frame delete drew a `−` and
+  the same action in the frame list drew a `✕`, so one verb had two glyphs and
+  neither said "destroy". `−` is still right where it pairs with a `+` over a
+  list — remove a fill, remove a shadow — and that grammar is deliberately left
+  alone; this is for the deletes that are not the other half of an add.
+
+  Three parts on the family's terms: a staple handle, a lid bar, and a body whose
+  two slots are even-odd counters rather than drawn strokes, so nothing here is a
+  hairline that has to survive being scaled to `xs`.
 - **`claude` / `codex` / `opencode`** — third-party product marks, for the agent
   picker. Unlike the rest these are not ours to redraw; they name a backend in
   the UI. Path data from `@lobehub/icons-static-svg`; the marks remain the

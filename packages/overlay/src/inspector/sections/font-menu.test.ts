@@ -1,5 +1,6 @@
 import type { DesignToken } from "@airship/protocol/tokens";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { isMenuItem } from "../../popover-host";
 import { setRuntimeTokens } from "../../tokens/registry";
 import type { TokenSlot } from "./context";
 import { fontMenuEntries } from "./text";
@@ -72,11 +73,15 @@ function menu(bound: string | null, onPick = vi.fn()) {
   return { apply, entries, onPick, unlink };
 }
 
-/** Only the clickable rows — headers and separators carry no label. */
+/**
+ * Only the clickable rows.
+ *
+ * Through the shared guard rather than `"label" in e`, which stopped being a
+ * complete test the day menus grew collapsible groups: a group carries a label
+ * too, so the hand-rolled predicate quietly widened to include one.
+ */
 const items = (entries: ReturnType<typeof menu>["entries"]) =>
-  entries.filter(
-    (e): e is Extract<typeof e, { label: string }> => "label" in e
-  );
+  entries.filter(isMenuItem);
 
 /** The menu flattened to strings, so order and grouping read at a glance. */
 const labels = (entries: ReturnType<typeof menu>["entries"]) =>

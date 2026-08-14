@@ -56,6 +56,17 @@ export function placePopover(
   // Measure unconstrained, then cap to whatever room the chosen side has.
   menu.style.maxHeight = "";
   /*
+   * And unpositioned, for the same reason one axis over.
+   *
+   * The `left` written at the end of this function is never cleared, so a second
+   * placement measures against `containing block - previous left`: an absolutely
+   * positioned box shrink-to-fits into that remainder, and anything whose width
+   * comes from its content reports the remainder rather than what it wanted.
+   * Every popover today is saved by a fixed width or a `min-width`, but the
+   * tooltip is content-sized and wraps, and this host re-places on every scroll.
+   */
+  menu.style.left = "0px";
+  /*
    * Content plus the chrome around it, because the cap lands on the border box.
    *
    * Everything under the overlay root is `border-box` (`base.css.ts`), so a
