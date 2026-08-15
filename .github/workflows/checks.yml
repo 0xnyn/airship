@@ -73,6 +73,18 @@ jobs:
       # generated file matches what the generator emits. That is a property of
       # the repo, not of the platform, so running it twice doubles the runtime
       # and the flake surface for no extra signal.
+      # CONTROLS.md and the short table in README.md are generated from the
+      # overlay's command catalog. Before the README check, because that one
+      # copies the root README.md that this one writes into.
+      - name: Controls reference is not stale
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          if ! node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/gen-controls.mjs --check; then
+            echo "::error file=CONTROLS.md::The controls reference is stale. Run 'make controls' and commit the result."
+            exit 1
+          fi
+
       - name: README is not stale
         if: matrix.os == 'ubuntu-latest'
         shell: bash

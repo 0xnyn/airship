@@ -106,16 +106,37 @@ to the canvas — the parameter takes the internal mode name, so it is `shell`, 
 
 Open any route of your app in Airship — `/pricing`, `/settings` — and every frame opens there.
 
-On the canvas:
+The controls, in short — the table below is generated from the editor's own command
+catalog, so it cannot drift from what the keys actually do:
 
-| Gesture | |
-| --- | --- |
-| wheel / two-finger | pan |
-| ⌘/ctrl-wheel, pinch | zoom at cursor |
-| space-drag, middle-drag | pan |
-| ⇧1 / ⇧2 / ⇧0 | fit / zoom to selection / 100% |
-| `H` | hand tool (view mode) |
-| `F` | add a frame |
+<!-- controls:start -->
+| | macOS | Windows / Linux |
+| --- | --- | --- |
+| pan the canvas | Wheel / two-finger | Wheel / two-finger |
+| zoom at the cursor | ⌘-wheel / pinch | Ctrl-wheel / pinch |
+| pan without the hand | Space-drag | Space-drag |
+| select an element | Click | Click |
+| edit text in place | Double-click | Double-click |
+| open the element menu | Right-click | Right-click |
+| scrub a number | Drag a field's glyph | Drag a field's glyph |
+| undo | ⌘Z | Ctrl+Z |
+| delete element | ⌫ or Del | Backspace or Del |
+| duplicate | ⌘D | Ctrl+D |
+| edit text | ↩ or T | Enter or T |
+| move | V | V |
+| inspect | I | I |
+| zoom in | ⌘= or = | Ctrl+= or = |
+| zoom out | ⌘- or - | Ctrl+- or - |
+| zoom to 100% | ⌘0 or ⇧0 | Ctrl+0 or Shift+0 |
+| zoom to fit | ⇧1 | Shift+1 |
+| hand tool | H | H |
+| add a frame | F | F |
+| send | ⌘↩ | Ctrl+Enter |
+| keyboard shortcuts | ? | ? |
+| command palette | ⌘K | Ctrl+K |
+
+Press `?` in the editor for all of them, or see [CONTROLS.md](./CONTROLS.md).
+<!-- controls:end -->
 
 ## Edit and View
 
@@ -166,6 +187,7 @@ you what you're giving up at startup.
 | `--effort` | yes | yes | **ignored** |
 | `--max-turns`, `--max-budget` | yes | **ignored** | **ignored** |
 | `--model` | a model name | a model name | needs the `provider/model` form |
+| Lists its own models | yes | **no** — Airship ships a list | yes, the ones you are signed in to |
 | `--safe` | checks each edit and command | **real sandbox** | asks before each edit and command |
 | Install | included | included | **you install it yourself** |
 
@@ -255,13 +277,19 @@ forwarded.
 | Flag | | Default |
 | --- | --- | --- |
 | `-a, --agent <name>` | Coding agent: `claude`, `codex`, `opencode`. | `claude` |
-| `-m, --model <id>` | Model id. | the agent's own default |
+| `-m, --model <id>` | Model for whichever agent runs. Per-backend flags below outrank it. | the agent's own default |
 | `--effort <level>` | Reasoning effort: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. | |
 | `--max-turns <n>` | Cap agent turns per edit (claude only). | `24` |
 | `--max-budget <usd>` | Stop an edit if it exceeds this cost in USD (claude only). | |
 | `--commit` | Auto-commit each accepted edit (Conventional Commits). | |
 
 `-m` is `--model`, not `--mode`. `--mode` has no short alias.
+
+You can also pick the model from the editor. The agent button in the chat header opens a
+group per backend; choosing a row picks the backend **and** its model in one go, and a box
+at the bottom takes any id the list does not offer. That choice is per backend and is
+remembered, so switching between them does not carry one backend's model to another. The
+flags below are the resting default it starts from.
 
 ### Sandbox
 
@@ -273,6 +301,9 @@ forwarded.
 
 | Flag | | Default |
 | --- | --- | --- |
+| `--claude-model <id>` | Model for the `claude` backend. Takes an alias or a full id. | `--model`, then the agent's own |
+| `--codex-model <id>` | Model for the `codex` backend. | `--model`, then the agent's own |
+| `--opencode-model <provider/model>` | Model for the `opencode` backend. Needs the `provider/model` form. | `--model`, then the agent's own |
 | `--codex-path <path>` | Path to the `codex` binary. | bundled |
 | `--codex-config <k=v>` | Extra `codex --config` pair; repeatable. | |
 | `--opencode-path <path>` | Path to the `opencode` binary. | found on PATH |
@@ -339,9 +370,16 @@ one. Every key is a flag name, in either kebab or camel case:
   "agent": "claude",
   "mode": "canvas",
   "target": 3000,
-  "safe": true
+  "safe": true,
+  "claudeModel": "opus",
+  "codexModel": "gpt-5.3-codex"
 }
 ```
+
+Models are keyed per backend — `claudeModel`, `codexModel`, `opencodeModel` — because the
+editor's picker can switch backends mid-session, and one shared `model` would follow it and
+hand Codex an id only Claude answers to. A plain `"model"` still works and applies to
+whichever backend runs, with the per-backend keys taking precedence.
 
 Airship looks for it from `--cwd` upwards and **stops at your repository root**, so a stray
 config file somewhere above your repo won't affect you. Misspell a key and it says so, with a
@@ -359,8 +397,9 @@ AIRSHIP_CWD             AIRSHIP_EFFORT          AIRSHIP_OPENCODE_PATH
 AIRSHIP_MODE            AIRSHIP_MAX_TURNS       AIRSHIP_OPENCODE_URL
 AIRSHIP_EXEC            AIRSHIP_MAX_BUDGET      AIRSHIP_OPENCODE_AGENT
 AIRSHIP_OPEN            AIRSHIP_COMMIT          AIRSHIP_OPENCODE_CONFIG
-AIRSHIP_SAFE            AIRSHIP_JSON            AIRSHIP_QUIET
-AIRSHIP_DEBUG
+AIRSHIP_SAFE            AIRSHIP_JSON            AIRSHIP_OPENCODE_MODEL
+AIRSHIP_DEBUG           AIRSHIP_QUIET           AIRSHIP_CLAUDE_MODEL
+                                                AIRSHIP_CODEX_MODEL
 ```
 
 `AIRSHIP_HELP` and `AIRSHIP_VERSION` are deliberately not read — exporting one would leave the
