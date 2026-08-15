@@ -36,7 +36,9 @@ export function warnBackendLimits(o: {
   effort?: string;
   maxBudgetUsd?: number;
   maxTurns?: number;
-  model?: string;
+  /** The *resolved* per-backend models, as `serve.ts` collapses them. Not the
+   * raw `--model`: what a turn will actually send is what is worth warning on. */
+  models?: Partial<Record<AgentKind, string>>;
 }): void {
   const warn = (message: string): void => {
     process.stderr.write(`\n  ${style.yellow(`⚠ ${message}`)}\n`);
@@ -67,9 +69,16 @@ export function warnBackendLimits(o: {
   }
   // A bare model id cannot be resolved to a provider, so it would be dropped
   // silently and the run would quietly use opencode's default instead.
-  if (o.agent === "opencode" && o.model && !o.model.includes("/")) {
+  //
+  // Read off the *resolved* per-backend value, not `--model`: that is what a
+  // turn will actually send. It also makes this unreachable via
+  // `--opencode-model`, which `requireModelRef` already rejects outright — a
+  // flag that names its backend can be a hard error, and only the catch-all
+  // `--model` is left needing a warning.
+  const opencodeModel = o.models?.opencode;
+  if (o.agent === "opencode" && opencodeModel && !opencodeModel.includes("/")) {
     warn(
-      `--model '${o.model}' is ignored with --agent opencode: it wants the provider/model form (e.g. anthropic/${o.model}).`
+      `--model '${opencodeModel}' is ignored with --agent opencode: it wants the provider/model form (e.g. anthropic/${opencodeModel}).\n    Set --opencode-model to give opencode its own.`
     );
   }
 }
@@ -91,13 +100,21 @@ function surfaceLines(surface: AirshipSurface): string {
 export function launchBanner(info: {
   agent: AgentKind;
   cwd: string;
+  /** The resolved model for `agent`, when one was configured. */
+  model?: string;
   safe: boolean;
   surface: AirshipSurface;
   targetPort: number;
   url: string;
 }): string {
+  // Four flags can name a model — `--model`, the three per-backend ones — and
+  // they resolve in an order. Without this the only way to learn which one won
+  // was to run a turn and read the transcript. Omitted rather than guessed when
+  // nothing was configured: the backend picks in that case, and naming a default
+  // airship did not choose would be a claim it cannot make.
+  const on = info.model ? ` on ${info.model}` : "";
   return (
-    `\n  ${style.magenta("◆")} ${style.bold("airship")}  —  editing ${info.cwd} with ${info.agent}\n` +
+    `\n  ${style.magenta("◆")} ${style.bold("airship")}  —  editing ${info.cwd} with ${info.agent}${on}\n` +
     `  → open ${style.cyan(info.url)}\n` +
     `    ${style.dim(`(proxying your dev server at http://localhost:${info.targetPort})`)}\n\n` +
     // Stated at every launch, not just in --help: a tool that can write

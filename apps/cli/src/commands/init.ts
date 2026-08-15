@@ -12,7 +12,8 @@ import { join, relative } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
 import { defineCommand } from "citty";
 import { argsFor, assertKnownFlags, GLOBAL_FLAGS } from "../lib/args";
-import { asBoolean, CONFIG_FILENAME } from "../lib/config";
+import { readOpencodeConfig } from "../lib/backends";
+import { asBoolean, asString, CONFIG_FILENAME } from "../lib/config";
 import { CliError, EXIT } from "../lib/errors";
 import { resolveSettings } from "../lib/settings";
 import {
@@ -24,7 +25,23 @@ import {
 } from "../lib/terminal";
 import { runWizard } from "../lib/wizard";
 
-export const INIT_FLAGS: readonly string[] = ["cwd", ...GLOBAL_FLAGS];
+/*
+ * The opencode knobs are here because `init` probes for models, and probing
+ * opencode *starts a server* — at `--opencode-path`, or against a running one at
+ * `--opencode-url`, with `--opencode-config` applied. Without them the wizard
+ * booted a default server the project may not use and then reported it as
+ * unreachable, with no flag available to say otherwise.
+ *
+ * `--safe` for the same reason: it changes what the probe is allowed to do.
+ */
+export const INIT_FLAGS: readonly string[] = [
+  "cwd",
+  "safe",
+  "opencode-path",
+  "opencode-url",
+  "opencode-config",
+  ...GLOBAL_FLAGS,
+];
 
 export const init = defineCommand({
   args: argsFor(INIT_FLAGS),
@@ -61,7 +78,17 @@ export const init = defineCommand({
       }
     }
 
-    const answers = await runWizard(cwd);
+    const answers = await runWizard(cwd, {
+      askModel: true,
+      probe: {
+        opencode: {
+          config: readOpencodeConfig(asString(settings, "opencode-config")),
+          opencodePath: asString(settings, "opencode-path"),
+          url: asString(settings, "opencode-url"),
+        },
+        safe: asBoolean(settings, "safe"),
+      },
+    });
     // Only the answers worth persisting. `safe: false` is the default, so
     // writing it would state a posture the user did not actually choose.
     const config: Record<string, unknown> = {
@@ -71,6 +98,14 @@ export const init = defineCommand({
     };
     if (answers.safe) {
       config.safe = true;
+    }
+    // Keyed to the backend it was chosen for, never the bare `model`. The
+    // overlay's picker can move to another harness mid-session, and a flat
+    // `model` would follow it there and hand Codex an id only Claude answers to.
+    // Same rule as `safe` above: absent means "the backend decides", so an
+    // unanswered prompt writes nothing.
+    if (answers.model) {
+      config[`${answers.agent}Model`] = answers.model;
     }
 
     writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
