@@ -306,7 +306,7 @@ function injectOverlay(body: string, config: AirshipWindowConfig): string {
   const hookTag = '<script src="/__airship/hook.js"></script>';
   const json = escapeForScript(JSON.stringify(config));
   const snippet =
-    `<script>window.__PIKA__=${json};</script>` +
+    `<script>window.__AIRSHIP__=${json};</script>` +
     `<script src="/__airship/overlay.js" defer></script>`;
 
   const withHook = injectHead(body, hookTag);

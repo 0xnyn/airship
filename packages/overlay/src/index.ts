@@ -17,8 +17,8 @@ import { bootShell } from "./shell-app";
  * send that header.
  */
 function start(): void {
-  const config = (window as unknown as { __PIKA__?: AirshipWindowConfig })
-    .__PIKA__;
+  const config = (window as unknown as { __AIRSHIP__?: AirshipWindowConfig })
+    .__AIRSHIP__;
 
   if (config?.mode === "frame" || isFrameName(window.name)) {
     bootFrameAgent();

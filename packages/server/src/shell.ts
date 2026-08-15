@@ -84,7 +84,7 @@ export function shellHtml(config: AirshipWindowConfig): string {
 /* Painted before the bundle runs so the canvas never flashes white. */
 html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#141414;}
 </style>
-<script>window.__PIKA__=${json};</script>
+<script>window.__AIRSHIP__=${json};</script>
 </head>
 <body>
 <script src="/__airship/overlay.js"></script>

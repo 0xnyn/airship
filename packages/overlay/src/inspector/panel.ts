@@ -2186,7 +2186,7 @@ export class DesignPanel {
     }
     // Non-rendered elements are not layers. A <script> in the tree is noise at
     // best — and because a text-only node is named after its content, an
-    // inline script showed up as a row reading `window.__PIKA__={"wsPath"…`.
+    // inline script showed up as a row reading `window.__AIRSHIP__={"wsPath"…`.
     const kids = Array.from(node.children).filter(
       (c) => !(isEditorNode(c) || isNonVisual(c))
     );

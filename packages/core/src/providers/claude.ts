@@ -243,7 +243,7 @@ async function run(ctx: AgentRunContext): Promise<AgentRunOutcome> {
     persistSession: true,
     settingSources: ["project"],
     stderr: (data) => {
-      if (process.env.PIKA_DEBUG) {
+      if (process.env.AIRSHIP_AGENT_DEBUG) {
         process.stderr.write(data);
       }
     },

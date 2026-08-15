@@ -11,7 +11,7 @@ export type { ModelProbeOptions } from "./models";
 export { listAllModels, listModels } from "./models";
 export { isPathInside, pathKey, toPosixPath } from "./paths";
 export type { EditPromptInput } from "./prompt";
-export { buildEditPrompt, PIKA_SYSTEM_PROMPT, systemPrompt } from "./prompt";
+export { AIRSHIP_SYSTEM_PROMPT, buildEditPrompt, systemPrompt } from "./prompt";
 export type { CodexConfigValue, CodexSettings } from "./providers/codex";
 /** Whether opencode can run a model id, so a caller can refuse one it cannot. */
 export { namesProvider } from "./providers/opencode-events";
