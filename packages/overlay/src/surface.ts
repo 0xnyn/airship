@@ -4,8 +4,12 @@ import { extractElementInfo } from "@airship/source/browser";
 import type { Frame, FrameManager } from "./canvas/frames";
 import {
   clipTo,
+  frameChain,
   frameScreenRect,
   frameToScreen,
+  intersectRects,
+  MAX_NEST_DEPTH,
+  nestOffset,
   type Point,
   type Rect,
   screenToFrame,
@@ -63,6 +67,64 @@ export interface SurfaceResolver {
   at: (point: Point) => Surface | null;
   /** The surface a node lives in, or null if it is not on any of them. */
   of: (node: Node | null) => Surface | null;
+}
+
+/**
+ * The app node under a point in one document, looking *through* the editor's
+ * own chrome. `elementsFromPoint` rather than `elementFromPoint`, because
+ * chrome that is deliberately opaque to the pointer (the reorder drag proxy,
+ * see `InlineSurface.elementAtScreen`'s history) must not win the hit; the
+ * single-element form is the fallback for engines without the stack API —
+ * which includes happy-dom, where this package's DOM tests run.
+ */
+function hitTestIn(doc: Document, point: Point): Element | null {
+  const probe = doc.elementsFromPoint?.bind(doc);
+  if (!probe) {
+    return doc.elementFromPoint(point.x, point.y);
+  }
+  for (const node of probe(point.x, point.y)) {
+    if (!isEditorNode(node)) {
+      return node;
+    }
+  }
+  return null;
+}
+
+/**
+ * Step from a surface into the same-origin iframe under the point, repeatedly,
+ * and return the deepest surface. This is what makes a document nested inside
+ * a frame (Storybook's preview) pickable rather than one opaque `<iframe>`
+ * box. A cross-origin iframe stays an opaque leaf: `contentDocument` is null
+ * or throws, and the descent stops at the surface above it.
+ */
+function descend(
+  surface: Surface,
+  point: Point,
+  nestedFor: (win: Window, doc: Document) => Surface | null
+): Surface {
+  let current = surface;
+  for (let depth = 0; depth < MAX_NEST_DEPTH; depth += 1) {
+    const hit = current.elementAtScreen(point);
+    if (hit?.tagName !== "IFRAME") {
+      return current;
+    }
+    let doc: Document | null;
+    try {
+      doc = (hit as HTMLIFrameElement).contentDocument;
+    } catch {
+      return current;
+    }
+    const win = doc?.defaultView;
+    if (!(doc && win)) {
+      return current;
+    }
+    const next = nestedFor(win, doc);
+    if (!next) {
+      return current;
+    }
+    current = next;
+  }
+  return current;
 }
 
 /** Convenience: a rect from a node, measured in its own surface's space. */
@@ -134,19 +196,7 @@ export class InlineSurface implements Surface {
    * the proxy the first one armed.
    */
   elementAtScreen(point: Point): Element | null {
-    // Falls back to the single-element hit test where the stack API is missing,
-    // which is every pre-2017 engine and — the reason it is written down —
-    // happy-dom, where the rest of the package's DOM tests run.
-    const probe = document.elementsFromPoint?.bind(document);
-    if (!probe) {
-      return document.elementFromPoint(point.x, point.y);
-    }
-    for (const node of probe(point.x, point.y)) {
-      if (!isEditorNode(node)) {
-        return node;
-      }
-    }
-    return null;
+    return hitTestIn(document, point);
   }
 
   extract(
@@ -161,19 +211,141 @@ export class InlineSurface implements Surface {
   }
 }
 
+let nestedSeq = 0;
+
+/** Debugger-friendly ids; nothing in production reads `Surface.id`. */
+function nextNestedId(prefix: string): string {
+  nestedSeq += 1;
+  return `${prefix}/nested:${nestedSeq}`;
+}
+
+/**
+ * A same-origin document nested inside the inline surface — the app's own
+ * iframe holding the content. Scale is 1 and the composition is a plain
+ * translation. No agent is ever injected here: under inline mode the proxy
+ * deliberately passes third-party iframes through, so `extract` runs the
+ * shell's copy and source resolution may be missing where the fiber carries
+ * no owner stack.
+ */
+class InlineNestedSurface implements Surface {
+  readonly id = nextNestedId("inline");
+  readonly scale = 1;
+  private readonly nestedWin: Window;
+
+  constructor(win: Window) {
+    this.nestedWin = win;
+  }
+
+  get doc(): Document {
+    return this.nestedWin.document;
+  }
+
+  get win(): Window {
+    return this.nestedWin;
+  }
+
+  get isLive(): boolean {
+    try {
+      return Boolean(this.chain() && this.nestedWin.document?.body);
+    } catch {
+      return false;
+    }
+  }
+
+  bounds(): Rect | null {
+    const chain = this.chain();
+    if (!chain) {
+      return null;
+    }
+    const [inner] = chain;
+    const offset = nestOffset(chain);
+    return {
+      height: inner.clientHeight,
+      left: offset.x,
+      top: offset.y,
+      width: inner.clientWidth,
+    };
+  }
+
+  toScreen(rect: Rect): Rect {
+    const offset = this.offset();
+    return {
+      height: rect.height,
+      left: rect.left + offset.x,
+      top: rect.top + offset.y,
+      width: rect.width,
+    };
+  }
+
+  toLocal(point: Point): Point {
+    const offset = this.offset();
+    return { x: point.x - offset.x, y: point.y - offset.y };
+  }
+
+  elementAtScreen(point: Point): Element | null {
+    if (!this.isLive) {
+      return null;
+    }
+    return hitTestIn(this.doc, this.toLocal(point));
+  }
+
+  extract(
+    node: Element
+  ): Promise<{ context: ElementContext; source: SourceLocation | null }> {
+    return extractElementInfo(node);
+  }
+
+  scanTokens(): TokenScanResult {
+    // Same origin and same realm access, so a direct scan works inline.
+    return scanRuntimeTokens(this.doc, this.win);
+  }
+
+  /** Re-derived per call: an HMR reload or a navigation replaces the iframe
+   * elements with no event to invalidate on. */
+  private chain(): HTMLIFrameElement[] | null {
+    const chain = frameChain(this.nestedWin, window);
+    return chain && chain.length > 0 ? chain : null;
+  }
+
+  private offset(): Point {
+    const chain = this.chain();
+    return chain ? nestOffset(chain) : { x: 0, y: 0 };
+  }
+}
+
 export class InlineResolver implements SurfaceResolver {
   private readonly surface = new InlineSurface();
+  /** Keyed weakly by document, so surface identity is stable across pointer
+   * moves (the picker compares surfaces by identity) and dies with the doc. */
+  private readonly nested = new WeakMap<Document, InlineNestedSurface>();
 
   all(): Surface[] {
     return [this.surface];
   }
 
-  at(): Surface {
-    return this.surface;
+  at(point: Point): Surface {
+    return descend(this.surface, point, (win, doc) => this.nestedFor(win, doc));
   }
 
-  of(): Surface {
-    return this.surface;
+  of(node: Node | null): Surface {
+    const doc = node ? (node.ownerDocument ?? (node as Document)) : null;
+    if (!doc || doc === document) {
+      return this.surface;
+    }
+    const win = doc.defaultView;
+    if (!(win && frameChain(win, window)?.length)) {
+      return this.surface;
+    }
+    return this.nestedFor(win, doc);
+  }
+
+  private nestedFor(win: Window, doc: Document): InlineNestedSurface {
+    let surface = this.nested.get(doc);
+    if (!surface || surface.win !== win) {
+      surface = new InlineNestedSurface(win);
+      this.nested.set(doc, surface);
+    }
+    return surface;
   }
 }
 
@@ -228,8 +400,7 @@ export class FrameSurface implements Surface {
     if (!doc) {
       return null;
     }
-    const local = this.toLocal(point);
-    return doc.elementFromPoint(local.x, local.y);
+    return hitTestIn(doc, this.toLocal(point));
   }
 
   extract(
@@ -259,8 +430,140 @@ export class FrameSurface implements Surface {
   }
 }
 
+/**
+ * A same-origin document nested inside a frame — Storybook's preview iframe
+ * is the canonical case. Its own document stays `doc`, so every
+ * within-one-document consumer (the marquee, the drag ghost, the DOM tree)
+ * keeps working untouched; only the coordinate methods compose the chain of
+ * ancestor iframes, and `extract`/`scanTokens` route to the *nested*
+ * document's own agent.
+ */
+export class NestedSurface implements Surface {
+  readonly frame: Frame;
+  readonly id: string;
+  private readonly nestedWin: Window;
+  private readonly getScale: () => number;
+
+  constructor(frame: Frame, nestedWin: Window, getScale: () => number) {
+    this.frame = frame;
+    this.id = nextNestedId(frame.id);
+    this.nestedWin = nestedWin;
+    this.getScale = getScale;
+  }
+
+  get scale(): number {
+    return this.getScale();
+  }
+
+  get doc(): Document {
+    return this.nestedWin.document;
+  }
+
+  get win(): Window {
+    return this.nestedWin;
+  }
+
+  get isLive(): boolean {
+    try {
+      return Boolean(
+        this.frame.doc?.body && this.chain() && this.nestedWin.document?.body
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  /** The frame's rect clipped to the nested viewport, so chrome over an
+   * element scrolled out of the preview pane clips correctly. */
+  bounds(): Rect | null {
+    const chain = this.chain();
+    if (!chain) {
+      return null;
+    }
+    const [inner] = chain;
+    const viewport: Rect = {
+      height: inner.clientHeight,
+      left: 0,
+      top: 0,
+      width: inner.clientWidth,
+    };
+    const nested = frameToScreen(
+      this.frame.el,
+      viewport,
+      this.scale,
+      nestOffset(chain)
+    );
+    return intersectRects(frameScreenRect(this.frame.el), nested);
+  }
+
+  toScreen(rect: Rect): Rect {
+    const chain = this.chain();
+    return frameToScreen(
+      this.frame.el,
+      rect,
+      this.scale,
+      chain ? nestOffset(chain) : undefined
+    );
+  }
+
+  toLocal(point: Point): Point {
+    const chain = this.chain();
+    return screenToFrame(
+      this.frame.el,
+      point,
+      this.scale,
+      chain ? nestOffset(chain) : undefined
+    );
+  }
+
+  elementAtScreen(point: Point): Element | null {
+    if (!this.isLive) {
+      return null;
+    }
+    return hitTestIn(this.doc, this.toLocal(point));
+  }
+
+  extract(
+    node: Element
+  ): Promise<{ context: ElementContext; source: SourceLocation | null }> {
+    const agent = this.frame.agents.get(this.nestedWin);
+    if (agent) {
+      return agent.extract(node);
+    }
+    // The same pre-registration sliver FrameSurface documents: the shell's
+    // copy resolves DOM context and may miss the source location.
+    return extractElementInfo(node);
+  }
+
+  scanTokens(): TokenScanResult {
+    const agent = this.frame.agents.get(this.nestedWin);
+    if (agent) {
+      return agent.scanTokens();
+    }
+    return { framework: "unknown", tokens: [] };
+  }
+
+  /** Re-derived per call — an HMR reload or a Storybook navigation replaces
+   * the iframe elements with no event to invalidate on. The walk is a couple
+   * of `getBoundingClientRect` calls, the order of cost `frameScreenRect`
+   * already pays per conversion. */
+  private chain(): HTMLIFrameElement[] | null {
+    const root = this.frame.win;
+    if (!root) {
+      return null;
+    }
+    const chain = frameChain(this.nestedWin, root);
+    // Length 0 would mean the frame's own document — FrameSurface's job.
+    return chain && chain.length > 0 ? chain : null;
+  }
+}
+
 export class CanvasResolver implements SurfaceResolver {
   private readonly cache = new Map<string, FrameSurface>();
+  /** Keyed weakly by document, so nested surface identity is stable across
+   * pointer moves (the picker compares surfaces by identity) and dies with
+   * the document. */
+  private readonly nested = new WeakMap<Document, NestedSurface>();
 
   private readonly frames: FrameManager;
   private readonly viewport: CanvasViewport;
@@ -276,12 +579,25 @@ export class CanvasResolver implements SurfaceResolver {
 
   at(point: Point): Surface | null {
     const frame = this.frames.frameAt(point);
-    return frame ? this.surfaceFor(frame) : null;
+    if (!frame) {
+      return null;
+    }
+    return descend(this.surfaceFor(frame), point, (win, doc) =>
+      this.nestedFor(frame, win, doc)
+    );
   }
 
   of(node: Node | null): Surface | null {
     const frame = this.frames.frameOf(node);
-    return frame ? this.surfaceFor(frame) : null;
+    if (!frame) {
+      return null;
+    }
+    const doc = node ? (node.ownerDocument ?? (node as Document)) : null;
+    if (!doc || doc === frame.doc) {
+      return this.surfaceFor(frame);
+    }
+    const win = doc.defaultView;
+    return win ? this.nestedFor(frame, win, doc) : this.surfaceFor(frame);
   }
 
   /** Surfaces are cached per frame so identity comparisons stay meaningful. */
@@ -290,6 +606,15 @@ export class CanvasResolver implements SurfaceResolver {
     if (!surface || surface.frame !== frame) {
       surface = new FrameSurface(frame, () => this.viewport.scale);
       this.cache.set(frame.id, surface);
+    }
+    return surface;
+  }
+
+  private nestedFor(frame: Frame, win: Window, doc: Document): NestedSurface {
+    let surface = this.nested.get(doc);
+    if (!surface || surface.frame !== frame || surface.win !== win) {
+      surface = new NestedSurface(frame, win, () => this.viewport.scale);
+      this.nested.set(doc, surface);
     }
     return surface;
   }
