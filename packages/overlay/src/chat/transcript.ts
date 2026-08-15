@@ -350,9 +350,16 @@ export function turnMenu(
   const change: MenuEntry[] = [];
   if (actions.onUndo) {
     change.push({
-      hint: "⌘Z",
+      // No `hint`, and the label says "Revert" rather than "Undo".
+      //
+      // This row carried a `⌘Z` chip, which was not a stale glyph but a false
+      // statement: `onUndo` here is `AirshipApp.undo(jobId)`, the *server-side*
+      // revert of a finished job, while ⌘Z is `history.undo`, the local
+      // direct-manipulation stack. `app.ts` says in as many words that the two
+      // must never be wired together — and this menu was telling the user they
+      // were. There is no chord for this, so it advertises none.
       icon: "rotate-ccw",
-      label: "Undo this change",
+      label: "Revert this change",
       run: actions.onUndo,
     });
   }

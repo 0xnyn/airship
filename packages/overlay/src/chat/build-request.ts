@@ -24,6 +24,8 @@ export interface EditRequestParts {
   changeSet: ChangeSet;
   commentSet: CommentSet;
   images: ImageInput[];
+  /** Which model that backend runs on. Absent leaves it to the daemon. */
+  model?: string;
   moveSet: MoveSet;
   /** The turn this one continues, when refining rather than starting fresh. */
   parentJobId: string | null;
@@ -108,6 +110,10 @@ export function buildEditRequest(p: EditRequestParts): CreateJobRequest | null {
     comments,
     element,
     images: p.images?.length ? p.images : undefined,
+    // Absent rather than empty, like the arrays above but for a different
+    // reason: the daemon reads a missing model as "use the default resolved for
+    // this backend", and an empty string would be a model id of "".
+    model: p.model || undefined,
     moveChanges,
     // Feedback on an edit is a follow-up on *that* edit's session. Without
     // this, commenting on an older turn after starting a new chat would

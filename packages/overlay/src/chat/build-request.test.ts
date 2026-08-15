@@ -368,6 +368,28 @@ describe("buildEditRequest", () => {
   });
 });
 
+describe("the backend and its model", () => {
+  it("carries both when the picker has chosen one", () => {
+    const request = buildEditRequest(
+      parts({ agent: "codex", model: "gpt-5.3-codex", prompt: "hi" })
+    );
+    expect(request?.agent).toBe("codex");
+    expect(request?.model).toBe("gpt-5.3-codex");
+  });
+
+  it("omits the model when the picker is on Default", () => {
+    // Absent, not empty: the daemon reads a missing model as "use the default
+    // resolved for this backend", and `""` would be an id of "".
+    const request = buildEditRequest(parts({ model: "", prompt: "hi" }));
+    expect(request && "model" in request && request.model).toBeFalsy();
+    expect(request?.model).toBeUndefined();
+  });
+
+  it("omits the model when the picker never set one", () => {
+    expect(buildEditRequest(parts({ prompt: "hi" }))?.model).toBeUndefined();
+  });
+});
+
 describe("hasVisualDeltas", () => {
   it("is false for a plain typed turn", () => {
     const request = buildEditRequest(parts({ prompt: "hello" }));
