@@ -70,7 +70,7 @@ export function deviceGroups(
  * Both `Enter` and `Escape` are handled on the field, not left to the menu.
  * `Keys` skips every binding without `allowWhileTyping` while a field has focus,
  * so with this one focused the menu's own Escape never runs and the only way out
- * would be the mouse. `keys.ts` prescribes exactly this — field-local commit and
+ * would be the mouse. `keys/registry.ts` prescribes exactly this — field-local commit and
  * cancel — and `renameFrame` already does it.
  */
 export function customSizeRow(

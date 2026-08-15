@@ -12,7 +12,8 @@
  * time.
  */
 import { cls, el } from "./dom";
-import { keys } from "./keys";
+import type { CommandId } from "./keys/catalog";
+import { keys } from "./keys/registry";
 import { clamp } from "./num";
 import { placePopover, type Side } from "./popover";
 
@@ -132,10 +133,15 @@ export class Tooltips {
     // `pop.css.ts` targets, and a bare span would wrap without ever clamping.
     this.node.replaceChildren(el("span", { class: cls("tip-text"), text }));
 
-    // The shortcut is looked up by the tooltip's own text, so a control and its
-    // binding agree by construction: `data-tip="Undo"` finds the binding
-    // labelled "Undo" and nothing has to repeat the chord.
-    const hint = keys.hintFor(text);
+    // The shortcut is looked up by the control's `data-key`, which is a
+    // `CommandId`. It used to be looked up by the tooltip's own *text* — elegant
+    // right up until someone reworded a tooltip, at which point the chip
+    // silently vanished with nothing failing, or until two commands wanted the
+    // same name and one of them shadowed the other's chord. `tooltip.copy.test.ts`
+    // existed to freeze thirteen spellings by hand against exactly that, and it
+    // was missing four of them. The compiler holds this instead.
+    const id = target.dataset.key as CommandId | undefined;
+    const hint = id ? keys.hint(id) : null;
     if (hint) {
       this.node.append(el("span", { class: cls("tip-key"), text: hint }));
     }
