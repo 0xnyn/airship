@@ -11,20 +11,26 @@ import {
   type JobDiffBundle,
   type JobHistorySummary,
   type JobSnapshot,
+  type ModelCatalogue,
   modeToSurface,
   type ServerEvent,
 } from "@airship/protocol";
+import { SEED_MODELS } from "@airship/protocol/models";
 import { AttrSet } from "./attr-set";
 import type { Point } from "./canvas/space";
 import type { SafeInset } from "./canvas/viewport";
 import { ChangeSet } from "./change-set";
 import { buildEditRequest, hasVisualDeltas } from "./chat/build-request";
 import {
+  attachRailKeys,
+  attachRailWheel,
   type ChangeChip,
   renderChangeChips,
   shortValue,
 } from "./chat/change-chips";
 import { openCommentPopover } from "./chat/comment-popover";
+import { customModelRow, modelGroups, modelLabel } from "./chat/model-menu";
+import { restoreModelPick, saveModelPick } from "./chat/model-store";
 import { renderThreads } from "./chat/threads";
 import {
   type AssistantActions,
@@ -45,7 +51,7 @@ import {
   FEEDBACK,
   manager,
 } from "./dnd/manager";
-import { basename, clear, cls, el, PREFIX } from "./dom";
+import { basename, clear, cls, el, elementLabel, PREFIX } from "./dom";
 import { emptyState } from "./empty";
 import { History } from "./history";
 import { createOpApplier } from "./history-ops";
@@ -53,7 +59,10 @@ import { type IconName, icon } from "./icons";
 import { DesignPanel } from "./inspector/panel";
 import { applyPreview, clearPreview } from "./inspector/style-model";
 import { isEditableText, textTargetIn } from "./inspector/text-edit";
-import { keys } from "./keys";
+import { type CommandId, commandSpec } from "./keys/catalog";
+import { openPalette } from "./keys/palette";
+import { keys, tip } from "./keys/registry";
+import { openShortcuts } from "./keys/shortcuts-panel";
 import { MoveSet } from "./move-set";
 import {
   type Hit,
@@ -62,7 +71,12 @@ import {
   SelectionController,
   type SelectMode,
 } from "./picker";
-import { createMenu, mountPopoverHost } from "./popover-host";
+import {
+  closeOpenPopover,
+  createMenu,
+  type MenuHandle,
+  mountPopoverHost,
+} from "./popover-host";
 import { StructureSet } from "./structure-set";
 import { injectStyles } from "./styles";
 import { MIN_DOCK_W } from "./styles/const";
@@ -80,6 +94,21 @@ import { AirshipSocket } from "./ws";
  * deliberate pause between two separate nudges.
  */
 const NUDGE_COALESCE_MS = 250;
+
+/**
+ * Which way each arrow moves a selection.
+ *
+ * Read off the event rather than baked into eight separate bindings, so Nudge
+ * is one command in the catalog and one row in the shortcuts panel. `e.key` and
+ * not `e.code`: the arrows are the same physical keys on every layout, and the
+ * registry has already matched the chord by the time this runs.
+ */
+const NUDGE_AXIS: Readonly<Record<string, readonly [number, number]>> = {
+  ArrowDown: [0, 1],
+  ArrowLeft: [-1, 0],
+  ArrowRight: [1, 0],
+  ArrowUp: [0, -1],
+};
 
 /** Default floating-panel widths. Live widths are CSS vars on the overlay root. */
 const LEFT_W = 340;
@@ -136,6 +165,21 @@ const AGENTS: { icon: IconName; kind: AgentKind; label: string }[] = [
 ];
 
 /**
+ * The models the picker paints before the daemon has answered.
+ *
+ * Imported rather than restated, which is the opposite of what `AGENTS` above
+ * does — and the difference is what the two lists are. Three backends is a
+ * sentence; the model list is thirty-odd rows *generated* from models.dev, and
+ * hand-copying generated output is how it goes stale in exactly the way the
+ * generator exists to prevent. `@airship/protocol/models` is its own entry
+ * point precisely so a value can be taken from it without zod coming too.
+ */
+const SEED_CATALOGUE: ModelCatalogue = AGENTS.map((a) => ({
+  agent: a.kind,
+  models: SEED_MODELS[a.kind],
+}));
+
+/**
  * The two stages, as the surface picker offers them.
  *
  * Same shape and same reasoning as `AGENTS` above: a list short enough that
@@ -184,6 +228,14 @@ export interface Stage {
   /** Hand the stage a live read of the selection — the canvas needs it for
    * zoom-to-selection, which cannot be answered from frame geometry alone. */
   bindSelection?: (get: () => Selection | null) => void;
+  /**
+   * Release everything the stage owns. Called from `AirshipApp.destroy`.
+   *
+   * Optional the way the rest of this interface is: `InlineStage` holds one
+   * chrome layer and two window listeners it shares with the page, and has
+   * nothing of its own to take down.
+   */
+  destroy?: () => void;
   /** True while a pan/zoom gesture is in flight; hover is suppressed then. */
   isGesturing?: () => boolean;
   /** Where outlines, handles and drop indicators are drawn. */
@@ -297,6 +349,17 @@ class InlineStage implements Stage {
   readonly resolver: SurfaceResolver = new InlineResolver();
   readonly swallowPresses = true;
 
+  /**
+   * Held so `destroy` can take them off again.
+   *
+   * `onLayoutChange` returns nothing — the canvas keeps its subscribers in an
+   * array it clears itself, so the interface never needed a disposer. Inline
+   * subscribes to `window` instead, where nothing is cleared by anything, and
+   * an overlay torn down without this left a scroll and a resize listener
+   * calling `syncChrome` on a dead app for the life of the page.
+   */
+  private readonly listeners: (() => void)[] = [];
+
   /** No canvas, so no canvas controls — the bar's tool slot stays empty. */
   mount(): void {
     this.layer.mount(document.body);
@@ -306,15 +369,82 @@ class InlineStage implements Stage {
     // The page scrolls under fixed chrome, so both matter.
     window.addEventListener("scroll", cb, true);
     window.addEventListener("resize", cb);
+    this.listeners.push(() => {
+      window.removeEventListener("scroll", cb, true);
+      window.removeEventListener("resize", cb);
+    });
+  }
+
+  destroy(): void {
+    for (const off of this.listeners.splice(0)) {
+      off();
+    }
+    this.layer.destroy();
   }
 }
 
+/**
+ * Whether *this* bundle holds the page.
+ *
+ * Module-level, not on `window`, and that is the whole point. The two things
+ * this has to tell apart are a second `boot()` from this same bundle — turn it
+ * away — and a bundle the dev server swapped in wholesale, which must proceed
+ * and take its predecessor down first. A module flag separates them for free: a
+ * re-entrant call sees this scope, a replaced bundle gets a fresh one.
+ *
+ * It used to be `window.__airshipBooted`, which cannot make that distinction,
+ * because it survives a bundle swap for exactly the same reason
+ * `__airshipDestroy` does. The incoming bundle was turned away at the guard, one
+ * line before the hook that guard existed to let it run — so no overlay was ever
+ * torn down and `destroy()` was dead code in production.
+ */
+let booted = false;
+
+/**
+ * Take the page for this bundle, running whatever held it before.
+ *
+ * `false` means someone else in this same module already has it, and the caller
+ * should do nothing at all — in particular it must not tear down the overlay it
+ * just built.
+ */
+function claimBoot(): boolean {
+  if (booted) {
+    return false;
+  }
+  const w = window as unknown as { __airshipDestroy?: () => void };
+  // Published by the *outgoing* bundle, so this runs in that bundle's scope and
+  // releases that bundle's claim, not ours. Ours is set immediately after.
+  w.__airshipDestroy?.();
+  booted = true;
+  return true;
+}
+
+/**
+ * Publish a teardown hook on `window`, and release this bundle's claim when it
+ * runs.
+ *
+ * A dev server that replaces the injected bundle wholesale leaves the old
+ * overlay's capture-phase listeners on `document` with no reference left to
+ * remove them by. A hook on `window` survives the swap, so the incoming bundle
+ * can take the outgoing one down before it builds its own.
+ *
+ * The `booted = false` is here rather than in `AirshipApp.destroy` so that both
+ * boot paths get it without either knowing about this module's state, and so
+ * that a destroy which did *not* come through the published hook — a test
+ * calling `app.destroy()` directly — leaves the flag alone.
+ */
+function publishDestroy(destroy: () => void): void {
+  const w = window as unknown as { __airshipDestroy?: () => void };
+  w.__airshipDestroy = () => {
+    booted = false;
+    destroy();
+  };
+}
+
 export function boot(): void {
-  const w = window as unknown as { __airshipBooted?: boolean };
-  if (w.__airshipBooted) {
+  if (!claimBoot()) {
     return;
   }
-  w.__airshipBooted = true;
   injectStyles();
   const config = (window as unknown as { __PIKA__?: AirshipWindowConfig })
     .__PIKA__;
@@ -322,11 +452,15 @@ export function boot(): void {
   // which surface it is on and the clean app path to navigate back to, and an
   // injection old enough to carry neither still boots — it just falls back to
   // reading the current URL.
-  new AirshipApp(
+  const app = new AirshipApp(
     { ...config, mode: "inline", wsPath: config?.wsPath ?? "/__airship/ws" },
     new InlineStage()
-  ).mount();
+  );
+  app.mount();
+  publishDestroy(() => app.destroy());
 }
+
+export { claimBoot, publishDestroy };
 
 export class AirshipApp {
   private readonly socket: AirshipSocket;
@@ -488,6 +622,23 @@ export class AirshipApp {
    * then re-seeded from a thread's own agent when one is reopened, so a
    * follow-up stays on the backend that holds the conversation. */
   private agent: AgentKind = "claude";
+  /**
+   * The model each backend runs on, keyed by backend.
+   *
+   * Per harness rather than one string because the picker can move between
+   * them mid-session: a single value would follow the switch and hand Codex a
+   * `claude-opus-5`. An absent entry means "no model on the request", which
+   * lets the daemon's own resolved default stand.
+   */
+  private models: Partial<Record<AgentKind, string>> = {};
+  /** Live catalogue once the daemon answers; the generated seed until then. */
+  private catalogue: ModelCatalogue = SEED_CATALOGUE;
+  /** Whether this session has already asked. The menu asks on first open. */
+  private modelsRequested = false;
+  /** The open picker, so a late `models:result` can repaint it in place. */
+  private agentMenu: MenuHandle | null = null;
+  /** Whether a stored pick was found, which is what outranks `hello`. */
+  private modelRestored = false;
   private agentBtn!: HTMLElement;
   private awaiting = false;
   private applyingVisual = false;
@@ -519,6 +670,14 @@ export class AirshipApp {
   /** The docks' dnd-kit entities — the two splitters, and the header and pill
    * of each panel. They live as long as the app does. */
   private readonly dockScope = new DndScope();
+  /**
+   * Everything this app subscribed to, released by `destroy()`.
+   *
+   * Listeners and key bindings used to be registered and their disposers
+   * dropped on the floor, which is survivable only for as long as an overlay is
+   * never torn down. `?__airship=inline` rebuilds one on every HMR cycle.
+   */
+  private readonly disposers: (() => void)[] = [];
 
   constructor(config: AirshipWindowConfig, stage: Stage) {
     this.stage = stage;
@@ -539,6 +698,7 @@ export class AirshipApp {
       {
         isGesturing: () => stage.isGesturing?.() ?? false,
         layer: stage.layer,
+        onContextMenu: (at) => this.openContextMenu(at),
         resolver: stage.resolver,
         swallowPresses: stage.swallowPresses,
       }
@@ -611,118 +771,117 @@ export class AirshipApp {
    */
   private bindEditorKeys(): void {
     const live = (): boolean => this.editing && this.selected !== null;
-    keys.bindAll([
-      // Not gated on `canUndo` any more. An empty stack is a thing worth
-      // reporting, and a binding that declines to match hands ⌘Z to the browser's
-      // native undo on the page underneath — which can mangle a form the user
-      // has open. In edit mode the page belongs to the editor, so it takes the
-      // key either way. (`Keys` calls `preventDefault` on any binding that
-      // matches, so this widening is what consumes the event.)
-      {
-        keys: "mod+z",
-        label: "Undo",
-        run: () => this.undoEdit(),
-        when: () => this.editing,
-      },
-      {
-        keys: "mod+shift+z, mod+y",
-        label: "Redo",
-        run: () => this.redoEdit(),
-        when: () => this.editing,
-      },
-      {
-        keys: "backspace, delete",
-        label: "Delete",
-        run: () => this.panel.removeSelection(),
-        when: live,
-      },
-      {
-        keys: "mod+d",
-        label: "Duplicate",
-        run: () => this.panel.duplicateSelection(),
-        when: live,
-      },
-      // Both spellings of the same command, now that Text is no longer a tool
-      // (see `tools.ts`). It toasts on refusal, which the `Enter` path used not
-      // to: the old split — silent from `Enter`, loud from the `T` *tool* — was
-      // justified by `T` being a tool whose light went out with nothing to show
-      // for it. It is a command now, and a command that silently declines is
-      // worse than one that says why. `keys.hintFor` reads the first chord, so
-      // the tooltip still shows ↩.
-      {
-        keys: "enter, t",
-        label: "Edit text",
-        run: () => {
-          if (!this.editSelectedText()) {
-            toast("This layer has no text to edit", { tone: "error" });
-          }
-        },
-        when: live,
-      },
-      // F is the canvas `+` button's shortcut, not a tool. Deliberately outside
-      // `live` — adding a frame needs no selection — and deliberately not gated
-      // on `editing` either, because `+` itself stays visible in view mode and a
-      // shortcut that disagrees with the button it stands for is worse than no
-      // shortcut. Inline has no stage controls and `addFrame` is absent there,
-      // which is what the guard checks.
-      {
-        keys: "f",
-        label: "Add a frame",
-        run: () => this.stage.addFrame?.(),
-        when: () => Boolean(this.stage.addFrame),
-      },
-      // H toggles the Hand. Gated the other way from the tools above: it is
-      // view-mode furniture, so its `when` matches the button's visibility
-      // exactly — a shortcut that works while its button is hidden is the same
-      // disagreement `F` was fixed to avoid, read backwards. Unlike space-to-pan
-      // this is a plain chord, so it belongs in the registry (see the note in
-      // `viewport.ts` above the raw keydown/keyup pair).
-      {
-        keys: "h",
-        label: "Hand tool",
-        run: () => this.setHandTool(!this.hand),
-        when: () => !this.editing && Boolean(this.stage.setHandTool),
-      },
-      // Escape drops the Hand, the way it drops every other latched thing in the
-      // editor. It cannot collide with the picker's Escape: that one is bound
-      // only while editing, and the Hand can only be armed while not.
-      //
-      // `dragActive` is the same guard the picker's Escape carries, and for the
-      // same reason. A matched binding stops propagation, and dnd-kit's own
-      // Escape-to-cancel listener sits downstream of this one — so without the
-      // check, hitting Escape to abandon a dock drag would put the Hand down and
-      // leave the panel wherever the pointer had dragged it to.
-      {
-        keys: "escape",
-        label: "Put the Hand down",
-        run: () => this.setHandTool(false),
-        when: () => this.hand && !this.controller.guard.dragActive,
-      },
-      // Nudge. One device pixel by default, ten with shift — the same pair
-      // every editor uses, and both go through `translate` so they compose with
-      // the Position fields rather than fighting them.
-      ...(
-        [
-          ["arrowleft", -1, 0],
-          ["arrowright", 1, 0],
-          ["arrowup", 0, -1],
-          ["arrowdown", 0, 1],
-        ] as const
-      ).flatMap(([key, dx, dy]) => [
+    // The disposer is kept now. It used to be dropped on the floor, so an
+    // overlay rebuilt in the same page — which `?__airship=inline` does on
+    // every HMR cycle — stacked a second full set of bindings on top of the
+    // first, each closing over a dead panel.
+    this.disposers.push(
+      keys.bindAll([
+        // Not gated on `canUndo` any more. An empty stack is a thing worth
+        // reporting, and a binding that declines to match hands ⌘Z to the browser's
+        // native undo on the page underneath — which can mangle a form the user
+        // has open. In edit mode the page belongs to the editor, so it takes the
+        // key either way. (`Keys` calls `preventDefault` on any binding that
+        // matches, so this widening is what consumes the event.)
         {
-          keys: key,
-          label: "Nudge",
-          run: () => this.nudgeStep(dx, dy),
+          id: "history.undo",
+          run: () => this.undoEdit(),
+          when: () => this.editing,
+        },
+        {
+          id: "history.redo",
+          run: () => this.redoEdit(),
+          when: () => this.editing,
+        },
+        {
+          id: "element.delete",
+          run: () => this.panel.removeSelection(),
           when: live,
         },
         {
-          keys: `shift+${key}`,
-          label: "Nudge by 10",
-          run: () => this.nudgeStep(dx * 10, dy * 10),
+          id: "element.duplicate",
+          run: () => this.panel.duplicateSelection(),
           when: live,
         },
-      ]),
-    ]);
+        // Both spellings of the same command, now that Text is no longer a tool
+        // (see `tools.ts`). It toasts on refusal, which the `Enter` path used not
+        // to: the old split — silent from `Enter`, loud from the `T` *tool* — was
+        // justified by `T` being a tool whose light went out with nothing to show
+        // for it. It is a command now, and a command that silently declines is
+        // worse than one that says why. A tooltip shows the catalog's first
+        // chord, so it still reads ↩.
+        {
+          id: "element.editText",
+          run: () => this.editTextOrExplain(),
+          when: live,
+        },
+        // F is the canvas `+` button's shortcut, not a tool. Deliberately outside
+        // `live` — adding a frame needs no selection — and deliberately not gated
+        // on `editing` either, because `+` itself stays visible in view mode and a
+        // shortcut that disagrees with the button it stands for is worse than no
+        // shortcut. Inline has no stage controls and `addFrame` is absent there,
+        // which is what the guard checks.
+        {
+          id: "frame.add",
+          run: () => this.stage.addFrame?.(),
+          when: () => Boolean(this.stage.addFrame),
+        },
+        // H toggles the Hand. Gated the other way from the tools above: it is
+        // view-mode furniture, so its `when` matches the button's visibility
+        // exactly — a shortcut that works while its button is hidden is the same
+        // disagreement `F` was fixed to avoid, read backwards. Unlike space-to-pan
+        // this is a plain chord, so it belongs in the registry (see the note in
+        // `viewport.ts` above the raw keydown/keyup pair).
+        {
+          id: "tool.hand",
+          run: () => this.setHandTool(!this.hand),
+          when: () => !this.editing && Boolean(this.stage.setHandTool),
+        },
+        // Escape drops the Hand, the way it drops every other latched thing in the
+        // editor. It cannot collide with the picker's Escape: that one is bound
+        // only while editing, and the Hand can only be armed while not.
+        //
+        // `dragActive` is the same guard the picker's Escape carries, and for the
+        // same reason. A matched binding stops propagation, and dnd-kit's own
+        // Escape-to-cancel listener sits downstream of this one — so without the
+        // check, hitting Escape to abandon a dock drag would put the Hand down and
+        // leave the panel wherever the pointer had dragged it to.
+        {
+          id: "tool.handDrop",
+          run: () => this.setHandTool(false),
+          when: () => this.hand && !this.controller.guard.dragActive,
+        },
+        // Nudge. One device pixel by default, ten with shift — the same pair
+        // every editor uses, and both go through `translate` so they compose with
+        // the Position fields rather than fighting them.
+        //
+        // Two bindings rather than eight. One command answers to all four
+        // arrows and reads its axis off the event, which is what lets the
+        // shortcuts panel show a single "← → ↑ ↓" row instead of four that say
+        // the same thing.
+        {
+          id: "element.nudge",
+          run: (e) => {
+            const [dx, dy] = NUDGE_AXIS[e.key] ?? [0, 0];
+            this.nudgeStep(dx, dy);
+          },
+          when: live,
+        },
+        {
+          id: "element.nudgeBig",
+          run: (e) => {
+            const [dx, dy] = NUDGE_AXIS[e.key] ?? [0, 0];
+            this.nudgeStep(dx * 10, dy * 10);
+          },
+          when: live,
+        },
+        // The two discovery surfaces. Ungated: they document both modes and
+        // both surfaces, and a help sheet you can only reach from the mode you
+        // already understand is the wrong way round.
+        { id: "help.shortcuts", run: () => openShortcuts() },
+        { id: "help.palette", run: () => openPalette() },
+      ])
+    );
   }
 
   /**
@@ -780,6 +939,10 @@ export class AirshipApp {
     this.root = el("div", { id: `${PREFIX}-root` });
     this.restoreWidths();
     this.restoreDocks();
+    // Before the docks are built: `buildAgentButton` paints the tooltip from
+    // this state, and a restore afterwards would leave the first frame showing
+    // a backend the composer is not actually on.
+    this.modelRestored = this.restoreModel();
     this.buildBar();
     this.buildLeftDock();
     this.buildRightDock();
@@ -847,6 +1010,127 @@ export class AirshipApp {
   }
 
   /**
+   * The right-click menu on the selection.
+   *
+   * Every row carries a `command`, so its chord is rendered from the registry
+   * and it appears in the generated reference for free — the menu cannot end up
+   * advertising a key that runs something else, which is exactly what the
+   * transcript's hand-written `⌘Z` was doing.
+   *
+   * Anchored to a one-pixel element parked at the pointer. `openPopover` places
+   * against an element's rect and watches that element for removal, so a point
+   * needs a stand-in with a real box; it is removed when the menu closes.
+   */
+  private openContextMenu(at: Point): void {
+    const spot = el("div", { class: cls("point-anchor") });
+    spot.style.left = `${at.x}px`;
+    spot.style.top = `${at.y}px`;
+    this.root.append(spot);
+
+    const menu = createMenu([
+      {
+        command: "element.editText",
+        icon: "layer-text",
+        label: "Edit text",
+        run: () => this.editTextOrExplain(),
+      },
+      {
+        command: "element.duplicate",
+        icon: "plus",
+        label: "Duplicate",
+        run: () => this.panel.duplicateSelection(),
+      },
+      {
+        command: "element.delete",
+        icon: "minus",
+        label: "Delete",
+        run: () => this.panel.removeSelection(),
+      },
+      { separator: true },
+      // Absent rather than disabled on the inline surface, where there is no
+      // canvas to zoom — the same rule `tools.ts` states for the missing pen.
+      ...(this.stage.setHandTool
+        ? [
+            {
+              command: "view.zoomToSelection" as const,
+              label: "Zoom to selection",
+              run: () => keys.run("view.zoomToSelection"),
+            },
+          ]
+        : []),
+      {
+        icon: "code",
+        label: "Copy selector",
+        run: () => this.copySelector(),
+      },
+    ]);
+    menu.open(spot, "below", { onClose: () => spot.remove() });
+  }
+
+  /** The selected element's CSS selector, on the clipboard. */
+  private copySelector(): void {
+    const node = this.selected?.node;
+    if (!node) {
+      return;
+    }
+    // `elementLabel` and not a full unique path: what people paste this into is
+    // a message to the agent or a CSS file, and `div.card.is-open` is the part
+    // that names the thing. A generated `:nth-child` chain is precise and
+    // useless in both places.
+    const selector = elementLabel(node);
+    navigator.clipboard?.writeText(selector).then(
+      () => toast(`Copied ${selector}`),
+      () => toast("Could not reach the clipboard", { tone: "error" })
+    );
+  }
+
+  /**
+   * Take the overlay back down.
+   *
+   * There was no teardown at all, which is survivable only for as long as an
+   * overlay is never rebuilt — and `?__airship=inline` rebuilds one on every
+   * HMR cycle. What was left behind each time was a full second set of
+   * capture-phase key bindings, every one of them `preventDefault`-ing for a
+   * `when()` that closed over a dead panel; `ToolController.destroy` had never
+   * been called at all; and `Keys.destroy`, whose docstring describes exactly
+   * this leak, had no caller anywhere in the tree.
+   *
+   * `keys.destroy()` goes last on purpose: the disposers above unbind their own
+   * commands one at a time, and this is the sweep that catches anything bound
+   * by a subsystem that forgot to hand its disposer over.
+   */
+  destroy(): void {
+    for (const off of this.disposers.splice(0)) {
+      off();
+    }
+    // Both debounces, before anything they would call is torn down. The preview
+    // one is the one that bites: its callback reaches `socket.send`, so a
+    // destroy inside the debounce window would fire a request at a socket that
+    // is about to close, and hold the whole app graph alive until it did.
+    this.clearPreviewTimer();
+    if (this.nudgeTimer !== null) {
+      clearTimeout(this.nudgeTimer);
+      this.nudgeTimer = null;
+    }
+    this.tools.destroy();
+    this.controller.destroy();
+    this.panel.destroy();
+    // The socket's reconnect loop is self-sustaining — `onclose` schedules the
+    // next attempt — so without this an overlay rebuilt in the same page leaves
+    // a live socket behind on every cycle, each still delivering events to a
+    // dead app's listeners.
+    this.socket.destroy();
+    this.tooltips?.destroy();
+    this.tooltips = null;
+    closeOpenPopover("programmatic");
+    this.stage.destroy?.();
+    window.removeEventListener("resize", this.onViewportResize);
+    this.dockScope.clear();
+    this.root?.remove();
+    keys.destroy();
+  }
+
+  /**
    * Re-anchor everything drawn in screen space over a node that may have moved.
    * The outline and the reorder drag proxy must move together — an outline that
    * tracks while its hit area does not is worse than neither.
@@ -893,49 +1177,56 @@ export class AirshipApp {
   }
 
   private watchSplitters(): void {
-    manager.monitor.addEventListener("dragstart", () => {
-      const id = String(manager.dragOperation.source?.id ?? "");
-      if (!id.startsWith(DND.splitter)) {
-        return;
-      }
-      const side: Side = id.endsWith("left") ? "left" : "right";
-      this.resizing = {
-        side,
-        startW: this.width[side],
-        startX: this.placement[side].x,
-      };
-      this.splitterDelta.start();
-      this.controller.guard.setDragging(true, "col-resize");
-    });
-    manager.monitor.addEventListener("dragmove", (e) => {
-      const rz = this.resizing;
-      if (!rz) {
-        return;
-      }
-      // The left dock grows rightwards, the right dock grows leftwards.
-      const dx = this.splitterDelta.update(e).x * (rz.side === "left" ? 1 : -1);
-      this.width[rz.side] = clampWidth(rz.startW + dx);
-      this.trackFloatingResize(rz);
-      this.applyWidths();
-    });
-    manager.monitor.addEventListener("dragend", (e) => {
-      const rz = this.resizing;
-      if (!rz) {
-        return;
-      }
-      if (e.canceled) {
-        this.width[rz.side] = rz.startW;
-        this.placement[rz.side].x = rz.startX;
+    // Captured, like every other monitor listener in the repo. `manager` is a
+    // module singleton, so `dockScope.clear()` in `destroy` takes the draggable
+    // *entities* out but leaves these handlers on it — and a drag on the next
+    // overlay would then also run this one, against a dead app.
+    this.disposers.push(
+      manager.monitor.addEventListener("dragstart", () => {
+        const id = String(manager.dragOperation.source?.id ?? "");
+        if (!id.startsWith(DND.splitter)) {
+          return;
+        }
+        const side: Side = id.endsWith("left") ? "left" : "right";
+        this.resizing = {
+          side,
+          startW: this.width[side],
+          startX: this.placement[side].x,
+        };
+        this.splitterDelta.start();
+        this.controller.guard.setDragging(true, "col-resize");
+      }),
+      manager.monitor.addEventListener("dragmove", (e) => {
+        const rz = this.resizing;
+        if (!rz) {
+          return;
+        }
+        // The left dock grows rightwards, the right dock grows leftwards.
+        const dx =
+          this.splitterDelta.update(e).x * (rz.side === "left" ? 1 : -1);
+        this.width[rz.side] = clampWidth(rz.startW + dx);
+        this.trackFloatingResize(rz);
         this.applyWidths();
-      }
-      this.resizing = null;
-      this.controller.guard.setDragging(false);
-      this.saveWidths();
-      this.saveDocks();
-      this.autoGrow();
-      // The outline lives in viewport coords; realign after the layout settles.
-      requestAnimationFrame(() => this.controller.drawOutline());
-    });
+      }),
+      manager.monitor.addEventListener("dragend", (e) => {
+        const rz = this.resizing;
+        if (!rz) {
+          return;
+        }
+        if (e.canceled) {
+          this.width[rz.side] = rz.startW;
+          this.placement[rz.side].x = rz.startX;
+          this.applyWidths();
+        }
+        this.resizing = null;
+        this.controller.guard.setDragging(false);
+        this.saveWidths();
+        this.saveDocks();
+        this.autoGrow();
+        // The outline lives in viewport coords; realign after the layout settles.
+        requestAnimationFrame(() => this.controller.drawOutline());
+      })
+    );
   }
 
   /**
@@ -1002,78 +1293,82 @@ export class AirshipApp {
    * instead of jumping to wherever the anchors would have put it.
    */
   private watchDockDrag(): void {
-    manager.monitor.addEventListener("dragstart", () => {
-      const { source } = manager.dragOperation;
-      if (source?.type !== DND.dockMove) {
-        return;
-      }
-      const side: Side = String(source.id).includes(":left") ? "left" : "right";
-      const open = this.isOpen(side);
-      const rect = (
-        open ? this.dockEl(side) : this.pillEl(side)
-      ).getBoundingClientRect();
-      const from = { ...this.placement[side] };
-      this.moving = {
-        side,
-        startPlacement: from,
-        startX: rect.left,
-        startY: rect.top,
-      };
-      this.moveDelta.start();
-      this.controller.guard.setDragging(true, "grabbing");
-      this.dockEl(side).classList.add(cls("dock-moving"));
-      this.pillEl(side).classList.add(cls("dock-moving"));
-      this.placement[side] = {
-        h: floatHeight(from, open, rect.height, this.inset),
-        mode: "floating",
-        x: rect.left,
-        y: rect.top,
-      };
-      // Once, here — not per move. The panel has stopped being a wall, and the
-      // canvas has to hear that; but `applyWidths` reaches `stage.relayout`,
-      // which re-clips the chrome layer, re-checks frame mounts and re-renders
-      // every frame's furniture. That is a drag's worth of work per pointer
-      // frame if it runs in `dragmove`, to publish a number that does not change
-      // again until the drop.
-      this.applyWidths();
-    });
-    manager.monitor.addEventListener("dragmove", (e) => {
-      const mv = this.moving;
-      if (!mv) {
-        return;
-      }
-      const d = this.moveDelta.update(e);
-      const p = this.placement[mv.side];
-      const { x, y } = this.clampFloat(
-        mv.side,
-        mv.startX + d.x,
-        mv.startY + d.y
-      );
-      p.x = x;
-      p.y = y;
-      this.applyPlacement(mv.side);
-    });
-    manager.monitor.addEventListener("dragend", (e) => {
-      const mv = this.moving;
-      // Cleared before anything downstream runs: `afterDockToggle` re-renders,
-      // and a handler that reads a stale `moving` would think a drag is still in
-      // flight. Same order, and the same reason, as `FrameChrome.onDragEnd`.
-      this.moving = null;
-      if (!mv) {
-        return;
-      }
-      this.dockEl(mv.side).classList.remove(cls("dock-moving"));
-      this.pillEl(mv.side).classList.remove(cls("dock-moving"));
-      this.controller.guard.setDragging(false);
-      if (e.canceled) {
-        this.placement[mv.side] = { ...mv.startPlacement };
-      }
-      this.applyPlacement(mv.side);
-      this.saveDocks();
-      // `applyWidths` → `autoGrow` → realign chrome. The composer's max height
-      // is derived from the left dock's own height, which a tear-off changes.
-      this.afterDockToggle();
-    });
+    this.disposers.push(
+      manager.monitor.addEventListener("dragstart", () => {
+        const { source } = manager.dragOperation;
+        if (source?.type !== DND.dockMove) {
+          return;
+        }
+        const side: Side = String(source.id).includes(":left")
+          ? "left"
+          : "right";
+        const open = this.isOpen(side);
+        const rect = (
+          open ? this.dockEl(side) : this.pillEl(side)
+        ).getBoundingClientRect();
+        const from = { ...this.placement[side] };
+        this.moving = {
+          side,
+          startPlacement: from,
+          startX: rect.left,
+          startY: rect.top,
+        };
+        this.moveDelta.start();
+        this.controller.guard.setDragging(true, "grabbing");
+        this.dockEl(side).classList.add(cls("dock-moving"));
+        this.pillEl(side).classList.add(cls("dock-moving"));
+        this.placement[side] = {
+          h: floatHeight(from, open, rect.height, this.inset),
+          mode: "floating",
+          x: rect.left,
+          y: rect.top,
+        };
+        // Once, here — not per move. The panel has stopped being a wall, and the
+        // canvas has to hear that; but `applyWidths` reaches `stage.relayout`,
+        // which re-clips the chrome layer, re-checks frame mounts and re-renders
+        // every frame's furniture. That is a drag's worth of work per pointer
+        // frame if it runs in `dragmove`, to publish a number that does not change
+        // again until the drop.
+        this.applyWidths();
+      }),
+      manager.monitor.addEventListener("dragmove", (e) => {
+        const mv = this.moving;
+        if (!mv) {
+          return;
+        }
+        const d = this.moveDelta.update(e);
+        const p = this.placement[mv.side];
+        const { x, y } = this.clampFloat(
+          mv.side,
+          mv.startX + d.x,
+          mv.startY + d.y
+        );
+        p.x = x;
+        p.y = y;
+        this.applyPlacement(mv.side);
+      }),
+      manager.monitor.addEventListener("dragend", (e) => {
+        const mv = this.moving;
+        // Cleared before anything downstream runs: `afterDockToggle` re-renders,
+        // and a handler that reads a stale `moving` would think a drag is still in
+        // flight. Same order, and the same reason, as `FrameChrome.onDragEnd`.
+        this.moving = null;
+        if (!mv) {
+          return;
+        }
+        this.dockEl(mv.side).classList.remove(cls("dock-moving"));
+        this.pillEl(mv.side).classList.remove(cls("dock-moving"));
+        this.controller.guard.setDragging(false);
+        if (e.canceled) {
+          this.placement[mv.side] = { ...mv.startPlacement };
+        }
+        this.applyPlacement(mv.side);
+        this.saveDocks();
+        // `applyWidths` → `autoGrow` → realign chrome. The composer's max height
+        // is derived from the left dock's own height, which a tear-off changes.
+        this.afterDockToggle();
+      })
+    );
   }
 
   private resetWidth(side: Side): void {
@@ -1439,6 +1734,26 @@ export class AirshipApp {
     this.bar = el("div", { class: cls("bar") }, [
       ...this.editOnlyBar,
       ...this.viewOnlyBar,
+      // Outside both mode lists on purpose: the shortcuts sheet documents both
+      // modes, and a help button that disappears in the mode you are stuck in
+      // is the one place it is least useful. Ahead of the surface toggle so it
+      // reads as furniture rather than as another mode switch.
+      //
+      // The palette sits beside it for a reason that is the whole point of both:
+      // it had no pointer affordance at all, so the one surface that lists every
+      // command the editor can run was reachable only by already knowing ⌘K.
+      this.iconButton(
+        "command",
+        "Command palette",
+        () => openPalette(),
+        "help.palette"
+      ),
+      this.iconButton(
+        "keyboard",
+        "Keyboard shortcuts",
+        () => openShortcuts(),
+        "help.shortcuts"
+      ),
       this.buildSurfaceToggle(),
       el("div", { class: cls("bar-sep") }),
       this.buildEditToggle(),
@@ -1545,6 +1860,7 @@ export class AirshipApp {
   private buildUndoGroup(): HTMLElement {
     const make = (
       label: string,
+      command: CommandId,
       extra: string,
       run: () => void
     ): HTMLButtonElement =>
@@ -1553,14 +1869,20 @@ export class AirshipApp {
         {
           "aria-label": label,
           class: `${cls("tool")} ${cls(extra)}`,
-          "data-tip": label,
+          // `tip`, not a bare `data-tip`: the chip is resolved from `data-key`
+          // now, so a control that names only its copy renders without one.
+          ...tip(label, command),
           onClick: run,
           type: "button",
         },
         [icon("rotate-ccw", "sm")]
       ) as HTMLButtonElement;
-    this.undoBtn = make("Undo", "bar-undo", () => this.undoEdit());
-    this.redoBtn = make("Redo", "bar-redo", () => this.redoEdit());
+    this.undoBtn = make("Undo", "history.undo", "bar-undo", () =>
+      this.undoEdit()
+    );
+    this.redoBtn = make("Redo", "history.redo", "bar-redo", () =>
+      this.redoEdit()
+    );
     return el("div", { class: cls("tool-group") }, [
       this.undoBtn,
       this.redoBtn,
@@ -1699,7 +2021,7 @@ export class AirshipApp {
         "aria-label": "Hand tool",
         "aria-pressed": "false",
         class: cls("tool"),
-        "data-tip": "Hand tool",
+        ...tip("Hand tool", "tool.hand"),
         onClick: () => this.setHandTool(!this.hand),
         type: "button",
       },
@@ -1726,18 +2048,19 @@ export class AirshipApp {
   private buildToolGroup(wanted: Tool[]): HTMLElement {
     const group = el("div", { class: cls("tool-group") });
     for (const tool of wanted) {
-      const spec = TOOLS.find((t) => t.tool === tool);
-      if (!spec) {
+      const binding = TOOLS.find((t) => t.tool === tool);
+      if (!binding) {
         continue;
       }
+      const spec = commandSpec(binding.id);
       const btn = el(
         "button",
         {
-          "aria-label": spec.label,
+          "aria-label": spec.title,
           class: cls("tool"),
-          "data-tip": spec.label,
           onClick: () => this.tools.set(tool),
           type: "button",
+          ...tip(spec.title, binding.id),
         },
         [icon(TOOL_ICON[tool], "sm")]
       );
@@ -1789,9 +2112,10 @@ export class AirshipApp {
    * Switch surface.
    *
    * Necessarily a document navigation: the proxy decides canvas-or-inline when
-   * it serves the HTML, before any script runs, and `__airshipBooted` latches a
-   * boot that has no teardown anyway. The cookie is what makes the choice
-   * outlive the reload — it is read server-side on the next navigation.
+   * it serves the HTML, before any script runs, and the two surfaces take the
+   * same boot claim, so neither could replace the other in place. The cookie is
+   * what makes the choice outlive the reload — it is read server-side on the
+   * next navigation.
    *
    * `__airship` is stripped from the target rather than set to the new surface,
    * so an explicit override in the current URL cannot outrank the preference we
@@ -2043,23 +2367,37 @@ export class AirshipApp {
     // The one shortcut that has to fire *while* a field has focus — it is the
     // field's own submit. Guarded on the composer specifically so ⌘Enter in any
     // other input (the frame rename, a CSS value) does nothing.
-    keys.bind({
-      allowWhileTyping: true,
-      keys: "mod+enter",
-      label: "Send",
-      run: () => this.submit(),
-      when: () => document.activeElement === this.input,
-    });
+    this.disposers.push(
+      keys.bind({
+        id: "chat.send",
+        run: () => this.submit(),
+        when: () => document.activeElement === this.input,
+      })
+    );
     this.input.addEventListener("paste", (e) => this.onPaste(e));
-    this.chipsEl = el("div", { class: cls("chips") });
-    this.selChipsEl = el("div", { class: cls("sel-chips") });
+    this.chipsEl = el("div", {
+      class: `${cls("chips")} ${cls("scroll-x")}`,
+    });
+    this.selChipsEl = el("div", {
+      class: `${cls("sel-chips")} ${cls("scroll-x")}`,
+    });
+    // Both rails, not just the pending-change one: a paste of six screenshots
+    // overflows exactly the same way and was exactly as unreachable.
+    this.disposers.push(
+      attachRailWheel(this.chipsEl),
+      attachRailWheel(this.selChipsEl),
+      // Keys only on the strip whose chips are individually meaningful. The
+      // attachment rail's chips are images with one action each, and arrowing
+      // between them would collide with the nudge bindings for no gain.
+      attachRailKeys(this.selChipsEl)
+    );
 
     this.sendBtn = el(
       "button",
       {
         "aria-label": "Send",
         class: `${cls("action")} ${cls("action-icon")} ${cls("primary")} ${cls("send")}`,
-        "data-tip": "Send",
+        ...tip("Send", "chat.send"),
         onClick: () => this.submit(),
         type: "button",
       },
@@ -2109,9 +2447,15 @@ export class AirshipApp {
       ]
     );
 
-    this.transcriptEl = el("div", { class: cls("transcript") });
+    // `scroll-y` for the same reason the inspector body and the palette take
+    // it: the transcript was the tallest scroller in the product still drawing
+    // a platform scrollbar, so the one panel you read for minutes at a time was
+    // the one that looked least like the rest of the overlay.
+    this.transcriptEl = el("div", {
+      class: `${cls("transcript")} ${cls("scroll-y")}`,
+    });
     this.histEl = el("div", {
-      class: `${cls("drawer")} ${cls("hidden")}`,
+      class: `${cls("drawer")} ${cls("scroll-y")} ${cls("hidden")}`,
     });
     // One field, not four stacked rows. The composer used to spend ~145px at
     // rest on its own padding, a 64px textarea floor and a labelled Send pill
@@ -2419,19 +2763,22 @@ export class AirshipApp {
   private iconButton(
     name: IconName,
     label: string,
-    onClick: () => void
+    onClick: () => void,
+    command?: CommandId
   ): HTMLElement {
     return el(
       "button",
       {
         "aria-label": label,
         class: cls("iconbtn"),
-        // The overlay's own tooltip, not the native one: it opens in 400ms
-        // rather than a second, is styled, and renders the action's keyboard
-        // shortcut beside it. Every dock-header button used to use `title`.
-        "data-tip": label,
         onClick,
         type: "button",
+        // The overlay's own tooltip, not the native one: it opens in 400ms
+        // rather than a second, is styled, and renders the action's keyboard
+        // shortcut beside it — from `command`, not from this label, so the copy
+        // can be reworded without silently dropping the chord. Every
+        // dock-header button used to use `title`.
+        ...tip(label, command),
       },
       // `sm`, to match the bottom bar's tools — `.iconbtn` and `.tool` are the
       // same ghost recipe on the same `--ap-control-icon-box`. This said `md`
@@ -2576,6 +2923,21 @@ export class AirshipApp {
     this.pendingTextEdit = { caret, node };
     this.controller.select(node, surface, "replace");
     return true;
+  }
+
+  /**
+   * `element.editText`, wherever it is run from.
+   *
+   * The two call sites — the key binding and the context-menu row — had a
+   * verbatim copy of this each. One command with two copies of its failure path
+   * is one reword away from a menu that declines silently while the keystroke
+   * explains itself, which is the exact split the binding's own comment says was
+   * wrong the last time it existed.
+   */
+  private editTextOrExplain(): void {
+    if (!this.editSelectedText()) {
+      toast("This layer has no text to edit", { tone: "error" });
+    }
   }
 
   /** `Enter` and `T`: edit the selection, with the whole string selected. */
@@ -2745,15 +3107,33 @@ export class AirshipApp {
     if (s) {
       const label = s.element.displayName || `<${s.element.tagName}>`;
       this.selChipsEl.append(
-        el("span", { class: cls("sel-chip"), "data-tip": label }, [
-          icon("tool-move", "sm"),
-          el("span", { text: label }),
-          el(
-            "span",
-            { class: cls("chip-x"), onClick: () => this.clearSelectionScope() },
-            [icon("close", "sm")]
-          ),
-        ])
+        // `data-chip` puts it in the rail's roving order alongside the pending
+        // edits: it is the first thing on the strip, so arrowing from it is
+        // where circling through the changes naturally starts.
+        el(
+          "span",
+          {
+            class: cls("sel-chip"),
+            "data-chip": "",
+            "data-tip": label,
+            tabindex: "-1",
+          },
+          [
+            icon("tool-move", "sm"),
+            el("span", { class: cls("chip-subject"), text: label }),
+            el(
+              "span",
+              {
+                "aria-label": `Deselect ${label}`,
+                class: cls("chip-x"),
+                onClick: () => this.clearSelectionScope(),
+                role: "button",
+                tabindex: "-1",
+              },
+              [icon("close", "sm")]
+            ),
+          ]
+        )
       );
     }
     renderChangeChips(this.selChipsEl, this.pendingChips(), (anchor) =>
@@ -2809,16 +3189,20 @@ export class AirshipApp {
         const where = [c.scope, c.state].filter(Boolean).join("");
         const suffix = where ? ` ${where}` : "";
         chips.push({
-          icon: "settings",
-          label: `${label}${suffix} ${c.property} ${shortValue(c.to)}`,
+          detail: c.property,
+          // No glyph. `settings` said "a style change" on every one of these,
+          // which is the one thing a strip of style chips does not need told
+          // twelve times — and it cost 26px of the rail each time.
           onRemove: () =>
             this.panel.discardOneStyle(entry.node, c.property, {
               scope: c.scope,
               state: c.state,
             }),
+          subject: `${label}${suffix}`,
           tip: `${label}${suffix} · ${c.property}: ${c.from} → ${c.to}${
             c.token ? ` (token ${c.token.name})` : ""
           }`,
+          value: shortValue(c.to),
         });
       }
     }
@@ -2830,28 +3214,32 @@ export class AirshipApp {
     const chips: ChangeChip[] = [];
     for (const entry of this.moveSet.entries()) {
       chips.push({
+        detail: "moved",
         icon: "drag",
-        label: `${chipLabel(entry.element)} moved`,
         onRemove: () => this.panel.discardOneMove(entry.node),
+        subject: chipLabel(entry.element),
         tip: `${chipLabel(entry.element)} · moved in the tree`,
       });
     }
     for (const entry of this.structureSet.entries()) {
       const verb = entry.op === "delete" ? "deleted" : "duplicated";
       chips.push({
+        detail: verb,
         icon: entry.op === "delete" ? "minus" : "plus",
-        label: `${chipLabel(entry.element)} ${verb}`,
         onRemove: () => this.panel.discardOneStructure(entry.node),
+        subject: chipLabel(entry.element),
         tip: `${chipLabel(entry.element)} · ${verb}`,
       });
     }
     for (const entry of this.structureSet.textEntries()) {
       const label = chipLabel(entry.element);
       chips.push({
+        detail: "text",
         icon: "layer-text",
-        label: `${label} “${shortValue(entry.to)}”`,
         onRemove: () => this.panel.discardOneText(entry.node),
+        subject: label,
         tip: `${label} · text: ${JSON.stringify(entry.from)} → ${JSON.stringify(entry.to)}`,
+        value: `“${shortValue(entry.to)}”`,
       });
     }
     return chips;
@@ -2864,12 +3252,14 @@ export class AirshipApp {
       const label = chipLabel(entry.element);
       const shown = entry.to === null ? "removed" : shortValue(entry.to);
       chips.push({
+        detail: entry.attribute,
         icon: "insert",
-        label: `${label} ${entry.attribute} ${shown}`,
         onRemove: () => this.panel.discardOneAttr(entry.node, entry.attribute),
+        subject: label,
         tip: `${label} · ${entry.attribute}: ${entry.from ?? "(unset)"} → ${
           entry.to ?? "(unset)"
         }`,
+        value: shown,
       });
     }
     return chips;
@@ -2884,12 +3274,14 @@ export class AirshipApp {
           ? basename(c.file)
           : `${basename(c.file)}:${c.fromLine}${c.toLine === c.fromLine ? "" : `–${c.toLine}`}`;
       chips.push({
+        // No `detail`: the glyph already says "a comment", and the file and
+        // line are the whole of what this chip is about.
         icon: "tool-comment",
-        label: where,
         onRemove: () => {
           this.commentSet.remove(c.id);
           this.renderComposerChips();
         },
+        subject: where,
         tip: c.body,
       });
     }
@@ -2946,14 +3338,21 @@ export class AirshipApp {
         el("span", { class: cls("chip") }, [
           icon("image", "sm"),
           el("span", { text: img.name }),
+          // A real button, not a click-only span. This rail takes
+          // `attachRailWheel` but deliberately not `attachRailKeys`, so there is
+          // no roving to route ⌫ through — which left removing a pasted image
+          // reachable by pointer alone. A native button is both a tab stop and
+          // activatable, and a few attachments is a few stops.
           el(
-            "span",
+            "button",
             {
+              "aria-label": `Remove ${img.name}`,
               class: cls("chip-x"),
               onClick: () => {
                 this.images.splice(i, 1);
                 this.renderChips();
               },
+              type: "button",
             },
             [icon("close", "sm")]
           ),
@@ -3033,6 +3432,7 @@ export class AirshipApp {
       changeSet: this.changeSet,
       commentSet: this.commentSet,
       images: this.images,
+      model: this.models[this.agent],
       moveSet: this.moveSet,
       parentJobId: this.parentJobId,
       prompt: this.input.value,
@@ -3070,20 +3470,106 @@ export class AirshipApp {
    * and no need for one, since the logo is the more legible of the two anyway.
    * Same `iconButton` shape and same `createMenu` as the transcript's kebab, so
    * it reads as one of the header's controls rather than a widget dropped in.
+   *
+   * It now picks the model too, which is why the menu is grouped rather than
+   * flat: a model id only means something against a backend, so the two are
+   * chosen in one gesture. The button stays a single glyph — the model goes in
+   * the tooltip, where there is room for it.
    */
   private buildAgentButton(): HTMLElement {
     this.agentBtn = this.iconButton("claude", "Agent", () =>
-      createMenu(
-        AGENTS.map((a) => ({
-          icon: a.icon,
-          label: a.label,
-          on: a.kind === this.agent,
-          run: () => this.setAgent(a.kind),
-        }))
-      ).open(this.agentBtn, "below")
+      this.openAgentMenu()
     );
+    // `iconButton` does not set these — most header buttons run an action
+    // rather than open anything. This one opens a menu, and after growing a
+    // second level it is the header's most complex control, so a screen reader
+    // has to be told that and told when it is open. `buildSurfaceToggle` is the
+    // same shape; `aria-expanded` is driven from `openAgentMenu`'s `onClose`.
+    this.agentBtn.setAttribute("aria-haspopup", "menu");
+    this.agentBtn.setAttribute("aria-expanded", "false");
     this.syncAgentButton();
     return this.agentBtn;
+  }
+
+  /**
+   * Open the picker, and ask the daemon what each backend offers.
+   *
+   * The menu is built from whatever is in hand — the seed on first open — and
+   * rebuilt when `models:result` lands. It is never blocked on the answer:
+   * probing starts an `opencode serve` and can take seconds, and a picker that
+   * hangs on that is worse than one that fills in a moment later.
+   */
+  /**
+   * @param probe Whether this open may ask the daemon. True when the user
+   * clicked; **false** when `models:result` is repainting the menu it just
+   * answered. Without that distinction the two feed each other: a result
+   * carrying a `note` would repaint, the repaint would re-probe, and the next
+   * result would repaint again, forever.
+   */
+  private openAgentMenu(probe = true): void {
+    // A group with a `note` is one that could not be reached — usually a
+    // backend the user is not signed into. That is the one state worth asking
+    // about again, because the fix for it happens outside this window: sign in
+    // in a terminal, reopen the menu, and the list is there. A clean result is
+    // never re-probed, since re-running an `opencode serve` boot on every open
+    // would cost seconds to learn nothing.
+    const incomplete = this.catalogue.some((g) => g.note);
+    // `isOpen()` before the flag, because `send` drops on the floor when the
+    // socket is not open — a ~1.5s window on every reconnect. Marking it asked
+    // anyway pinned the picker to the seed for the life of the page: the only
+    // re-probe condition is a group carrying a `note`, and `SEED_CATALOGUE` sets
+    // none, so `incomplete` was false forever and the live list never arrived.
+    if (
+      probe &&
+      this.socket.isOpen() &&
+      (!this.modelsRequested || incomplete)
+    ) {
+      this.socket.send({ refresh: this.modelsRequested, type: "models" });
+      this.modelsRequested = true;
+    }
+    this.agentMenu = createMenu([
+      ...modelGroups({
+        agent: this.agent,
+        catalogue: this.catalogue,
+        models: this.models,
+        pick: ({ agent, model }) => this.setAgentModel(agent, model),
+      }),
+      { separator: true },
+      {
+        node: customModelRow(
+          this.agent,
+          (model) => this.setAgentModel(this.agent, model),
+          () => this.agentMenu?.close()
+        ),
+      },
+    ]);
+    this.agentBtn.setAttribute("aria-expanded", "true");
+    this.agentMenu.open(this.agentBtn, "below", {
+      onClose: () => {
+        this.agentMenu = null;
+        this.agentBtn.setAttribute("aria-expanded", "false");
+      },
+    });
+  }
+
+  /**
+   * Point the picker at a backend and a model together.
+   *
+   * One call because they are one choice. The model is stored under its own
+   * backend, so switching away and back returns to what was picked there
+   * rather than carrying an id across to a backend that cannot run it.
+   */
+  private setAgentModel(agent: AgentKind, model: string): void {
+    this.agent = agent;
+    // Empty means the Default row: drop the entry so the request carries no
+    // model at all and the daemon's resolved default applies again.
+    if (model) {
+      this.models[agent] = model;
+    } else {
+      delete this.models[agent];
+    }
+    saveModelPick({ agent: this.agent, models: this.models });
+    this.syncAgentButton();
   }
 
   /** Point the picker at a backend, keeping the control and the state in step. */
@@ -3094,11 +3580,36 @@ export class AirshipApp {
 
   private syncAgentButton(): void {
     const active = AGENTS.find((a) => a.kind === this.agent) ?? AGENTS[0];
+    const model = modelLabel(
+      this.catalogue,
+      this.agent,
+      this.models[this.agent]
+    );
     // Rebuilt rather than swapped: `icon()` owns the svg markup, and reaching
     // into it to retarget a path would duplicate that knowledge here.
     this.agentBtn.replaceChildren(icon(active.icon, "sm"));
-    this.agentBtn.setAttribute("data-tip", `Agent: ${active.label}`);
-    this.agentBtn.setAttribute("aria-label", `Coding agent: ${active.label}`);
+    this.agentBtn.setAttribute("data-tip", `${active.label} · ${model}`);
+    this.agentBtn.setAttribute(
+      "aria-label",
+      `Coding agent: ${active.label}, model: ${model}`
+    );
+  }
+
+  /**
+   * Read the stored picks back.
+   *
+   * Returns whether a backend was restored, because that is what decides if the
+   * daemon's `hello` may seed the picker: a stored pick is the user's, and a
+   * reconnect must not overwrite it. See the `hello` handler.
+   */
+  private restoreModel(): boolean {
+    const stored = restoreModelPick();
+    this.models = stored.models;
+    if (stored.agent) {
+      this.agent = stored.agent;
+      return true;
+    }
+    return false;
   }
 
   /** Consume the one-shot "branch" flag set by an assistant Branch action. */
@@ -3221,9 +3732,18 @@ export class AirshipApp {
   private onEvent(ev: ServerEvent): void {
     switch (ev.type) {
       case "hello":
-        // The daemon's `--agent` is the resting default; the picker only ever
-        // departs from it deliberately.
-        this.setAgent(ev.defaultAgent);
+        // The daemon's `--agent` is the resting default, and it seeds the
+        // picker only when nothing has been stored.
+        //
+        // It used to seed unconditionally, which was invisible while `hello`
+        // arrived once and wrong the moment it did not: `ws.ts` reconnects on a
+        // 1.5s timer, so any blip silently threw away whatever the user had
+        // picked and snapped the composer back to the launch flag. Harmless
+        // enough to lose a backend you can re-pick in one click; not harmless
+        // now that the same event would take the model with it.
+        if (!this.modelRestored) {
+          this.setAgent(ev.defaultAgent);
+        }
         // The snapshot is the only thing that can tell us a turn ended while we
         // were not listening — see `reconcileAwaiting`.
         this.reconcileAwaiting(ev.jobs);
@@ -3271,6 +3791,21 @@ export class AirshipApp {
         // what `refresh()` here could not do: it re-seeds unless the element's
         // shape changed, and badges are decided at render time.
         setStaticTokens(ev.scan);
+        break;
+      case "models:result":
+        this.catalogue = ev.catalogue;
+        // The tooltip carries the model's *label*, which until now could only
+        // be the raw id — the seed does not know every model a backend offers.
+        this.syncAgentButton();
+        // Repaint an open menu in place. Rebuilding rather than patching keeps
+        // one construction path, and reopening on the same anchor is a toggle
+        // as far as the host is concerned, so the old handle is dropped first.
+        if (this.agentMenu) {
+          this.agentMenu.close();
+          this.agentMenu = null;
+          // `false`: this repaint must not ask again. See `openAgentMenu`.
+          this.openAgentMenu(false);
+        }
         break;
       // No correlation token: the socket preserves order and the daemon answers
       // this one synchronously, so replies land in request order and the last
@@ -3544,17 +4079,23 @@ export class AirshipApp {
   private buildPreviewPane(): void {
     this.previewCountEl = el("span", { class: cls("prompt-count") });
     this.previewBodyEl = el("div", { class: cls("prompt-body") });
-    this.previewEl = el("div", { class: `${cls("pane")} ${cls("hidden")}` }, [
-      el("div", { class: cls("drawer-head") }, [
-        el("div", { class: cls("eyebrow"), text: "Prompt" }),
-        el("div", { class: cls("head-actions") }, [
-          this.previewCountEl,
-          this.iconButton("clipboard", "Copy prompt", () => this.copyPrompt()),
-          this.iconButton("close", "Close", () => this.setPreview(false)),
+    this.previewEl = el(
+      "div",
+      { class: `${cls("pane")} ${cls("scroll-y")} ${cls("hidden")}` },
+      [
+        el("div", { class: cls("drawer-head") }, [
+          el("div", { class: cls("eyebrow"), text: "Prompt" }),
+          el("div", { class: cls("head-actions") }, [
+            this.previewCountEl,
+            this.iconButton("clipboard", "Copy prompt", () =>
+              this.copyPrompt()
+            ),
+            this.iconButton("close", "Close", () => this.setPreview(false)),
+          ]),
         ]),
-      ]),
-      this.previewBodyEl,
-    ]);
+        this.previewBodyEl,
+      ]
+    );
   }
 
   private setPreview(open: boolean): void {
@@ -3719,8 +4260,21 @@ export class AirshipApp {
     // the server's resume gate and silently start a fresh session, so the
     // model would answer with no memory of the code being discussed.
     // Bundles written before `agent` existed are Claude by construction.
+    //
+    // The model follows for the same reason, one step weaker: crossing models
+    // inside a thread is allowed where crossing backends is not, so a bundle
+    // that predates the field simply leaves the current pick alone rather than
+    // guessing one.
+    //
+    // Through `setAgentModel`, which is the only write that persists. This one
+    // used to set the field and call `setAgent` directly, so reopening a thread
+    // moved the composer for the session and a reload put it back — leaving what
+    // is stored disagreeing with what the header shows. An empty model means the
+    // Default row, so falling back to the current pick is what keeps a bundle
+    // that predates the field from clearing one.
     if (last) {
-      this.setAgent(last.agent ?? "claude");
+      const agent = last.agent ?? "claude";
+      this.setAgentModel(agent, last.model ?? this.models[agent] ?? "");
     }
     if (!entries.length) {
       this.clearTranscript();
