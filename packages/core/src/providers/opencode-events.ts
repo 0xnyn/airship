@@ -426,6 +426,20 @@ export function modelRefFor(
 }
 
 /**
+ * Whether opencode can actually run this model id.
+ *
+ * The rule the *drop* is made on, exported so the places that must refuse an id
+ * ahead of time — `--opencode-model` at parse time, a picked model at request
+ * time — decide it the same way `toModelBody` does rather than each re-spelling
+ * "has a slash". A ref with no `providerID` is dropped from the request body, so
+ * asking for one is indistinguishable from asking for nothing: the turn runs on
+ * the server's default, having been told otherwise.
+ */
+export function namesProvider(model?: string): boolean {
+  return modelRefFor(model)?.providerID !== undefined;
+}
+
+/**
  * Which session an event belongs to, or `undefined` when it belongs to none.
  *
  * This is the single most load-bearing function in the OpenCode adapter. The

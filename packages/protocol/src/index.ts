@@ -54,6 +54,59 @@ export const EffortSchema = z.enum(EFFORT_LEVELS);
 export type Effort = z.infer<typeof EffortSchema>;
 
 // ---------------------------------------------------------------------------
+// Models
+// ---------------------------------------------------------------------------
+
+/**
+ * One selectable model, shaped for the row that renders it.
+ *
+ * The seed list in `./models` uses the same shape, so a group can be filled
+ * from the generated catalogue or from a live probe without translating.
+ */
+export const ModelOptionSchema = z.object({
+  /** Right-aligned dimmed hint on the row — a context window, a provider. */
+  hint: z.string().optional(),
+  /**
+   * What travels as `CreateJobRequest.model`.
+   *
+   * Bare for claude and codex, whose `--model` takes an id or an alias. For
+   * opencode this must be the `provider/model` form: `modelRefFor` splits on
+   * the first slash and an id it cannot attribute to a provider is dropped
+   * rather than guessed at.
+   */
+  id: z.string(),
+  label: z.string(),
+});
+export type ModelOption = z.infer<typeof ModelOptionSchema>;
+
+/**
+ * One harness's models, shaped for a `MenuGroup` in the overlay's picker.
+ *
+ * A list of groups rather than a `Record<AgentKind, …>`: it maps one-to-one
+ * onto what `createMenu` accepts, and zod v4 records over an enum require every
+ * key, which a partial probe result cannot promise.
+ */
+export const ModelGroupSchema = z.object({
+  agent: AgentKindSchema,
+  /** The resting default — the daemon's resolved per-harness model when one is
+   * configured, otherwise whatever the backend reports. Leads the group. */
+  default: z.string().optional(),
+  models: z.array(ModelOptionSchema),
+  /**
+   * Why this group is short or empty: "Not signed in", "Probe timed out".
+   *
+   * Rendered as a disabled row. A backend that cannot be reached must say so —
+   * an empty group with no explanation reads as a bug in the picker rather than
+   * as a missing credential.
+   */
+  note: z.string().optional(),
+});
+export type ModelGroup = z.infer<typeof ModelGroupSchema>;
+
+export const ModelCatalogueSchema = z.array(ModelGroupSchema);
+export type ModelCatalogue = z.infer<typeof ModelCatalogueSchema>;
+
+// ---------------------------------------------------------------------------
 // Element + source location
 // ---------------------------------------------------------------------------
 
@@ -320,6 +373,10 @@ export const CreateJobRequestSchema = z
     /** Fork instead of continue — "try a different approach". */
     fork: z.boolean().optional(),
     images: z.array(ImageInputSchema).optional(),
+    /** Which model that backend runs this turn on. Absent means the daemon's
+     * resolved default for `agent` (`--claude-model` and friends, else
+     * `--model`), which is what a client that predates the picker sends. */
+    model: z.string().optional(),
     /** Direct-manipulation structural moves (drag-to-reposition in the tree).
      * Like `visualChanges`, these make `prompt` optional. */
     moveChanges: z.array(MoveEditSchema).optional(),
@@ -557,6 +614,11 @@ export interface JobHistorySummary {
   error?: string;
   filesChanged: number;
   jobId: string;
+  /** Which model ran, once resolved. Lives here rather than on `JobDiffBundle`
+   * so it survives `toSummary()`: reopening a thread re-seeds the picker from a
+   * summary, and a field stripped from the listing would never reach it.
+   * Absent on bundles written before the picker could choose one. */
+  model?: string;
   parentJobId?: string;
   promptPreview: string;
   /** Agent session id — a Claude session or a Codex thread, per `agent`. Used
@@ -628,6 +690,10 @@ export type ServerEvent =
   /** The project's design tokens, scanned from the files on disk. Answers a
    * `tokens` request; also pushed unprompted once the first scan completes. */
   | { type: "tokens:result"; scan: TokenScanResult }
+  /** What each backend offers, answering a `models` request. Sent to the asking
+   * socket only — the probe is per-connection work, and a broadcast would repaint
+   * every other tab's open menu underneath its user. */
+  | { type: "models:result"; catalogue: ModelCatalogue }
   /** The assembled instruction for a `prompt` request — the exact string the
    * adapter would receive. Sent to the asking socket only: a broadcast would let
    * one tab's composer overwrite another's preview. */
@@ -674,6 +740,19 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
   z.object({
     refresh: z.boolean().optional(),
     type: z.literal("tokens"),
+  }),
+  /**
+   * Which models each backend offers. Read-only, so the server answers it off
+   * the edit chain like `tokens`.
+   *
+   * Asked when the picker is first opened rather than pushed at the handshake:
+   * the opencode probe starts an `opencode serve` process, and booting one for
+   * a session that never opens the menu is a cost with no return. `refresh`
+   * busts the daemon's memo after signing into a backend mid-session.
+   */
+  z.object({
+    refresh: z.boolean().optional(),
+    type: z.literal("models"),
   }),
   /**
    * Render the prompt this request would produce, without running it. Read-only,
