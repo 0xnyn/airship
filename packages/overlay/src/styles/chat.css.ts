@@ -3,8 +3,10 @@ import { ROOT } from "./const";
 
 /** Left dock: transcript, bubbles, composer, chips, actions, todos, diffs. */
 export const css = `
+/* The overflow and the scrollbar come from \`.scroll-y\` in base.css, the same
+   way the chip rails take theirs from \`.scroll-x\`. */
 .${PREFIX}-transcript {
-  flex: 1 1 auto; overflow-y: auto; display: flex; flex-direction: column;
+  flex: 1 1 auto; display: flex; flex-direction: column;
   gap: var(--ap-space-md); padding: var(--ap-space-md) var(--ap-space-lg);
 }
 /* The transcript's empty state is a \`.empty-md\` block (empty.css). This class
@@ -54,24 +56,37 @@ export const css = `
    bordered box that starts one line tall — the previous arrangement spent
    ~145px at rest on padding, a 64px textarea floor and a Send pill on its own
    row, which is a lot of permanent furniture for a panel whose real content is
-   the transcript above it. The right padding clears the absolutely-positioned
-   Send glyph so text never runs under it. */
+   the transcript above it.
+
+   The gutter that clears Send and the preview toggle belongs to \`.input\`, not
+   here. It lived on this rule as \`padding-right: 65px\`, and because \`.field\` is
+   a flex *column* that reserved 65px on every row — including the chip rails
+   above, where the two buttons are not: they are \`position: absolute\` and
+   *bottom*-anchored, so they only ever overlap the textarea. At the default
+   340px dock that left the rails ~223px of a possible ~322px and a permanent
+   dead gutter, which read as a mystery gap next to a lone chip.
+
+   Moving it costs nothing: an absolutely-positioned child resolves \`right\` and
+   \`bottom\` against this element's *padding box*, whose edges do not move when
+   padding changes. Both buttons keep their exact coordinates. */
 .${PREFIX}-composer { flex: 0 0 auto; border-top: 1px solid var(--ap-border-default); padding: var(--ap-space-sm) var(--ap-space-md); }
 .${PREFIX}-field {
   position: relative; display: flex; flex-direction: column; gap: 4px;
-  padding: 6px 65px 6px 8px;
+  padding: 6px 8px;
   background: var(--ap-input-bg); border: 1px solid var(--ap-input-border);
   border-radius: var(--ap-radius-sm);
 }
 .${PREFIX}-field:focus-within { border-color: var(--ap-input-focus-border); }
 /* Chip rows scroll sideways rather than wrapping: each pending change is now
    its own chip, and wrapping a dozen of them would push the field to half the
-   dock. Hidden when empty so they cost nothing at rest. */
+   dock. Hidden when empty so they cost nothing at rest.
+
+   The overflow, the scrollbar and the edge fade come from \`.scroll-x\` in
+   base.css — see the note there about why hiding the scrollbar broke the mouse
+   and left it working on a trackpad. */
 .${PREFIX}-sel-chips {
   display: flex; flex-wrap: nowrap; gap: var(--ap-space-xs);
-  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
 }
-.${PREFIX}-sel-chips::-webkit-scrollbar { display: none; }
 .${PREFIX}-sel-chips:empty { display: none; }
 /* In a nowrap row a chip would otherwise shrink to fit rather than scroll. */
 .${PREFIX}-sel-chips > * { flex: 0 0 auto; }
@@ -91,10 +106,45 @@ export const css = `
 .${PREFIX}-tweak-chip {
   color: var(--ap-text-secondary); background: var(--ap-surface-hover);
   border-color: var(--ap-border-subtle);
-  font-size: var(--ap-font-size-caption); max-width: 240px;
+  font-family: var(--ap-font-sans);
+  /* Was \`caption\` (10px). At that size, with the three fields run together into
+     one string, the strip read as fine print you were meant to skip rather than
+     as the list of what Send is about to do. \`label\` is the editor's own
+     control size and it fits now that the rail has its full width back. */
+  font-size: var(--ap-font-size-label); max-width: 240px;
 }
 .${PREFIX}-tweak-chip:hover { color: var(--ap-text-primary); border-color: var(--ap-border-default); }
-.${PREFIX}-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Inset, like \`.tl-head\`'s. The rail is \`overflow-y: hidden\` — a one-row strip
+   has nothing to scroll vertically and should never grow a second scrollbar —
+   so a ring drawn *outside* the chip is clipped top and bottom, and the focus
+   state of a keyboard-only affordance reads as a rendering fault. */
+.${PREFIX}-tweak-chip:focus-visible,
+.${PREFIX}-sel-chip:focus-visible {
+  outline: 2px solid var(--ap-border-focus); outline-offset: -2px;
+}
+
+/* The three fields of a chip.
+
+   They were one space-joined string in 10px mono, so "RootDocument flex 0 0"
+   gave the reader no way to tell the element from the property from the value.
+   The strip has no colour left to spend — the selection chip is the one
+   emphasised thing in the row — so the boundary is carried by the tone ramp
+   instead, and a single \`·\` separates the two fields that can both be present.
+
+   Only the subject shrinks: it is the field with a long tail (component display
+   names run long), and \`min-width: 0\` is what lets it ellipsise inside a flex
+   row rather than pushing the value off the end. */
+.${PREFIX}-chip-subject {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ap-text-primary);
+}
+.${PREFIX}-chip-detail { white-space: nowrap; color: var(--ap-text-secondary); }
+.${PREFIX}-chip-value {
+  white-space: nowrap; color: var(--ap-text-tertiary); font-family: var(--ap-font-mono);
+}
+.${PREFIX}-chip-detail + .${PREFIX}-chip-value::before {
+  content: "·"; margin-right: 4px; opacity: .55;
+}
 /* The bulk escape hatch, at the end of the strip. Ghost — it is the most
    destructive thing in the row and should not look like the cheapest. */
 .${PREFIX}-chip-all {
@@ -109,8 +159,9 @@ export const css = `
    so its empty state has a dock's worth of space to centre in, and \`margin:
    auto\` needs a flex container to have anything to distribute. The head stays
    pinned at the top either way — it is content-sized. */
+/* Overflow from \`.scroll-y\`, as above. */
 .${PREFIX}-drawer {
-  position: absolute; inset: 0; z-index: 2; overflow-y: auto;
+  position: absolute; inset: 0; z-index: 2;
   padding: var(--ap-space-md) var(--ap-space-lg); background: var(--ap-surface-panel);
   display: flex; flex-direction: column;
 }
@@ -127,8 +178,9 @@ export const css = `
    field you type into. So it takes the transcript's slot (hidden while this is
    up) and leaves the head and composer where they are. Borrows the drawer's
    head, eyebrow and close button so it still reads as the same kind of surface. */
+/* Overflow from \`.scroll-y\`, as above. */
 .${PREFIX}-pane {
-  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  flex: 1 1 auto; min-height: 0;
   padding: var(--ap-space-md) var(--ap-space-lg); background: var(--ap-surface-panel);
   display: flex; flex-direction: column;
 }
@@ -173,11 +225,16 @@ export const css = `
 /* Chat input. The box, border and background now belong to \`.field\`; this is
    just the text surface inside it. \`resize: none\` because the height is
    driven by content (see \`autoGrow\`) — a manual resize handle would fight it
-   on the next keystroke. No min-height: one row is the resting state. */
+   on the next keystroke. No min-height: one row is the resting state.
+
+   The 65px right padding is the gutter for Send and the preview toggle, and it
+   is on this rule rather than on \`.field\` because this is the only row those
+   two buttons overlap. \`box-sizing: border-box\` (base.css) means it comes out
+   of the 100%, not on top of it. */
 .${PREFIX}-input {
   width: 100%; resize: none; display: block; font-family: var(--ap-font-sans);
   font-size: var(--ap-font-size-title); line-height: 1.45; color: var(--ap-text-primary);
-  background: transparent; border: 0; padding: 2px 0;
+  background: transparent; border: 0; padding: 2px 65px 2px 0;
 }
 .${PREFIX}-input::placeholder { color: var(--ap-text-placeholder); }
 .${PREFIX}-input:focus { outline: none; }
@@ -213,12 +270,10 @@ export const css = `
 /* A toggle that stays down while its surface is open. */
 .${PREFIX}-iconbtn-on { background: var(--ap-surface-selected); color: var(--ap-text-primary); }
 
-/* Chips. */
+/* Chips. Same rail treatment as \`.sel-chips\` — \`.scroll-x\` owns the overflow. */
 .${PREFIX}-chips {
   display: flex; flex-wrap: nowrap; gap: var(--ap-space-xs);
-  overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none;
 }
-.${PREFIX}-chips::-webkit-scrollbar { display: none; }
 .${PREFIX}-chips:empty { display: none; }
 .${PREFIX}-chips > * { flex: 0 0 auto; }
 .${PREFIX}-chip {
@@ -226,8 +281,19 @@ export const css = `
   background: var(--ap-surface-active); border: 1px solid var(--ap-border-default);
   border-radius: var(--ap-radius-sm); padding: 4px 6px 4px 8px;
 }
-.${PREFIX}-chip-x { cursor: pointer; display: inline-flex; opacity: .6; }
+/* Two elements wear this: the attachment rail's ✕ is a real \`<button>\`, so that
+   removing a pasted image is reachable from the keyboard, while the change
+   rail's is a span the roving strip drives with ⌫. The reset is what lets one
+   rule serve both — without it the button arrives with the UA's grey chrome,
+   its own border and its own font. Inert on the span. */
+.${PREFIX}-chip-x {
+  cursor: pointer; display: inline-flex; opacity: .6;
+  padding: 0; border: 0; background: none; color: inherit; font: inherit;
+}
 .${PREFIX}-chip-x:hover { opacity: 1; }
+.${PREFIX}-chip-x:focus-visible {
+  outline: 1px solid var(--ap-border-focus); outline-offset: 1px; opacity: 1;
+}
 
 /* Action buttons — compact, at editor density. Self-sized and right-aligned in the
    composer (not a full-width marketing pill): the editor's controls are 28px
@@ -374,8 +440,10 @@ ${ROOT} .${PREFIX}-tl-res .${PREFIX}-ic { flex: 0 0 auto; --${PREFIX}-ic-tone: v
 .${PREFIX}-tl-args-list dt { margin: 0; color: var(--ap-text-tertiary); }
 .${PREFIX}-tl-args-list dd { margin: 0; color: var(--ap-text-secondary); word-break: break-word; }
 
+/* Vertical overflow from \`.scroll-y\`; \`overflow-x\` stays here because a tool's
+   output is preformatted and its long lines scroll sideways. */
 .${PREFIX}-tl-out {
-  margin: 0; padding: 6px 8px; max-height: 260px; overflow: auto;
+  margin: 0; padding: 6px 8px; max-height: 260px; overflow-x: auto;
   font-family: var(--ap-font-mono); font-size: var(--ap-font-size-body); line-height: 1.5;
   color: var(--ap-text-secondary); white-space: pre-wrap; word-break: break-word;
   background: var(--ap-surface-panel);

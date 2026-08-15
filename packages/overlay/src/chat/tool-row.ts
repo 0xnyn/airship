@@ -182,7 +182,12 @@ function renderToolBody(body: HTMLElement, item: TimelineToolItem): void {
 
   const detail = item.result?.detail;
   if (detail) {
-    body.append(el("pre", { class: cls("tl-out"), text: detail }));
+    body.append(
+      el("pre", {
+        class: `${cls("tl-out")} ${cls("scroll-y")}`,
+        text: detail,
+      })
+    );
   }
   if (item.result?.truncated) {
     const n = item.result.droppedLines;

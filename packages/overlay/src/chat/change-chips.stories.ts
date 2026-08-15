@@ -3,7 +3,14 @@ import { cls, el } from "../dom";
 import { icon } from "../icons";
 import { type Caption, dock, plainStage } from "../stories/chrome";
 import { BRAND, noop } from "../stories/fixtures";
-import { type ChangeChip, renderChangeChips, shortValue } from "./change-chips";
+import { onStoryTeardown } from "../stories/lifecycle";
+import {
+  attachRailKeys,
+  attachRailWheel,
+  type ChangeChip,
+  renderChangeChips,
+  shortValue,
+} from "./change-chips";
 
 /*
  * The composer's pending-change strip.
@@ -26,6 +33,11 @@ import { type ChangeChip, renderChangeChips, shortValue } from "./change-chips";
  *
  * **"Discard all" appears at two chips, not one.** With a single chip it would
  * be a second control doing exactly what the first one does.
+ *
+ * **A chip is three fields, not a sentence.** Subject, detail and value, told
+ * apart by tone alone, because the strip has no colour left to spend. They were
+ * one space-joined string until a user pointed at "RootDocument flex 0 0" and
+ * asked what it meant.
  */
 
 const meta: Meta = {
@@ -36,38 +48,54 @@ export default meta;
 
 /** The accent selection chip the composer places before any change chips. */
 function selectionChip(label: string): HTMLElement {
-  return el("span", { class: cls("sel-chip"), "data-tip": label }, [
-    icon("tool-move", "sm"),
-    el("span", { text: label }),
-    el("span", { class: cls("chip-x"), onClick: noop }, [icon("close", "sm")]),
-  ]);
+  return el(
+    "span",
+    {
+      class: cls("sel-chip"),
+      "data-chip": "",
+      "data-tip": label,
+      tabindex: "-1",
+    },
+    [
+      icon("tool-move", "sm"),
+      el("span", { class: cls("chip-subject"), text: label }),
+      el(
+        "span",
+        { class: cls("chip-x"), onClick: noop, role: "button", tabindex: "-1" },
+        [icon("close", "sm")]
+      ),
+    ]
+  );
 }
 
 /**
  * One style chip, as `AirshipApp.styleChips` builds it.
  *
- * The glyph is `settings` for *every* style chip — not a per-property icon —
- * and the label carries the element, the property and a shortened value. That is
- * a real decision rather than an oversight: at chip size a distinct glyph per
- * CSS property would be forty unlearnable marks, and what distinguishes two
- * chips is the text. Structure chips use `drag`, which is the one distinction
- * that survives at this size.
+ * No glyph. A style chip used to carry `settings` — the same mark on every one
+ * of them, which is the one fact a strip of style chips never needs told twelve
+ * times, and it cost 26px of rail each time. A per-property icon was never the
+ * alternative: at chip size that would be forty unlearnable marks. What tells
+ * two chips apart is the text, so the text is all there is. The kinds that stay
+ * distinguishable at this size keep theirs — `drag` for a move, `minus` and
+ * `plus` for a delete and a duplicate.
  */
 const chip = (
   element: string,
   property: string,
   value: string
 ): ChangeChip => ({
-  icon: "settings",
-  label: `${element} ${property} ${shortValue(value)}`,
+  detail: property,
   onRemove: noop,
+  subject: element,
   tip: `${element} — ${property}: ${value}`,
+  value: shortValue(value),
 });
 
 const moveChip = (element: string): ChangeChip => ({
+  detail: "moved",
   icon: "drag",
-  label: `${element} moved`,
   onRemove: noop,
+  subject: element,
   tip: `${element} moved`,
 });
 
@@ -88,10 +116,15 @@ const CHIPS: ChangeChip[] = [
  * asking about them.
  */
 function composer(chips: ChangeChip[], caption: Caption): HTMLElement {
-  const strip = el("div", { class: cls("sel-chips") }, [
+  const strip = el("div", { class: `${cls("sel-chips")} ${cls("scroll-x")}` }, [
     selectionChip("<button>"),
   ]);
   renderChangeChips(strip, chips, noop);
+  // The rail's behaviour is the point of the Overflow story, and it lives in
+  // listeners rather than in CSS — so the stories install it the way the
+  // composer does rather than rendering a strip that only looks right.
+  onStoryTeardown(attachRailWheel(strip));
+  onStoryTeardown(attachRailKeys(strip));
 
   const field = el("div", { class: cls("field") }, [
     strip,
@@ -151,11 +184,21 @@ export const Several: StoryObj = {
 /**
  * More chips than the strip is wide.
  *
- * It scrolls horizontally with no visible scrollbar (`::-webkit-scrollbar {
- * display: none }`), which is a deliberate trade: a scrollbar inside a composer
- * field is three pixels of chrome on a control that is already dense. The chips
- * are `flex: 0 0 auto`, so they keep their size rather than compressing into
- * illegibility.
+ * The chips are `flex: 0 0 auto`, so they keep their size rather than
+ * compressing into illegibility — which means the strip has to scroll, and for
+ * a long time it did so in complete silence. The scrollbar was hidden
+ * (`scrollbar-width: none` plus `::-webkit-scrollbar { display: none }`), there
+ * was no wheel handler, and nothing marked the ends.
+ *
+ * That reads as a clean composer on a trackpad, where a two-finger swipe sends
+ * `deltaX` and scrolls the rail natively. On a mouse it is a bug: every wheel a
+ * mouse sends is `deltaY`, a box that only overflows on X ignores it, and the
+ * ninth chip cannot be reached at all. The people who built it were on
+ * trackpads. This is the story that would have caught it.
+ *
+ * Four affordances now, and it takes all four: a thin scrollbar that tints on
+ * hover, a fade on whichever end has more, a wheel handler that turns vertical
+ * delta into horizontal scroll, and ←/→ to walk the chips.
  */
 export const Overflow: StoryObj = {
   render: () =>
@@ -169,8 +212,8 @@ export const Overflow: StoryObj = {
         chip("Title", "opacity", "0.92"),
       ],
       {
-        try: "drag the strip sideways — it scrolls, and the scrollbar is hidden on purpose",
-        what: "Nine chips in a strip built for four. They scroll rather than compress.",
+        try: "scroll with a wheel over the strip, then tab to it and walk it with ← and →",
+        what: "Nine chips in a strip built for four. They scroll rather than compress, and now they say so.",
       }
     ),
 };
@@ -178,9 +221,15 @@ export const Overflow: StoryObj = {
 /**
  * Values long enough to need `shortValue`.
  *
- * A chip has to stay a chip. The label is truncated to fourteen characters and
- * the full value moves to the tooltip — which is why `ChangeChip` carries `tip`
- * separately rather than letting the label be the whole truth.
+ * A chip has to stay a chip. `shortValue` truncates the *value* to fourteen
+ * characters and the full text moves to the tooltip — which is why `ChangeChip`
+ * carries `tip` separately rather than letting the visible fields be the whole
+ * truth.
+ *
+ * The subject is not truncated in TS at all: it ellipsises in CSS, so it is the
+ * field that gives way first when the rail is narrow. That is deliberate — a
+ * component display name has a long tail, and losing the end of "PricingCardHeader"
+ * costs less than losing the property you changed.
  */
 export const LongValues: StoryObj = {
   render: () =>

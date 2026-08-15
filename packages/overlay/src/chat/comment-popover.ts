@@ -8,6 +8,7 @@
  */
 import { cls, el } from "../dom";
 import { icon } from "../icons";
+import { keys } from "../keys/registry";
 import { closeOpenPopover, openPopover } from "../popover-host";
 
 export interface CommentContext {
@@ -47,17 +48,15 @@ export function openCommentPopover(
 
   // The popover host owns Escape for the shell, but a focused field swallows
   // the keydown before it ever reaches the document — so the field has to
-  // close the popover itself. ⌘↵ submits, matching the composer.
+  // close the popover itself. Escape stays field-local for that reason; ⌘↵
+  // does not, because `allowWhileTyping` is exactly the exemption that lets a
+  // field's own submit through the registry, and going through it is what puts
+  // the right chord on the hint below on every platform.
   field.addEventListener("keydown", (e) => {
     const ev = e as KeyboardEvent;
     if (ev.key === "Escape") {
       ev.preventDefault();
       closeOpenPopover("escape");
-      return;
-    }
-    if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
-      ev.preventDefault();
-      submit();
     }
   });
 
@@ -68,7 +67,10 @@ export function openCommentPopover(
     ]),
     field,
     el("div", { class: cls("comment-actions") }, [
-      el("span", { class: cls("comment-hint"), text: "⌘↵ to add" }),
+      el("span", {
+        class: cls("comment-hint"),
+        text: `${keys.hint("comment.add") ?? ""} to add`,
+      }),
       el(
         "button",
         {
@@ -81,6 +83,21 @@ export function openCommentPopover(
     ]),
   ]);
 
-  openPopover({ anchor, className: "pop-comment", content, prefer: "below" });
+  // Scoped to the popover's own content, so ⌘↵ here never reaches the
+  // composer's Send — the two commands share a chord and are told apart by
+  // scope, which is what `catalog.test.ts` licenses them on.
+  const offSubmit = keys.bind({
+    id: "comment.add",
+    run: submit,
+    within: content,
+  });
+
+  openPopover({
+    anchor,
+    className: "pop-comment",
+    content,
+    onClose: offSubmit,
+    prefer: "below",
+  });
   field.focus();
 }
