@@ -122,31 +122,147 @@ export function frameScreenRect(frameEl: Element): Rect {
   return { height: r.height, left: r.left, top: r.top, width: r.width };
 }
 
-/** A rect measured inside a frame → the shell's screen space. */
+const ORIGIN: Point = { x: 0, y: 0 };
+
+/**
+ * A rect measured inside a frame → the shell's screen space. `offset` is the
+ * pre-composed translation of a nested document's viewport within the frame
+ * (`nestOffset`); it defaults to zero so the single-level path is unchanged.
+ */
 export function frameToScreen(
   frameEl: Element,
   rect: Rect,
-  scale: number
+  scale: number,
+  offset: Point = ORIGIN
 ): Rect {
   const o = frameScreenRect(frameEl);
   return {
     height: snap(rect.height * scale),
-    left: snap(o.left + rect.left * scale),
-    top: snap(o.top + rect.top * scale),
+    left: snap(o.left + (rect.left + offset.x) * scale),
+    top: snap(o.top + (rect.top + offset.y) * scale),
     width: snap(rect.width * scale),
   };
 }
 
-/** A point in the shell's screen space → that frame's viewport coordinates. */
+/** A point in the shell's screen space → that frame's viewport coordinates —
+ * or, given a `nestOffset`, a nested document's viewport coordinates. */
 export function screenToFrame(
   frameEl: Element,
   point: Point,
-  scale: number
+  scale: number,
+  offset: Point = ORIGIN
 ): Point {
   const o = frameScreenRect(frameEl);
   return {
-    x: (point.x - o.left) / scale,
-    y: (point.y - o.top) / scale,
+    x: (point.x - o.left) / scale - offset.x,
+    y: (point.y - o.top) / scale - offset.y,
+  };
+}
+
+// -- nested documents --------------------------------------------------------
+// A same-origin iframe inside a frame (Storybook's preview is the common case)
+// holds its own document, whose rects are in its own viewport. Composition is
+// translation-only: each iframe's getBoundingClientRect() is already in its
+// parent document's coordinates, so the canvas scale applies once, at the
+// outermost boundary, and every level below is a plain add — CSS-transformed
+// nested iframes are out of scope.
+
+/** How deep a same-origin iframe chain the editor follows. Storybook needs
+ * one level; four is generous and stops a self-embedding page from walking
+ * forever. Shared by every walk, up (agents, ownership) and down (hit
+ * testing). */
+export const MAX_NEST_DEPTH = 4;
+
+/**
+ * The iframe holding `win` in its parent document, or null at a top window
+ * or a cross-origin boundary. `frameElement` is the direct answer in a real
+ * browser; happy-dom leaves it `undefined`, so the tests reach the fallback,
+ * which scans the parent document's iframes for our own window. The
+ * browser-tier stories cover the direct path.
+ */
+export function parentFrameElement(win: Window): Element | null {
+  const direct = win.frameElement;
+  if (direct !== undefined) {
+    return direct;
+  }
+  const { parent } = win;
+  if (!parent || parent === win) {
+    return null;
+  }
+  for (const iframe of Array.from(parent.document.querySelectorAll("iframe"))) {
+    if ((iframe as HTMLIFrameElement).contentWindow === win) {
+      return iframe;
+    }
+  }
+  return null;
+}
+
+/**
+ * The iframe elements between `win` and the ancestor `root`, innermost first.
+ * Empty for `win === root`. `null` when `root` is not an ancestor, the chain
+ * exceeds `MAX_NEST_DEPTH`, or a hop is cross-origin (property access
+ * throws) — the caller treats that boundary as an opaque leaf.
+ */
+export function frameChain(
+  win: Window,
+  root: Window
+): HTMLIFrameElement[] | null {
+  const chain: HTMLIFrameElement[] = [];
+  let current: Window = win;
+  while (chain.length <= MAX_NEST_DEPTH) {
+    if (current === root) {
+      return chain;
+    }
+    let frameEl: Element | null;
+    try {
+      frameEl = parentFrameElement(current);
+    } catch {
+      return null;
+    }
+    // A tag check, not instanceof: the element belongs to the parent
+    // document's realm, and a cross-realm instanceof is always false.
+    if (frameEl?.tagName !== "IFRAME") {
+      return null;
+    }
+    const parent = frameEl.ownerDocument.defaultView;
+    if (!parent) {
+      return null;
+    }
+    chain.push(frameEl as HTMLIFrameElement);
+    current = parent;
+  }
+  return null;
+}
+
+/**
+ * The composed translation from the innermost document's viewport to the
+ * outermost frame document's viewport: each iframe's border-box position plus
+ * its own border (`clientLeft`/`clientTop`). `{x:0,y:0}` for an empty chain,
+ * which is what keeps the non-nested path byte-identical.
+ */
+export function nestOffset(chain: readonly HTMLIFrameElement[]): Point {
+  let x = 0;
+  let y = 0;
+  for (const iframe of chain) {
+    const rect = iframe.getBoundingClientRect();
+    x += rect.left + iframe.clientLeft;
+    y += rect.top + iframe.clientTop;
+  }
+  return { x, y };
+}
+
+/** The overlap of two rects; zero-size when they miss, which `clipTo`
+ * already handles. */
+export function intersectRects(a: Rect, b: Rect): Rect {
+  const left = Math.max(a.left, b.left);
+  const top = Math.max(a.top, b.top);
+  const right = Math.min(a.left + a.width, b.left + b.width);
+  const bottom = Math.min(a.top + a.height, b.top + b.height);
+  return {
+    height: Math.max(0, bottom - top),
+    left,
+    top,
+    width: Math.max(0, right - left),
   };
 }
 

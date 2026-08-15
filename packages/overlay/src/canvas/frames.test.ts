@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { FrameAgent } from "../frame-agent";
 import { type Frame, FrameManager, MAX_FRAMES } from "./frames";
 
 /*
@@ -294,5 +295,108 @@ describe("FrameManager.reorder", () => {
 
     expect(removed && frames.restoreRemoved(removed)).toBe(true);
     expect(stacked()).toEqual(["f1", "f2", "f3"]);
+  });
+});
+
+describe("nested-document ownership", () => {
+  /** A real same-origin iframe inside a frame's document. */
+  function nestInside(frame: Frame): HTMLIFrameElement {
+    const { doc } = frame;
+    if (!doc) {
+      throw new Error("frame has no document");
+    }
+    const nested = doc.createElement("iframe");
+    doc.body.append(nested);
+    return nested;
+  }
+
+  function readyHook(): (agent: FrameAgent) => void {
+    const hook = (
+      window as unknown as {
+        __airshipOnFrameReady?: (agent: FrameAgent) => void;
+      }
+    ).__airshipOnFrameReady;
+    if (!hook) {
+      throw new Error("no __airshipOnFrameReady installed");
+    }
+    return hook;
+  }
+
+  it("frameOf resolves a node in a nested document to its frame", () => {
+    const frame = add("one");
+    const nested = nestInside(frame);
+    const nestedDoc = nested.contentDocument as Document;
+    const node = nestedDoc.createElement("div");
+    nestedDoc.body.append(node);
+
+    expect(frames.frameOf(node)).toBe(frame);
+  });
+
+  it("frameOfWindow walks a nested window up to its frame", () => {
+    const frame = add("one");
+    const nested = nestInside(frame);
+
+    expect(frames.frameOfWindow(nested.contentWindow)).toBe(frame);
+    expect(frames.frameOfWindow(frame.win)).toBe(frame);
+    expect(frames.frameOfWindow(window)).toBeNull();
+  });
+
+  it("registers a nested agent without clobbering the frame's own", () => {
+    const frame = add("one");
+    const nested = nestInside(frame);
+    const nestedWin = nested.contentWindow as Window;
+    const rootAgent = { window: frame.win } as unknown as FrameAgent;
+    const nestedAgent = { window: nestedWin } as unknown as FrameAgent;
+
+    readyHook()(rootAgent);
+    readyHook()(nestedAgent);
+
+    expect(frame.agent).toBe(rootAgent);
+    expect(frame.agents.get(frame.win as Window)).toBe(rootAgent);
+    expect(frame.agents.get(nestedWin)).toBe(nestedAgent);
+  });
+
+  it("drops nested agents when the root realm re-registers", () => {
+    // An HMR full reload rebuilds the frame's realm; the nested realms died
+    // with it, so their agents must not linger in the map.
+    const frame = add("one");
+    const nested = nestInside(frame);
+    const nestedAgent = {
+      window: nested.contentWindow,
+    } as unknown as FrameAgent;
+    const rebuilt = { window: frame.win } as unknown as FrameAgent;
+
+    readyHook()(nestedAgent);
+    expect(frame.agents.size).toBe(1);
+
+    readyHook()(rebuilt);
+    expect(frame.agent).toBe(rebuilt);
+    expect(Array.from(frame.agents.values())).toEqual([rebuilt]);
+  });
+
+  it("hands the shell the agent that registered, not just the frame", () => {
+    const seen: { frame: Frame; agent: FrameAgent }[] = [];
+    const local = new FrameManager({
+      onFrameReady: (frame, agent) => seen.push({ agent, frame }),
+      pathname: "/",
+      storageKey: "__airship-test:frames-nested",
+      world,
+    });
+    try {
+      const frame = local.add({ name: "one" });
+      if (!frame) {
+        throw new Error("add refused");
+      }
+      const nested = nestInside(frame);
+      const nestedAgent = {
+        window: nested.contentWindow,
+      } as unknown as FrameAgent;
+
+      readyHook()(nestedAgent);
+
+      expect(seen).toEqual([{ agent: nestedAgent, frame }]);
+    } finally {
+      local.destroy();
+    }
   });
 });

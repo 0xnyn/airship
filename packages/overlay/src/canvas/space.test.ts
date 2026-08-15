@@ -18,9 +18,15 @@ import { describe, expect, it } from "vitest";
 import {
   centerAt,
   fitTo,
+  frameChain,
+  frameToScreen,
+  intersectRects,
+  MAX_NEST_DEPTH,
   MIN_SCALE,
+  nestOffset,
   projectInto,
   type Rect,
+  screenToFrame,
   screenToWorld,
   type Viewport,
   visibleWorldRect,
@@ -154,5 +160,152 @@ describe("projectInto", () => {
     // A card smaller than twice its own padding — the collapsed-panel case.
     const bounds: Rect = { height: 100, left: 0, top: 0, width: 100 };
     expect(projectInto(bounds, { height: 10, width: 10 }, 8).scale).toBe(1);
+  });
+});
+
+// -- nested documents --------------------------------------------------------
+
+/** Pin an element's screen rect — happy-dom does no layout. */
+function stubRect(el: Element, rect: Partial<Rect>): void {
+  (el as HTMLElement).getBoundingClientRect = () =>
+    ({ height: 0, left: 0, top: 0, width: 0, ...rect }) as DOMRect;
+}
+
+function stubBorder(el: Element, left: number, top: number): void {
+  Object.defineProperty(el, "clientLeft", { value: left });
+  Object.defineProperty(el, "clientTop", { value: top });
+}
+
+/** A real same-origin iframe appended into `doc`, the text-edit.test idiom. */
+function nestedIframe(doc: Document): HTMLIFrameElement {
+  const iframe = doc.createElement("iframe");
+  doc.body.append(iframe);
+  return iframe;
+}
+
+describe("frameChain", () => {
+  it("is empty when the window already is the root", () => {
+    expect(frameChain(window, window)).toEqual([]);
+  });
+
+  it("collects the iframes between a nested document and the root, innermost first", () => {
+    const outer = nestedIframe(document);
+    const outerDoc = outer.contentDocument as Document;
+    const inner = nestedIframe(outerDoc);
+    const innerWin = inner.contentWindow as Window;
+
+    expect(frameChain(innerWin, window)).toEqual([inner, outer]);
+    outer.remove();
+  });
+
+  it("returns null when the root is not an ancestor", () => {
+    const stray = nestedIframe(document);
+    const strayWin = stray.contentWindow as Window;
+    const other = nestedIframe(document);
+    const otherWin = other.contentWindow as Window;
+
+    expect(frameChain(strayWin, otherWin)).toBeNull();
+    stray.remove();
+    other.remove();
+  });
+
+  it("gives up past the depth cap", () => {
+    let doc = document;
+    let iframe: HTMLIFrameElement | null = null;
+    const top = nestedIframe(doc);
+    doc = top.contentDocument as Document;
+    for (let i = 0; i < MAX_NEST_DEPTH + 1; i += 1) {
+      iframe = nestedIframe(doc);
+      doc = iframe.contentDocument as Document;
+    }
+
+    expect(frameChain(doc.defaultView as Window, window)).toBeNull();
+    top.remove();
+  });
+
+  it("treats a throwing hop as a cross-origin boundary", () => {
+    const iframe = nestedIframe(document);
+    const win = iframe.contentWindow as Window;
+    Object.defineProperty(win, "frameElement", {
+      get() {
+        throw new DOMException("cross-origin");
+      },
+    });
+
+    expect(frameChain(win, window)).toBeNull();
+    iframe.remove();
+  });
+});
+
+describe("nestOffset", () => {
+  it("is zero for an empty chain — the single-level path unchanged", () => {
+    expect(nestOffset([])).toEqual({ x: 0, y: 0 });
+  });
+
+  it("composes positions and borders across levels", () => {
+    const outer = nestedIframe(document);
+    const inner = nestedIframe(outer.contentDocument as Document);
+    stubRect(outer, { left: 200, top: 100 });
+    stubBorder(outer, 2, 2);
+    stubRect(inner, { left: 30, top: 40 });
+    stubBorder(inner, 1, 3);
+
+    // Innermost first, the way frameChain hands them over.
+    expect(nestOffset([inner, outer])).toEqual({ x: 233, y: 145 });
+    outer.remove();
+  });
+});
+
+describe("intersectRects", () => {
+  it("returns the overlap", () => {
+    const a: Rect = { height: 100, left: 0, top: 0, width: 100 };
+    const b: Rect = { height: 100, left: 60, top: 40, width: 100 };
+    expect(intersectRects(a, b)).toEqual({
+      height: 60,
+      left: 60,
+      top: 40,
+      width: 40,
+    });
+  });
+
+  it("collapses to zero size when they miss, never negative", () => {
+    const a: Rect = { height: 10, left: 0, top: 0, width: 10 };
+    const b: Rect = { height: 10, left: 50, top: 50, width: 10 };
+    const out = intersectRects(a, b);
+    expect(out.width).toBe(0);
+    expect(out.height).toBe(0);
+  });
+});
+
+describe("frame⇄screen with a nested offset", () => {
+  it("round-trips at a zoom that is not 1×", () => {
+    // Deliberately not 1: a bug that adds the offset after the scale is
+    // invisible at 1× and glaring at 2×.
+    const frameEl = document.createElement("div");
+    stubRect(frameEl, { left: 100, top: 50 });
+    const offset = { x: 30, y: 20 };
+    const rect: Rect = { height: 40, left: 10, top: 5, width: 60 };
+
+    const screen = frameToScreen(frameEl, rect, 2, offset);
+    expect(screen).toEqual({ height: 80, left: 180, top: 100, width: 120 });
+
+    const back = screenToFrame(
+      frameEl,
+      { x: screen.left, y: screen.top },
+      2,
+      offset
+    );
+    expect(back.x).toBeCloseTo(rect.left, 6);
+    expect(back.y).toBeCloseTo(rect.top, 6);
+  });
+
+  it("reduces to the plain conversion when the offset is absent", () => {
+    const frameEl = document.createElement("div");
+    stubRect(frameEl, { left: 100, top: 50 });
+    const rect: Rect = { height: 40, left: 10, top: 5, width: 60 };
+
+    expect(frameToScreen(frameEl, rect, 2)).toEqual(
+      frameToScreen(frameEl, rect, 2, { x: 0, y: 0 })
+    );
   });
 });
