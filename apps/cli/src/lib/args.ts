@@ -110,6 +110,13 @@ export const FLAGS: readonly FlagSpec[] = [
     type: "boolean",
   },
   {
+    defaultHint: "off",
+    group: "CORE",
+    help: "Keep your app's Content-Security-Policy on editor surfaces instead of stripping it. Framing headers (X-Frame-Options) are always stripped; a kept CSP can block the editor's own scripts.",
+    name: "keep-csp",
+    type: "boolean",
+  },
+  {
     alias: "a",
     defaultHint: "claude",
     group: "AGENT",

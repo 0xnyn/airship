@@ -271,6 +271,7 @@ forwarded.
 | `--mode <name>` | Editor mode: `canvas` or `inline`. Switchable from the editor too. | `canvas` |
 | `--exec <command>` | Start your dev server with this command and stop it when airship exits. | |
 | `--open` | Open the editor in your browser once it is listening. | |
+| `--keep-csp` | Keep your app's `Content-Security-Policy` on editor surfaces instead of stripping it. Framing headers (`X-Frame-Options`) are always stripped. | off |
 
 ### Agent
 
@@ -399,7 +400,7 @@ AIRSHIP_EXEC            AIRSHIP_MAX_BUDGET      AIRSHIP_OPENCODE_AGENT
 AIRSHIP_OPEN            AIRSHIP_COMMIT          AIRSHIP_OPENCODE_CONFIG
 AIRSHIP_SAFE            AIRSHIP_JSON            AIRSHIP_OPENCODE_MODEL
 AIRSHIP_DEBUG           AIRSHIP_QUIET           AIRSHIP_CLAUDE_MODEL
-                                                AIRSHIP_CODEX_MODEL
+AIRSHIP_KEEP_CSP                                AIRSHIP_CODEX_MODEL
 ```
 
 `AIRSHIP_HELP` and `AIRSHIP_VERSION` are deliberately not read — exporting one would leave the
@@ -446,6 +447,13 @@ With `--exec` it's the opposite: the port has to be *free*, since Airship is abo
 dev server on it. It won't start one on a port that's already taken.
 
 ## Troubleshooting
+
+**The canvas frame is blank, or shows a broken-document icon.**
+Your dev server is probably sending `X-Frame-Options` or a `Content-Security-Policy` with
+`frame-ancestors` (Shopify's `shopify theme dev` does), which told the browser not to render the
+app inside airship's canvas frame. Airship strips those headers from the surfaces it serves, so
+this should not happen — unless you passed `--keep-csp`, which keeps your CSP and with it any
+`frame-ancestors` restriction. Drop the flag, or loosen the policy while editing.
 
 **Every `opencode` turn fails with "Thinking mode does not support this tool_choice".**
 The provider is rejecting the structured-output request opencode sends — it is implemented as a

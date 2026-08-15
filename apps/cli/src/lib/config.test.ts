@@ -136,6 +136,13 @@ describe("loadConfig", () => {
     expect(() => loadConfig(root)).toThrow(CliError);
   });
 
+  it("accepts keep-csp in either spelling", () => {
+    const kebab = fixture({ "airship.config.json": '{ "keep-csp": true }' });
+    expect(loadConfig(kebab).values["keep-csp"]).toBe(true);
+    const camel = fixture({ "airship.config.json": '{ "keepCsp": true }' });
+    expect(loadConfig(camel).values["keep-csp"]).toBe(true);
+  });
+
   it("reports malformed JSON rather than falling through", () => {
     const root = fixture({ "airship.config.json": "{ nope" });
     expect(() => loadConfig(root)).toThrow(CliError);
@@ -164,6 +171,11 @@ describe("envSettings", () => {
 
   it("rejects a boolean it cannot read rather than defaulting to true", () => {
     expect(() => envSettings({ AIRSHIP_SAFE: "maybe" })).toThrow(CliError);
+  });
+
+  it("reads AIRSHIP_KEEP_CSP as the keep-csp boolean", () => {
+    expect(envSettings({ AIRSHIP_KEEP_CSP: "1" })["keep-csp"]).toBe(true);
+    expect(envSettings({ AIRSHIP_KEEP_CSP: "off" })["keep-csp"]).toBe(false);
   });
 
   // A shell profile that exported these would make the CLI unable to run.

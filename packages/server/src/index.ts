@@ -77,6 +77,11 @@ export interface ServerOptions {
   /** Project root for file edits. */
   cwd: string;
   effort?: Effort;
+  /**
+   * Keep upstream `Content-Security-Policy` headers on served surfaces
+   * instead of stripping them. `X-Frame-Options` is dropped regardless.
+   */
+  keepCsp?: boolean;
   maxBudgetUsd?: number;
   /** Claude-only turn cap. */
   maxTurns?: number;
@@ -580,6 +585,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
 
   const server = createProxyServer({
     defaultMode: surfaceToMode(opts.surface ?? "canvas"),
+    keepCsp: opts.keepCsp,
     onAirshipUpgrade: (req, socket, head) => {
       wss.handleUpgrade(req, socket, head, (ws) => {
         wss.emit("connection", ws, req);

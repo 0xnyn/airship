@@ -48,6 +48,7 @@ export const SERVE_FLAGS: readonly string[] = [
   "mode",
   "exec",
   "open",
+  "keep-csp",
   "agent",
   "model",
   "effort",
@@ -75,6 +76,7 @@ export interface ServeOptions {
   effort?: Effort;
   exec?: string;
   json: boolean;
+  keepCsp: boolean;
   maxBudgetUsd?: number;
   maxTurns?: number;
   model?: string;
@@ -118,6 +120,7 @@ export function toServeOptions(settings: Settings, cwd: string): ServeOptions {
     effort: effort ? (requireEnum(effort, "effort") as Effort) : undefined,
     exec: asString(settings, "exec"),
     json: asBoolean(settings, "json"),
+    keepCsp: asBoolean(settings, "keep-csp"),
     maxBudgetUsd: budget ? requireAmount(budget, "max-budget") : undefined,
     maxTurns: turns ? requireInteger(turns, "max-turns") : undefined,
     model,
@@ -305,6 +308,7 @@ export const serve = defineCommand({
         codex: opts.codex,
         cwd: opts.cwd,
         effort: opts.effort,
+        keepCsp: opts.keepCsp,
         maxBudgetUsd: opts.maxBudgetUsd,
         maxTurns: opts.maxTurns,
         model: opts.model,
