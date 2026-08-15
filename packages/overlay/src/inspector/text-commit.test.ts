@@ -78,7 +78,7 @@ function harness(): Harness {
   document.body.append(host);
   const [a, b] = Array.from(host.children) as HTMLElement[];
 
-  const surface = resolver.of();
+  const surface = resolver.of(null);
   const meta = new Map<Element, Selection>([
     [
       a,
