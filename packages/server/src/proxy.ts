@@ -45,6 +45,61 @@ const STRIP_ON_INJECT = new Set([
   "content-encoding",
 ]);
 
+// Policy, not protocol: framing headers exist to stop *other* origins from
+// embedding the app, but every surface here is same-origin inside the editor's
+// own canvas — forwarding them just blanks the frame with no page-level error.
+// The CSP pair also governs the injected editor itself (the inline config
+// script, injected styles, the control socket), so it is dropped wholesale
+// rather than edited; `keepCsp` opts back in for someone iterating on their
+// own policy.
+const STRIP_FOR_SURFACE = new Set([
+  "x-frame-options",
+  "content-security-policy",
+  "content-security-policy-report-only",
+]);
+
+interface HeaderFilter {
+  forSurface: boolean;
+  injecting: boolean;
+  keepCsp: boolean;
+}
+
+function keepsHeader(name: string, opts: HeaderFilter): boolean {
+  if (opts.injecting && STRIP_ON_INJECT.has(name)) {
+    return false;
+  }
+  if (!(opts.injecting || opts.forSurface)) {
+    return true;
+  }
+  if (!STRIP_FOR_SURFACE.has(name)) {
+    return true;
+  }
+  // `keepCsp` restores only the CSP pair: X-Frame-Options has no debugging
+  // value inside the editor — keeping it can only blank the frame.
+  return opts.keepCsp && name !== "x-frame-options";
+}
+
+/**
+ * Copy upstream response headers onto the response we serve, dropping what
+ * must not be forwarded: hop-by-hop and length/encoding when we rewrite the
+ * body (`injecting`), and framing/CSP policy on any document served as an
+ * editor surface (`forSurface`) — including responses we could not inject
+ * into, which is what blanks the canvas for dev servers that send
+ * `X-Frame-Options` on compressed or non-UTF-8 HTML.
+ */
+export function filterProxyHeaders(
+  headers: http.IncomingHttpHeaders,
+  opts: HeaderFilter
+): http.OutgoingHttpHeaders {
+  const out: http.OutgoingHttpHeaders = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (value !== undefined && keepsHeader(key.toLowerCase(), opts)) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 const TUNNEL_TIMEOUT_MS = 60_000;
 
 /** Not a surface: hand the upstream body back exactly as it came. */
@@ -173,6 +228,12 @@ export interface ProxyDeps {
    * browser by the surface cookie; see `resolveMode`.
    */
   defaultMode: AirshipMode;
+  /**
+   * Keep upstream `Content-Security-Policy` headers on served surfaces
+   * instead of stripping them. Framing protections (`X-Frame-Options`) are
+   * dropped regardless — see `STRIP_FOR_SURFACE`.
+   */
+  keepCsp?: boolean;
   onAirshipUpgrade: (
     req: http.IncomingMessage,
     socket: Duplex,
@@ -204,6 +265,10 @@ function handleHttp(
     serveAirshipAsset(req, res);
     return;
   }
+
+  // Resolved before the upstream round trip: the passthrough branch needs to
+  // know whether the response is frame-destined even when it cannot inject.
+  const resolved = resolveMode(req, deps.defaultMode);
 
   const headers = {
     ...req.headers,
@@ -240,11 +305,16 @@ function handleHttp(
         status !== 204 &&
         status !== 304;
 
-      const mode = canInject
-        ? resolveMode(req, deps.defaultMode)
-        : "passthrough";
+      const mode = canInject ? resolved : "passthrough";
       if (mode === "passthrough") {
-        res.writeHead(status, proxyRes.headers);
+        res.writeHead(
+          status,
+          filterProxyHeaders(proxyRes.headers, {
+            forSurface: resolved === "frame",
+            injecting: false,
+            keepCsp: deps.keepCsp ?? false,
+          })
+        );
         proxyRes.pipe(res);
         return;
       }
@@ -276,12 +346,11 @@ function handleHttp(
           pathname: appPathname(req),
           wsPath: deps.wsPath,
         });
-        const outHeaders: http.OutgoingHttpHeaders = {};
-        for (const [key, value] of Object.entries(proxyRes.headers)) {
-          if (!STRIP_ON_INJECT.has(key.toLowerCase())) {
-            outHeaders[key] = value;
-          }
-        }
+        const outHeaders = filterProxyHeaders(proxyRes.headers, {
+          forSurface: mode === "frame",
+          injecting: true,
+          keepCsp: deps.keepCsp ?? false,
+        });
         outHeaders["content-length"] = String(Buffer.byteLength(body));
         res.writeHead(status, outHeaders);
         res.end(body);

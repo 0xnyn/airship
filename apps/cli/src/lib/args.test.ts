@@ -20,6 +20,7 @@ const NAMES = [
   "codex-config",
   "opencode-url",
   "safe",
+  "keep-csp",
   "help",
 ];
 
@@ -53,6 +54,7 @@ describe("assertKnownFlags", () => {
 
   it("accepts --no- negation of a boolean", () => {
     expect(() => assertKnownFlags(["--no-safe"], NAMES)).not.toThrow();
+    expect(() => assertKnownFlags(["--no-keep-csp"], NAMES)).not.toThrow();
   });
 
   it("rejects an unknown flag and suggests the near miss", () => {
