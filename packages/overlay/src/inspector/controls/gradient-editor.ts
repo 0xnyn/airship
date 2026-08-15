@@ -267,7 +267,12 @@ function stopBar(
   selected: number,
   handlers: BarHandlers
 ): HTMLElement {
-  const wrap = el("div", { class: cls("grad-bar-wrap") });
+  // The one surface in the editor with no name of any kind. Both of its
+  // gestures are invisible until tried, and one of them creates a stop.
+  const wrap = el("div", {
+    class: cls("grad-bar-wrap"),
+    "data-tip": "Drag a stop. Double-click to add",
+  });
   const bar = el("div", { class: cls("grad-bar") });
   bar.style.backgroundImage = barCss(gradient);
   wrap.append(bar);

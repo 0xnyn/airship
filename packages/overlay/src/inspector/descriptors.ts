@@ -92,7 +92,13 @@ const LAYOUT: Descriptor[] = [
     // rows in a 320px dock, and a control that reflows as you resize the dock
     // reads as a bug — the rule `select.ts` already states, applied here too.
     key: "display",
-    label: "Display",
+    // "Layout", not "Display", and the section renders this rather than a
+    // literal of its own. The two disagreed: the rail said Layout while the
+    // descriptor said Display, so the row was invisible to anything sweeping
+    // `descriptors.ts` for copy. Layout is also the word the rest of the
+    // section already uses — the headings are "Auto layout" and "Layout grid",
+    // and a design tool has no `display`.
+    label: "Layout",
     span: "full",
   },
   {
@@ -560,9 +566,12 @@ export const VERTICAL_ALIGN: Descriptor = {
    * different properties on different elements, is worse than a shorter word.
    * `CONSTRAIN_V` calls the same axis "Vertical" already.
    *
-   * Not "Vertical align" because the 68px label rail neither ellipsises nor
-   * clips: fourteen characters wrap to two lines and take the row's height with
-   * them. "Blend mode" at ten is the longest label the panel ships.
+   * Not "Vertical align" because the label rail neither ellipsises nor clips:
+   * past `LABEL_MAX_CHARS` a label wraps to two lines and takes the row's
+   * height with it. That constant is the budget, and `tooltip.copy.test.ts`
+   * holds every rail label to it — this comment used to name the longest label
+   * shipped, which stopped being true the moment somebody added a longer one
+   * and nothing said so.
    */
   label: "Vertical",
 };
@@ -631,7 +640,14 @@ export const FONT_OPTICAL_SIZING: Descriptor = {
   ],
   group: "typography",
   key: "fontOpticalSizing",
-  label: "Optical sizing",
+  /*
+   * "Optical", not "Optical sizing", which sat exactly on the budget — one
+   * character from wrapping, and wrapping anyway inside Advanced type while
+   * that section paid its inset twice. A label at the limit is a label waiting
+   * for a wider word next to it; the noun is redundant in a group where every
+   * row is a sizing control.
+   */
+  label: "Optical",
   span: "full",
 };
 
@@ -764,7 +780,16 @@ export const JUSTIFY_ITEMS: Descriptor = {
   ],
   group: "layout",
   key: "justifyItems",
-  label: "Align items horizontally",
+  /*
+   * "Horizontal", not "Align items horizontally".
+   *
+   * Twenty-four characters in a fourteen-character rail wrapped to three lines
+   * and pushed a four-cell segmented group onto its own line beneath them. The
+   * axis is the only thing the label has to carry: the four icons already say
+   * *align*, the section heading already says *grid*, and `CONSTRAIN_H` names
+   * the same axis with the same word one section up.
+   */
+  label: "Horizontal",
   span: "full",
 };
 
@@ -780,7 +805,8 @@ export const ALIGN_ITEMS_GRID: Descriptor = {
   ],
   group: "layout",
   key: "alignItemsGrid",
-  label: "Align items vertically",
+  /** The vertical half of `JUSTIFY_ITEMS` above, named the same way. */
+  label: "Vertical",
   span: "full",
 };
 

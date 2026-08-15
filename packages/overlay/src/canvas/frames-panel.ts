@@ -31,6 +31,7 @@ import {
 } from "../dnd/manager";
 import { clear, cls, el, PREFIX } from "../dom";
 import { type IconName, icon } from "../icons";
+import { keys, tip } from "../keys/registry";
 import { createMenu, type MenuEntry, type MenuHandle } from "../popover-host";
 import { customSizeRow, deviceGroups } from "./device-menu";
 import { deleteFrame, duplicateFrame, reloadFrame } from "./frame-verbs";
@@ -94,7 +95,7 @@ export class FramesPanel {
       {
         "aria-label": "Add a frame",
         class: cls("fp-add"),
-        "data-tip": "Add a frame",
+        ...tip("Add a frame", "frame.add"),
         onClick: () => this.openAddMenu(),
         type: "button",
       },
@@ -110,10 +111,54 @@ export class FramesPanel {
       // mean what `showDropLine` computes. Parked in the scroller it was
       // positioned against that element's padding box while being measured from
       // the list's top edge, so every line drew one `--ap-space-xs` too high.
-      el("div", { class: cls("fp-scroll") }, [this.list]),
+      el("div", { class: `${cls("fp-scroll")} ${cls("scroll-y")}` }, [
+        this.list,
+      ]),
     ]);
     this.list.append(this.dropLine);
     this.watchDrag();
+    this.bindGripKeys();
+  }
+
+  /**
+   * ↑ and ↓ on a focused grip, as real commands.
+   *
+   * These were a raw `onKeydown` on each grip, with the two menu rows that
+   * describe them spelling `"↑"` and `"↓"` by hand — so the restack existed in
+   * three places that agreed only by inspection, and in none that the shortcuts
+   * panel or `CONTROLS.md` could see.
+   *
+   * Scoped to the list rather than to a grip: rows are rebuilt whenever the
+   * frame set changes, and a binding per grip would be registered and disposed
+   * on every rebuild. The list outlives them, and `within` is checked before
+   * the chord, so ↑/↓ elsewhere still belong to whatever owns them there.
+   */
+  private bindGripKeys(): void {
+    // The row comes from the keystroke's own origin, not from
+    // `document.activeElement`: the binding only fired because the key was
+    // pressed inside this list, so the event already says which row, and asking
+    // the document instead would answer differently the moment anything else
+    // took focus between the press and the handler.
+    const move = (delta: number) => (e: KeyboardEvent) => {
+      const from = e.target as HTMLElement | null;
+      const id = from?.closest?.<HTMLElement>("[data-frame]")?.dataset.frame;
+      if (!id) {
+        return;
+      }
+      if (this.moveBy(id, delta)) {
+        // The row this grip lived on has been rebuilt; take focus to the new one
+        // so a run of presses keeps moving the same frame.
+        this.rowOf(id)
+          ?.querySelector<HTMLElement>(`.${cls("fp-grip")}`)
+          ?.focus();
+      }
+    };
+    this.unsubscribe.push(
+      keys.bindAll([
+        { id: "frame.bringForward", run: move(-1), within: this.list },
+        { id: "frame.sendBackward", run: move(1), within: this.list },
+      ])
+    );
   }
 
   /**
@@ -210,13 +255,12 @@ export class FramesPanel {
         // The keyboard half of the same job. Bound here rather than through
         // `keys` because it is only meaningful while this handle has focus,
         // and the registry's `when` predicates are for global chords.
-        onKeydown: (e: KeyboardEvent) => this.onGripKey(e, frame.id),
         /*
          * Ours, not dnd-kit's.
          *
          * The Accessibility plugin does stamp `tabindex="0"` on a handle — but
          * it does it from an effect, a tick after the entity is constructed.
-         * `onGripKey` re-takes focus on a row that `reorder` has just rebuilt,
+         * `bindGripKeys` re-takes focus on a row that `reorder` has just rebuilt,
          * and in that window the fresh `span` is not focusable yet, so the
          * `focus()` silently did nothing and the second arrow press went to the
          * body. Setting it here makes the row focusable the moment it exists,
@@ -323,8 +367,8 @@ export class FramesPanel {
           plugins: FEEDBACK.none,
           // …which is exactly why the keyboard sensor must go. See
           // `POINTER_ONLY`: left on, Space would latch a drag that no arrow key
-          // can move and that eats the Tab out of it. `onGripKey` is the real
-          // keyboard route.
+          // can move and that eats the Tab out of it. The `frame.bringForward` and
+          // `frame.sendBackward` commands are the real keyboard route.
           sensors: POINTER_ONLY,
           type: DND.frameRow,
         },
@@ -563,15 +607,15 @@ export class FramesPanel {
        * lowering the index sends a frame *back*. See `stackOrder`.
        */
       {
+        command: "frame.bringForward",
         disabled: at <= 0,
-        hint: "↑",
         icon: "chev-up",
         label: "Bring forward",
         run: () => this.moveBy(frame.id, -1),
       },
       {
+        command: "frame.sendBackward",
         disabled: at < 0 || at >= last,
-        hint: "↓",
         icon: "chev-down",
         label: "Send backward",
         run: () => this.moveBy(frame.id, 1),
@@ -652,21 +696,6 @@ export class FramesPanel {
    * Plain arrows are safe without a guard: the global Nudge binding is gated on
    * `editing && selection`, and this panel exists only in view mode.
    */
-  private onGripKey(e: KeyboardEvent, id: string): void {
-    const delta = arrowDelta(e.key);
-    if (delta === 0) {
-      return;
-    }
-    // Before the move, or a refused one at either end would still scroll the
-    // panel — which reads as the row having moved.
-    e.preventDefault();
-    if (this.moveBy(id, delta)) {
-      this.rowOf(id)
-        ?.querySelector<HTMLElement>(`.${cls("fp-grip")}`)
-        ?.focus();
-    }
-  }
-
   /**
    * Drag a row to restack the frames.
    *
@@ -806,20 +835,6 @@ export function dropStackIndex(
   total: number
 ): number {
   return total - 1 - (to > from ? to - 1 : to);
-}
-
-/**
- * Which way an arrow key moves a row, or 0 for any other key.
- *
- * In list terms, so ↑ is one row up — and because the list is front-first, one
- * row up is one place toward the front. The two readings of "up" agree, which is
- * the whole point of `stackOrder`.
- */
-function arrowDelta(key: string): number {
-  if (key === "ArrowUp") {
-    return -1;
-  }
-  return key === "ArrowDown" ? 1 : 0;
 }
 
 /** The frame id carried by a drag source, or null if it is not one of ours. */

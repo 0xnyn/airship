@@ -10,7 +10,7 @@ import {
 } from "../dnd/manager";
 import { clear, cls, el, PREFIX } from "../dom";
 import { type IconName, icon } from "../icons";
-import { keys } from "../keys";
+import { keys } from "../keys/registry";
 import { placePopover } from "../popover";
 import { createMenu, type MenuEntry } from "../popover-host";
 import { isElement } from "../realm";
@@ -229,7 +229,10 @@ export class FrameChrome {
       // Registration order is *not* the guarantee and must not become one.
       // `keys.bind` unshifts and `CanvasStage` is built before `AirshipApp`, so
       // the element delete actually sits ahead of this one; it is the guards
-      // that keep them apart.
+      // that keep them apart. `catalog.test.ts` now checks that pairing rather
+      // than trusting this paragraph: two commands may share a chord only if
+      // their modes are disjoint, which `element.delete` (edit) and
+      // `frame.delete` (view) are.
       //
       // Bound here rather than through `Stage`. `Keys` evaluates `when` before
       // `run` and consumes the event on any match, so an honest guard needs a
@@ -246,12 +249,8 @@ export class FrameChrome {
       // menu's W/H boxes. `isTypingTarget` skips every binding without
       // `allowWhileTyping` for exactly those, and this one does not carry it.
       //
-      // The label is "Delete frame", not "Delete": `keys.hintFor` matches on
-      // label and `bindEditorKeys` already registers a "Delete", so a shared one
-      // would put the wrong chord on one of the two buttons.
       keys.bind({
-        keys: "backspace, delete",
-        label: "Delete frame",
+        id: "frame.delete",
         run: () => this.deleteActiveFrame(),
         when: () => !this.editing && this.deps.frames.active !== null,
       })
@@ -398,21 +397,29 @@ export class FrameChrome {
    * neither the row nor the deps behind it exist. See `minimap.ts`.
    */
   private zoomEntries(): MenuEntry[] {
+    // `command`, not `hint`. These five used to spell their own chords: "⌘+"
+    // where the binding is `mod+=`, "⌘−" with a U+2212 minus where it is an
+    // ASCII hyphen, and all five rendered as Mac glyphs on Windows and Linux.
+    // The registry renders them now, in the reader's own platform's spelling.
     const entries: MenuEntry[] = [
-      { hint: "⌘+", label: "Zoom in", run: () => this.zoomBy(1) },
-      { hint: "⌘−", label: "Zoom out", run: () => this.zoomBy(-1) },
+      { command: "view.zoomIn", label: "Zoom in", run: () => this.zoomBy(1) },
       {
-        hint: "⇧1",
+        command: "view.zoomOut",
+        label: "Zoom out",
+        run: () => this.zoomBy(-1),
+      },
+      {
+        command: "view.zoomToFit",
         label: "Zoom to fit",
         run: () => this.runZoom(() => this.deps.viewport.zoomToFit()),
       },
       {
-        hint: "⇧2",
+        command: "view.zoomToSelection",
         label: "Zoom to selection",
         run: () => this.runZoom(() => this.deps.viewport.zoomToSelection()),
       },
       {
-        hint: "⌘0",
+        command: "view.zoom100",
         label: "Zoom to 100%",
         run: () => this.runZoom(() => this.deps.viewport.zoomTo100()),
       },
@@ -669,7 +676,7 @@ export class FrameChrome {
     return el(
       "div",
       {
-        class: `${cls("fc-menu")} ${cls("fbar-menu")} ${cls("hidden")}`,
+        class: `${cls("fc-menu")} ${cls("fbar-menu")} ${cls("scroll-y")} ${cls("hidden")}`,
         onClick: (e: Event) => e.stopPropagation(),
       },
       [
@@ -760,7 +767,7 @@ export class FrameChrome {
     return el(
       "div",
       {
-        class: `${cls("fc-menu")} ${cls("fbar-menu")} ${cls("hidden")}`,
+        class: `${cls("fc-menu")} ${cls("fbar-menu")} ${cls("scroll-y")} ${cls("hidden")}`,
         onClick: (e: Event) => e.stopPropagation(),
       },
       [
@@ -989,9 +996,14 @@ export class FrameChrome {
     if (!this.menuFor) {
       return;
     }
+    // Unscoped, and `priority: "modal"` in the catalog rather than a `within`.
+    // The menu is opened by a click, so focus is still on `document.body` and a
+    // scoped binding would never match its own keystroke — while the menu is
+    // up, Escape belongs to it, and saying so as a priority is the honest way
+    // to outrank the picker's Deselect without depending on which constructor
+    // ran first.
     this.unbindMenuKeys = keys.bind({
-      keys: "escape",
-      label: "Close",
+      id: "frameMenu.close",
       run: () => this.closeMenu(),
     });
   }

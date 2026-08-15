@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cls, el } from "./dom";
-import { keys } from "./keys";
+import { keys } from "./keys/registry";
 import {
   closeOpenPopover,
   createMenu,
@@ -282,7 +282,7 @@ describe("a popover's own keys", () => {
     // The guard's purpose, from the other side: the canvas nudge must not run
     // under an open menu.
     const nudge = vi.fn();
-    const off = keys.bind({ keys: "arrowdown", label: "Nudge", run: nudge });
+    const off = keys.bind({ id: "element.nudge", run: nudge });
     try {
       const { content } = menu();
       press(rows(content)[0], "ArrowDown");
@@ -295,7 +295,7 @@ describe("a popover's own keys", () => {
 
   it("hands the keys back when it closes", () => {
     const nudge = vi.fn();
-    const off = keys.bind({ keys: "arrowdown", label: "Nudge", run: nudge });
+    const off = keys.bind({ id: "element.nudge", run: nudge });
     try {
       const { content } = menu();
       press(rows(content)[0], "Escape");
@@ -510,5 +510,109 @@ describe("a menu with collapsible groups", () => {
     handle.open(anchor(), "below");
 
     expect(shells()[0].querySelector(".custom-form")).toBe(custom);
+  });
+});
+
+/*
+ * The modal shape, the title bar, and the parts of both that no case reached.
+ *
+ * `popover-host.ts` grew by a third when the palette, the shortcuts sheet and
+ * the movable title bar landed, and this file's diff for all of it was an import
+ * path and two renamed literals. What follows covers the behaviour that has a
+ * user-visible failure mode: a scrim that must take the press meant for the page
+ * behind it, focus that must come back to whatever opened the modal, and a title
+ * bar that must be a pointer affordance without pretending to be a keyboard one.
+ */
+describe("a modal popover", () => {
+  it("puts a scrim behind it", () => {
+    openPopover({ content: el("div"), modal: true });
+
+    expect(popoverHost()?.querySelector(`.${cls("pop-scrim")}`)).not.toBeNull();
+  });
+
+  it("takes the scrim away again when it closes", () => {
+    const handle = openPopover({ content: el("div"), modal: true });
+
+    handle.close("programmatic");
+
+    expect(popoverHost()?.querySelector(`.${cls("pop-scrim")}`)).toBeNull();
+  });
+
+  it("gives focus back to whatever opened it", () => {
+    // Without this, dismissing the palette drops focus on the body and the next
+    // keystroke goes nowhere — the composer the user was in is no longer live.
+    const trigger = anchor();
+    trigger.focus();
+    expect(document.activeElement).toBe(trigger);
+
+    // No option for it: the shell remembers whatever had focus when it opened,
+    // and a modal passes no anchor, so this is the only thing it can go back to.
+    const handle = openPopover({ content: el("div"), modal: true });
+    // Focus has to actually leave, or the case proves nothing about restoring it.
+    const [shell] = shells();
+    (shell as HTMLElement).focus();
+    expect(document.activeElement).not.toBe(trigger);
+
+    handle.close("programmatic");
+
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("carries the class it was asked for", () => {
+    // The palette and the shortcuts sheet size themselves through these, and
+    // both were applied for a long time with no rule anywhere to receive them.
+    openPopover({ className: "pop-palette", content: el("div"), modal: true });
+
+    expect(
+      popoverHost()?.querySelector(`.${cls("pop-palette")}`)
+    ).not.toBeNull();
+  });
+});
+
+describe("a popover with a title", () => {
+  it("wears a draggable bar", () => {
+    openPopover({ anchor: anchor(), content: el("div"), title: "Stroke" });
+
+    const bar = popoverHost()?.querySelector(`.${cls("pop-bar")}`);
+    expect(bar?.textContent).toContain("Stroke");
+  });
+
+  it("hides the bar from assistive tech and names the shell instead", () => {
+    /*
+     * The bar is a `POINTER_ONLY` draggable, and dnd-kit stamps
+     * `aria-roledescription="draggable"` and a tab stop onto any handle. With no
+     * keyboard sensor that is a control which announces itself as movable and
+     * answers no key — the promise `POINTER_ONLY`'s own docstring says not to
+     * make. The title moves to the shell so nothing is lost.
+     */
+    openPopover({ anchor: anchor(), content: el("div"), title: "Stroke" });
+
+    const bar = popoverHost()?.querySelector(`.${cls("pop-bar")}`);
+    const shell = popoverHost()?.querySelector(`.${cls("pop")}`);
+    expect(bar?.getAttribute("aria-hidden")).toBe("true");
+    expect(shell?.getAttribute("aria-label")).toBe("Stroke");
+    expect(shell?.getAttribute("role")).toBe("group");
+  });
+
+  it("keeps the hidden bar out of the tab order", () => {
+    /*
+     * The half that makes `aria-hidden` honest, and the half a browser decides
+     * rather than this test's DOM: dnd-kit's Accessibility plugin writes
+     * `tabindex="0"` onto any drag handle, guarded only by
+     * `!activator.hasAttribute("tabindex")`. Writing one first is what stops it,
+     * and without it the bar would be hidden from screen readers *and* reachable
+     * by Tab — which is a worse trap than the one being fixed.
+     */
+    openPopover({ anchor: anchor(), content: el("div"), title: "Stroke" });
+
+    const bar = popoverHost()?.querySelector(`.${cls("pop-bar")}`);
+    expect(bar?.getAttribute("tabindex")).toBe("-1");
+    expect((bar as HTMLElement).tabIndex).toBe(-1);
+  });
+
+  it("builds no bar at all without one", () => {
+    openPopover({ anchor: anchor(), content: el("div") });
+
+    expect(popoverHost()?.querySelector(`.${cls("pop-bar")}`)).toBeNull();
   });
 });

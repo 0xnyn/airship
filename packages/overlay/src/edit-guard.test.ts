@@ -74,17 +74,19 @@ describe("pressVerdict", () => {
 });
 
 describe("SWALLOWED", () => {
-  it("leaves click and dblclick to the picker", () => {
-    // Both are the picker's outright — one selects, the other enters in-place
-    // text editing. Putting either back here gives the event two owners and
-    // silently breaks double-click entry, since `onPress` runs first.
+  it("leaves click, dblclick and contextmenu to the picker", () => {
+    // All three are the picker's outright — one selects, one enters in-place
+    // text editing, one opens the editor's menu on the selection. Putting any
+    // back here gives the event two owners and silently breaks the picker's,
+    // since `onPress` runs first.
     expect(SWALLOWED).not.toContain("click");
     expect(SWALLOWED).not.toContain("dblclick");
+    expect(SWALLOWED).not.toContain("contextmenu");
   });
 
   it("still covers the presses that would wake the app", () => {
     expect(SWALLOWED).toContain("pointerdown");
     expect(SWALLOWED).toContain("mousedown");
-    expect(SWALLOWED).toContain("contextmenu");
+    expect(SWALLOWED).toContain("auxclick");
   });
 });

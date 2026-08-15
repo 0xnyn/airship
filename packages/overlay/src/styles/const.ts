@@ -82,3 +82,32 @@ export const MINIMAP_PAD = 10;
  * of the 45-75 band, which is where micro-copy shown for half a second belongs.
  */
 export const TIP_MAX_W = 260;
+
+/**
+ * The label rail on a `labelled()` row, in CSS px.
+ *
+ * Here for the reason `MIN_DOCK_W` is: comments in `inspector.css.ts` and
+ * `controls.css.ts` reason about "the 68px label rail" in five places while the
+ * number itself lived in exactly one of them, as a literal. Anything that has
+ * to be quoted to be explained belongs where it can be imported.
+ *
+ * It is one half of a wrap threshold rather than a free choice. A `.row` breaks
+ * when the rail, a gutter and `--ap-row-ctl-min` stop fitting the dock, so this
+ * number and that one decide together whether a row is one line or two.
+ */
+export const LABEL_RAIL_W = 68;
+
+/**
+ * The most characters a rail label may run to.
+ *
+ * Derived the way `TIP_MAX_W` derives its own: at `--ap-font-size-label` (12px
+ * Inter) the rail holds about fourteen characters. The rail neither ellipsises
+ * nor clips — there is nowhere for a fifteenth to go, so it wraps to a second
+ * line and takes the row's height with it.
+ *
+ * The rule was written down in `descriptors.ts` long before this constant, and
+ * drifted anyway: it claimed "Blend mode" at ten was the longest label shipped,
+ * by which time three labels were past fourteen and one was twenty-four. Prose
+ * cannot hold a budget. `tooltip.copy.test.ts` asserts against this.
+ */
+export const LABEL_MAX_CHARS = 14;

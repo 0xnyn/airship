@@ -48,6 +48,8 @@ export const DND = {
   frameMove: "airship:frame-move",
   /** Dragging a row of the frame list to restack the frames. */
   frameRow: "airship:frame-row",
+  /** Dragging a popover's title bar to move it away from its anchor. */
+  popMove: "airship:pop-move",
   resizeHandle: "airship:resize-handle",
   scrub: "airship:scrub",
   splitter: "airship:splitter",

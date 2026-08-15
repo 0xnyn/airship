@@ -156,7 +156,10 @@ function openTokenPicker(anchor: HTMLElement, opts: TokenBadgeOptions): void {
   // real menus on none of it, so a token picker opened beside a select read as
   // a different product.
   const list = el("div", {
-    class: `${cls("pop-menu")} ${cls("token-list")}`,
+    // `scroll-y` here as well as on the shell: `.pop-menu`'s own `overflow-y`
+    // is what a token list actually scrolls in (see pop.css), so the shell's
+    // treatment never reaches it.
+    class: `${cls("pop-menu")} ${cls("token-list")} ${cls("scroll-y")}`,
     role: "menu",
   });
 

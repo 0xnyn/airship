@@ -39,6 +39,77 @@ ${ROOT} [disabled] .${PREFIX}-ic { --${PREFIX}-ic-tone: var(--ap-icon-disabled);
 
 .${PREFIX}-hidden { display: none !important; }
 
+/* Scrollbars. One definition, applied by class, for every scroll container the
+   overlay owns.
+
+   These were \`scrollbar-width: none\` plus \`::-webkit-scrollbar { display: none }\`
+   — a deliberate-looking choice that quietly broke the mouse. A trackpad can
+   swipe a horizontal rail sideways and a hidden scrollbar costs it nothing; a
+   mouse wheel produces vertical delta only, so with no scrollbar, no wheel
+   handler and no visible edge, the chips past the fold were simply unreachable.
+   The people who built it were on trackpads, which is exactly why it survived.
+
+   Transparent at rest so the chrome stays quiet, tinted once the surface is
+   under the pointer or holds focus. \`scrollbar-width: thin\` reserves its gutter
+   whether or not the thumb is painted, so revealing it shifts nothing — and the
+   rails are \`:empty { display: none }\`, so the ~6px is only spent when there is
+   something to scroll, which is when you want the affordance anyway.
+
+   Both syntaxes: \`scrollbar-color\` is the standard one (Firefox, Chrome 121+),
+   \`::-webkit-scrollbar\` covers Safari and older WebKit. An engine that honours
+   the first ignores the second, so they do not fight.
+
+   The \`--ap-scrollbar-*\` ramp has been shipping from @airship/editor-tokens
+   since the token set was written and had no reader until now. */
+.${PREFIX}-scroll-x, .${PREFIX}-scroll-y {
+  scrollbar-width: thin; scrollbar-color: transparent transparent;
+}
+/* \`overflow-y: hidden\` on the rail is deliberate: the thin scrollbar takes 6px
+   off the content box, and without it a chip that exactly fills the row can
+   provoke a vertical scrollbar on a one-row strip. \`.scroll-y\` sets no
+   cross-axis value at all — the panels it dresses hold rows that are
+   occasionally wider than the dock, and \`overflow-x: hidden\` would clip them
+   where today they scroll. */
+.${PREFIX}-scroll-x { overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; }
+.${PREFIX}-scroll-y { overflow-y: auto; overscroll-behavior-y: contain; }
+.${PREFIX}-scroll-x:hover, .${PREFIX}-scroll-x:focus-within,
+.${PREFIX}-scroll-y:hover, .${PREFIX}-scroll-y:focus-within {
+  scrollbar-color: var(--ap-scrollbar-thumb) var(--ap-scrollbar-track);
+}
+.${PREFIX}-scroll-x::-webkit-scrollbar, .${PREFIX}-scroll-y::-webkit-scrollbar {
+  width: 6px; height: 6px;
+}
+.${PREFIX}-scroll-x::-webkit-scrollbar-track, .${PREFIX}-scroll-y::-webkit-scrollbar-track {
+  background: var(--ap-scrollbar-track);
+}
+.${PREFIX}-scroll-x::-webkit-scrollbar-thumb, .${PREFIX}-scroll-y::-webkit-scrollbar-thumb {
+  background: transparent; border-radius: var(--ap-radius-pill);
+}
+.${PREFIX}-scroll-x:hover::-webkit-scrollbar-thumb, .${PREFIX}-scroll-x:focus-within::-webkit-scrollbar-thumb,
+.${PREFIX}-scroll-y:hover::-webkit-scrollbar-thumb, .${PREFIX}-scroll-y:focus-within::-webkit-scrollbar-thumb {
+  background: var(--ap-scrollbar-thumb);
+}
+.${PREFIX}-scroll-x::-webkit-scrollbar-thumb:hover, .${PREFIX}-scroll-y::-webkit-scrollbar-thumb:hover {
+  background: var(--ap-scrollbar-thumb-hover);
+}
+.${PREFIX}-scroll-x::-webkit-scrollbar-thumb:active, .${PREFIX}-scroll-y::-webkit-scrollbar-thumb:active {
+  background: var(--ap-scrollbar-thumb-active);
+}
+
+/* Fade the edge a rail can still scroll toward, so the overflow is visible
+   before you hover it — the affordance a mouse user actually notices. The
+   attribute is written by \`attachRailWheel\` from the rail's own scroll position;
+   absent means it fits and nothing is masked. */
+.${PREFIX}-scroll-x[data-overflow="right"] {
+  mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent 100%);
+}
+.${PREFIX}-scroll-x[data-overflow="left"] {
+  mask-image: linear-gradient(to right, transparent 0, #000 24px);
+}
+.${PREFIX}-scroll-x[data-overflow="both"] {
+  mask-image: linear-gradient(to right, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%);
+}
+
 /* Edit mode: the page is a canvas, not an app. Element-level cursors (a link's
    pointer, an input's text caret) beat \`document.body.style.cursor\`, so the
    arrow has to be forced from here — and text selection has to be off, or

@@ -276,6 +276,76 @@ export const Empty: StoryObj = {
 
 /** The whole panel at `MIN_DOCK_W`, which is the real stress test. */
 export const Narrow: StoryObj = {
+  /*
+   * The two measurements the unit tier cannot take.
+   *
+   * `LABEL_MAX_CHARS` is an estimate standing in for this: happy-dom does no
+   * layout, so `rail-label.test.ts` can only count characters and hope the
+   * arithmetic behind the constant still holds. Here the rail is really 68px of
+   * really-rendered 12px Inter, at the narrowest dock the splitter allows —
+   * which is the width that decides it. A label that wraps is two lines tall,
+   * so the height is the assertion.
+   *
+   * The gap is the other half. `.sect-body` owns its children's separation now
+   * rather than each child bringing a margin, and the failure mode if that
+   * regresses is not a thrown error anywhere — it is a section that looks
+   * slightly wrong, which is exactly the class of bug this catalogue exists to
+   * catch and the class a test suite usually cannot.
+   */
+  play: async ({ canvasElement }) => {
+    // Measured in the real face or not at all: a fallback metric wraps at a
+    // different word, so this would report on a font nobody sees.
+    await document.fonts.ready;
+    // `build` swaps the panel in on a frame, so at `play` time the story is
+    // still the placeholder slot. Two frames: one for that swap, one for the
+    // layout it causes.
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    // `canvasElement` is inside the decorator's `#__airship-root` rather than
+    // around it — same reason `foundations.stories.ts` reaches for `closest`
+    // before `querySelector` — so the panel is not always beneath it.
+    const scope =
+      canvasElement.closest("#__airship-root") ??
+      document.getElementById("__airship-root") ??
+      canvasElement;
+    const labels = [
+      ...scope.querySelectorAll<HTMLElement>(".__airship-row-label"),
+    ];
+    if (labels.length === 0) {
+      throw new Error("No rail labels rendered — the panel did not build.");
+    }
+    /*
+     * Counted as line boxes, not measured against a line height.
+     *
+     * The obvious version — `offsetHeight > lineHeight * 1.5` — is worse than
+     * wrong, it is vacuous: `.row-label` declares no `line-height`, so the
+     * computed value is the keyword `normal`, `parseFloat` gives `NaN`, and a
+     * guard against that skips every label and reports a clean sweep. A range
+     * over the text node yields one rect per line box, which needs no constant
+     * and cannot silently stop testing anything.
+     */
+    const range = document.createRange();
+    const wrapped = labels.filter((label) => {
+      range.selectNodeContents(label);
+      return range.getClientRects().length > 1;
+    });
+    if (wrapped.length > 0) {
+      throw new Error(
+        `Rail labels wrap at MIN_DOCK_W: ${wrapped.map((l) => l.textContent).join(", ")}`
+      );
+    }
+
+    const body = scope.querySelector<HTMLElement>(".__airship-sect-body");
+    if (!body) {
+      throw new Error("No section body to measure.");
+    }
+    const gap = getComputedStyle(body).rowGap;
+    if (gap !== "6px") {
+      throw new Error(
+        `A section body should space its children by the row pitch, got ${gap}.`
+      );
+    }
+  },
   render: () =>
     panelStory("card", {
       caption: {

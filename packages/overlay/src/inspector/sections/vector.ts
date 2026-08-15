@@ -44,7 +44,7 @@ const PAINT_NOTE = "Paint server or keyword, edit in CSS";
  * colour the illustration does not have. `planVector` already refuses to route
  * a truncated scan through `color`; this is the same refusal made visible.
  */
-const TRUNCATED_NOTE = "Too many shapes to edit here — edit in CSS";
+const TRUNCATED_NOTE = "Too many shapes to edit here. Edit in CSS";
 
 /** The row a truncated plan gets in place of a control. */
 function truncatedNote(owners: number): HTMLElement {

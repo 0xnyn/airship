@@ -302,9 +302,15 @@ export function createColorRow(opts: ColorRowOptions): ColorRowHandle {
 
   reflect(current);
 
+  // On the wrapper, matching what `num-field` does for a field whose glyph is a
+  // letter or absent: this one has no glyph at all, so without a tip the only
+  // thing naming it was a six-character value that could be any colour channel.
   const hexWrap = el(
     "div",
-    { class: `${cls("ctl-num")} ${cls("paint-hex")}` },
+    {
+      class: `${cls("ctl-num")} ${cls("paint-hex")}`,
+      "data-tip": "Hex value",
+    },
     [hex]
   );
   const row = el("div", { class: cls("paint-row") }, [
@@ -437,11 +443,17 @@ export function openColorPicker(opts: PickerOptions): PickerHandle {
    */
   // -- saturation / value ----------------------------------------------------
   const svKnob = el("i", { class: cls("pop-sv-knob") });
+  // A tip as well as the name. These three surfaces are bare gradients: unlike
+  // a select or a labelled field there is nothing on them that says what they
+  // do, so the accessible name was the only description and only a screen
+  // reader could reach it. The tips name the axis and the keyboard route,
+  // which is the part that is genuinely undiscoverable.
   const sv = el(
     "div",
     {
       "aria-label": "Saturation and brightness",
       class: cls("pop-sv"),
+      "data-tip": "Saturation and brightness",
       role: "application",
       tabindex: "0",
     },
@@ -457,6 +469,7 @@ export function openColorPicker(opts: PickerOptions): PickerHandle {
       "aria-valuemax": "360",
       "aria-valuemin": "0",
       class: `${cls("pop-slider")} ${cls("pop-slider-hue")}`,
+      "data-tip": "Hue. Arrow keys to step",
       role: "slider",
       tabindex: "0",
     },
@@ -471,6 +484,7 @@ export function openColorPicker(opts: PickerOptions): PickerHandle {
       "aria-valuemax": "100",
       "aria-valuemin": "0",
       class: `${cls("pop-slider")} ${cls("pop-slider-alpha")}`,
+      "data-tip": "Opacity. Arrow keys to step",
       role: "slider",
       tabindex: "0",
     },
@@ -665,8 +679,12 @@ export function openColorPicker(opts: PickerOptions): PickerHandle {
     svKnob.style.left = `${state.s * 100}%`;
     svKnob.style.top = `${(1 - state.v) * 100}%`;
     svKnob.style.background = solid;
-    hueKnob.style.left = `${(state.h / 360) * 100}%`;
-    alphaKnob.style.left = `${state.a * 100}%`;
+    // A 0-1 fraction, not a percentage: the stylesheet turns it into a `left`
+    // across `100% - <knob>` so the dial stays inside its track at both ends.
+    // The SV knob above keeps its percentages — it marks a point in an area
+    // whose corners are real values, so centring it on one is correct.
+    hueKnob.style.setProperty(`--${cls("knob")}`, String(state.h / 360));
+    alphaKnob.style.setProperty(`--${cls("knob")}`, String(state.a));
     alphaFill.style.backgroundImage = `linear-gradient(to right, transparent, ${solid})`;
     // The announced value, kept in step with the knob it describes.
     hue.setAttribute("aria-valuenow", String(Math.round(state.h)));

@@ -24,8 +24,11 @@
  *   the other mode. These three are what a click means *while editing*; the Hand
  *   is what a drag means while the page is **live**, which is precisely when the
  *   space-drag modifier stops working — the frames are real iframes in view
- *   mode, and once the pointer takes focus into one, no keydown reaches the
- *   shell. Joining this group would have meant inventing a "no tool" member for
+ *   mode, and once the pointer takes focus into one, a keydown reaches the shell
+ *   only for the handful of commands the catalog marks `inFrame`. Space-to-pan
+ *   is not one: it is a raw listener rather than a binding, and routing it would
+ *   mean swallowing a bare Space typed into somebody's own form.
+ *   Joining this group would have meant inventing a "no tool" member for
  *   a radio that has never needed one. It also stops at the frame boundary: a
  *   press the iframe consumes never reaches the canvas, so the Hand moves the
  *   surface without ever reaching into the app on it.
@@ -47,19 +50,20 @@
  * furniture: `enabled` gates their shortcuts so pressing V or I over a live app
  * in view mode does nothing, matching a bar that no longer shows them.
  */
-import { keys } from "./keys";
+import type { CommandId } from "./keys/catalog";
+import { keys } from "./keys/registry";
 
 export type Tool = "inspect" | "move";
 
 export interface ToolBinding {
-  key: string;
-  label: string;
+  /** The command this tool is. Its chord and its name come from the catalog. */
+  id: CommandId;
   tool: Tool;
 }
 
 export const TOOLS: ToolBinding[] = [
-  { key: "v", label: "Move", tool: "move" },
-  { key: "i", label: "Inspect", tool: "inspect" },
+  { id: "tool.move", tool: "move" },
+  { id: "tool.inspect", tool: "inspect" },
 ];
 
 type Listener = (tool: Tool) => void;
@@ -81,8 +85,7 @@ export class ToolController {
     this.unbind.push(
       keys.bindAll(
         TOOLS.map((t) => ({
-          keys: t.key,
-          label: t.label,
+          id: t.id,
           run: () => this.set(t.tool),
           when: () => this.enabled(),
         }))

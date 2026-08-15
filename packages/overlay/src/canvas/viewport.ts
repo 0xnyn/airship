@@ -1,6 +1,6 @@
 import { cls, el } from "../dom";
 import { isOwn } from "../edit-guard";
-import { isInsidePopover, isTypingTarget, keys } from "../keys";
+import { isInsidePopover, isTypingTarget, keys } from "../keys/registry";
 import { isFrameChrome } from "./frame-chrome";
 import {
   centerAt,
@@ -451,6 +451,18 @@ export class CanvasViewport {
       off();
     }
     this.unbind.length = 0;
+    // Both in flight at the moment a wheel gesture is interrupted by a teardown,
+    // and both close over this viewport: the frame would paint a transform onto
+    // a detached stage, and the gesture timer would clear `gesturing` on it long
+    // after the canvas it belonged to had gone.
+    if (this.frameRequest) {
+      cancelAnimationFrame(this.frameRequest);
+      this.frameRequest = 0;
+    }
+    if (this.gestureTimer) {
+      clearTimeout(this.gestureTimer);
+      this.gestureTimer = 0;
+    }
     this.setHandTool(false);
   }
 
@@ -676,29 +688,29 @@ export class CanvasViewport {
     };
     return keys.bindAll([
       {
-        keys: "mod+=",
-        label: "Zoom in",
+        id: "view.zoomIn",
         run: zoom(() => this.zoomStep(1)),
       },
       {
-        keys: "mod+-",
-        label: "Zoom out",
+        id: "view.zoomOut",
         run: zoom(() => this.zoomStep(-1)),
       },
       {
-        keys: "mod+0, shift+0",
-        label: "Zoom to 100%",
+        id: "view.zoom100",
         run: zoom(() => this.zoomTo100()),
       },
       {
-        keys: "shift+1",
-        label: "Zoom to fit",
+        id: "view.zoomToFit",
         run: zoom(() => this.zoomToFit()),
       },
       {
-        keys: "shift+2",
-        label: "Zoom to selection",
+        id: "view.zoomToSelection",
         run: zoom(() => this.zoomToSelection()),
+        // Was unguarded, so ⇧2 with nothing selected consumed the keystroke and
+        // did nothing visible. `zoomToSelection` already declines internally;
+        // saying so here is what keeps the palette and the panel from offering
+        // it when there is nothing to zoom to.
+        when: () => this.deps.getSelectionRect() !== null,
       },
     ]);
   }
