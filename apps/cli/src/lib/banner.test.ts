@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { warnBackendLimits } from "./banner";
+import { exposureBanner, warnBackendLimits } from "./banner";
 import { setColorEnabled } from "./terminal";
 
 /*
@@ -174,4 +174,20 @@ describe("warnBackendLimits", () => {
 
     expect(out).toBe("");
   });
+});
+
+describe("exposureBanner", () => {
+  for (const host of ["127.0.0.1", "::1", "[::1]", "localhost"]) {
+    it(`stays silent for the loopback bind ${host}`, () => {
+      expect(exposureBanner(host)).toBe("");
+    });
+  }
+
+  for (const host of ["0.0.0.0", "::", "192.168.1.5", "dev.local"]) {
+    it(`warns for ${host}, naming the interface`, () => {
+      const banner = exposureBanner(host);
+      expect(banner).toContain(host);
+      expect(banner).toContain("no authentication");
+    });
+  }
 });

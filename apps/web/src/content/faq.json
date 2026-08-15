@@ -30,7 +30,7 @@
     {
       "id": "safety",
       "question": "Is it safe to point at a real repository?",
-      "answer": "Airship runs locally and works directly with the repository you point it at. By default, your coding agent has the same filesystem and network access it normally has. Safe mode can restrict edits to your project and block potentially destructive commands."
+      "answer": "Airship runs locally and works directly with the repository you point it at. By default, your coding agent has the same filesystem and network access it normally has. Safe mode can restrict edits to your project and block potentially destructive commands. The editor itself listens only on localhost by default, so other devices and web pages can't reach it."
     },
     {
       "id": "undo",
@@ -50,7 +50,7 @@
     {
       "id": "privacy",
       "question": "Does my code leave my machine?",
-      "answer": "Airship runs entirely on localhost. It has no account, telemetry, or hosted service, and your code isn't sent to Airship. Your chosen coding agent handles requests using the same credentials and provider it would use from your terminal."
+      "answer": "Airship runs entirely on localhost by default — it binds 127.0.0.1 and refuses other devices and cross-site pages unless you widen that with --host. It has no account, telemetry, or hosted service, and your code isn't sent to Airship. Your chosen coding agent handles requests using the same credentials and provider it would use from your terminal."
     }
   ]
 }

@@ -23,6 +23,7 @@ import {
   GLOBAL_FLAGS,
   requireAmount,
   requireEnum,
+  requireHost,
   requireInteger,
   requireModelRef,
   requirePort,
@@ -44,6 +45,8 @@ import { note, out, setColorEnabled, shouldColor } from "../lib/terminal";
 export const SERVE_FLAGS: readonly string[] = [
   "target",
   "port",
+  "host",
+  "allowed-hosts",
   "cwd",
   "mode",
   "exec",
@@ -70,11 +73,13 @@ export const SERVE_FLAGS: readonly string[] = [
 
 export interface ServeOptions {
   agent: AgentKind;
+  allowedHosts: readonly string[];
   autoCommit: boolean;
   codex: CodexSettings;
   cwd: string;
   effort?: Effort;
   exec?: string;
+  host?: string;
   json: boolean;
   keepCsp: boolean;
   maxBudgetUsd?: number;
@@ -108,9 +113,19 @@ export function toServeOptions(settings: Settings, cwd: string): ServeOptions {
   const codexConfig = parseCodexConfig(asList(settings, "codex-config"));
   const model = asString(settings, "model");
   const opencodeModel = asString(settings, "opencode-model");
+  const host = asString(settings, "host");
 
   return {
     agent: (agent ? requireEnum(agent, "agent") : "claude") as AgentKind,
+    // Split locally: the env layer has no repeatable form, so
+    // AIRSHIP_ALLOWED_HOSTS=a,b arrives as one string.
+    allowedHosts: asList(settings, "allowed-hosts").flatMap((entry) =>
+      entry
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => requireHost(part, "allowed-hosts"))
+    ),
     autoCommit: asBoolean(settings, "commit"),
     codex: {
       codexPath: asString(settings, "codex-path"),
@@ -119,6 +134,7 @@ export function toServeOptions(settings: Settings, cwd: string): ServeOptions {
     cwd,
     effort: effort ? (requireEnum(effort, "effort") as Effort) : undefined,
     exec: asString(settings, "exec"),
+    host: host ? requireHost(host, "host") : undefined,
     json: asBoolean(settings, "json"),
     keepCsp: asBoolean(settings, "keep-csp"),
     maxBudgetUsd: budget ? requireAmount(budget, "max-budget") : undefined,
@@ -233,11 +249,16 @@ async function assertFree(port: number): Promise<void> {
  * whole ranges of dynamic ports, and a port inside one accepts no connection
  * yet refuses to be bound — so it looks free right up until it isn't.
  */
-function asBindError(err: unknown, port: number): unknown {
+function asBindError(err: unknown, port: number, host: string): unknown {
   const code = (err as NodeJS.ErrnoException | null)?.code;
   if (code === "EADDRINUSE") {
     return new CliError(`Port ${port} is already in use`, {
       hint: "Pass --port with a free one.",
+    });
+  }
+  if (code === "EADDRNOTAVAIL") {
+    return new CliError(`No interface on this machine has address ${host}`, {
+      hint: "Check --host — it must be one of this machine's addresses, or 0.0.0.0 for all of them.",
     });
   }
   if (code === "EACCES") {
@@ -266,8 +287,10 @@ export const serve = defineCommand({
 
     const targetPort = await resolveTarget(opts);
     // Default to target + 1, but step past anything already bound so a second
-    // airship in another project does not fail on EADDRINUSE.
-    const port = opts.port ?? (await firstFreePort(targetPort + 1));
+    // airship in another project does not fail on EADDRINUSE. Probed on the
+    // bind host: a port free on ::1 can still be taken on 127.0.0.1.
+    const bindHost = opts.host ?? "127.0.0.1";
+    const port = opts.port ?? (await firstFreePort(targetPort + 1, bindHost));
 
     // Attaching to a remote server needs no local binary, so the PATH half of
     // `checkAuth` would be a false alarm there.
@@ -304,10 +327,12 @@ export const serve = defineCommand({
     try {
       server = await startServer({
         agent: opts.agent,
+        allowedHosts: opts.allowedHosts,
         autoCommit: opts.autoCommit,
         codex: opts.codex,
         cwd: opts.cwd,
         effort: opts.effort,
+        host: opts.host,
         keepCsp: opts.keepCsp,
         maxBudgetUsd: opts.maxBudgetUsd,
         maxTurns: opts.maxTurns,
@@ -323,7 +348,7 @@ export const serve = defineCommand({
       // We started the dev server; if the proxy cannot come up it is ours to
       // clean up, or the user is left with a stray process holding the port.
       await dev?.stop();
-      throw asBindError(err, port);
+      throw asBindError(err, port, bindHost);
     }
 
     if (opts.json) {
@@ -332,6 +357,7 @@ export const serve = defineCommand({
           {
             agent: opts.agent,
             cwd: opts.cwd,
+            host: bindHost,
             mode: opts.surface,
             // The resolved model for the backend that will run, so a scripted
             // caller can read back which of the four model flags won rather
@@ -351,6 +377,7 @@ export const serve = defineCommand({
         launchBanner({
           agent: opts.agent,
           cwd: opts.cwd,
+          host: bindHost,
           model: opts.models?.[opts.agent],
           safe: opts.safe,
           surface: opts.surface,

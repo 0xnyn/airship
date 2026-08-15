@@ -269,6 +269,8 @@ forwarded.
 | --- | --- | --- |
 | `-t, --target <port>` | Port your dev server is already running on. Detected from your `package.json` when omitted. | |
 | `-p, --port <port>` | Port for the airship proxy. | `target + 1` |
+| `--host <address>` | Interface the proxy listens on. See [`--host`](#--host) before widening it. | `127.0.0.1` |
+| `--allowed-hosts <names>` | Extra hostnames airship answers to, repeatable or comma-separated. `localhost` and IP addresses are always allowed. | |
 | `--cwd <dir>` | Project root for edits. | current directory |
 | `--mode <name>` | Editor mode: `canvas` or `inline`. Switchable from the editor too. | `canvas` |
 | `--exec <command>` | Start your dev server with this command and stop it when airship exits. | |
@@ -402,7 +404,8 @@ AIRSHIP_EXEC            AIRSHIP_MAX_BUDGET      AIRSHIP_OPENCODE_AGENT
 AIRSHIP_OPEN            AIRSHIP_COMMIT          AIRSHIP_OPENCODE_CONFIG
 AIRSHIP_SAFE            AIRSHIP_JSON            AIRSHIP_OPENCODE_MODEL
 AIRSHIP_DEBUG           AIRSHIP_QUIET           AIRSHIP_CLAUDE_MODEL
-AIRSHIP_KEEP_CSP                                AIRSHIP_CODEX_MODEL
+AIRSHIP_KEEP_CSP        AIRSHIP_HOST            AIRSHIP_CODEX_MODEL
+AIRSHIP_ALLOWED_HOSTS
 ```
 
 `AIRSHIP_HELP` and `AIRSHIP_VERSION` are deliberately not read — exporting one would leave the
@@ -419,6 +422,25 @@ itself), and `NO_COLOR` / `FORCE_COLOR`.
 `--cwd` is the folder your dev server treats as its root, which is not always your repository
 root. Airship needs it to turn the paths your dev server reports (`/src/app.tsx`) into real
 files on disk. In a monorepo where the app lives in `apps/web`, that's `--cwd apps/web`.
+
+### `--host`
+
+Airship listens on `127.0.0.1`, so only your own machine can reach the editor. That is a safety
+posture, not a limitation: the editor is an unauthenticated server that can drive a coding agent
+with write access to your project, and airship warns loudly whenever you widen it. Three setups
+need the extra flags:
+
+- **Docker.** Publishing the editor's port with `docker run -p` needs `--host 0.0.0.0` — a
+  loopback bind inside the container is unreachable from outside it, and the symptom is a bare
+  connection-refused.
+- **A phone or another machine on your network.** `--host 0.0.0.0`, then open
+  `http://<your-ip>:<port>`. While airship runs, anything on that network can drive the agent —
+  treat it like leaving a terminal unlocked.
+- **A hostname** — an `/etc/hosts` alias, a tunnel, a reverse proxy. Requests under a name are
+  refused unless it is the `--host` value or listed in `--allowed-hosts`. `localhost` and IP
+  addresses are always accepted; names must match exactly (no subdomains), which is what blocks
+  DNS rebinding. Airship never reads `X-Forwarded-Host` — behind a reverse proxy, put the public
+  name in `--allowed-hosts`.
 
 ## Port detection
 
@@ -523,9 +545,10 @@ previous version of the file, so without a repository you lose undo on those two
 unaffected. See [Agents](#agents).
 
 **Does my code leave my machine?**
-Airship runs entirely on localhost. It has no account, telemetry, or hosted service, and your
-code isn't sent to Airship. Your chosen coding agent handles requests using the same credentials
-and provider it would use from your terminal.
+Airship runs entirely on localhost by default: it binds `127.0.0.1` and refuses requests from
+other devices and cross-site pages unless you widen that with [`--host`](#--host). It has no
+account, telemetry, or hosted service, and your code isn't sent to Airship. Your chosen coding
+agent handles requests using the same credentials and provider it would use from your terminal.
 
 ## Requirements
 
