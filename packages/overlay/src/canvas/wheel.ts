@@ -1,5 +1,10 @@
 import type { Frame } from "./frames";
-import { type Point, screenPointInFrame, screenToFrame } from "./space";
+import {
+  MAX_NEST_DEPTH,
+  type Point,
+  screenPointInFrame,
+  screenToFrame,
+} from "./space";
 
 /**
  * Who owns a wheel — the selected frame, or the canvas?
@@ -188,6 +193,62 @@ export function routeWheel(
  * Everything is read through the frame's own realm (`win.getComputedStyle`, its
  * own `elementFromPoint`), never the shell's — see `../realm.ts`.
  */
+/** One document the wheel point passes through on its way down. */
+interface WheelLevel {
+  /** What the point landed on here — an iframe on every level but the last. */
+  hit: Element | null;
+  win: Window;
+}
+
+/**
+ * Follow the point down through same-origin iframes, collecting a level per
+ * document — the same step the surface resolver takes. Over a nested document
+ * (a Storybook preview) the outer hit is the `<iframe>`, whose ancestors are
+ * the outer document's panes; without the descent the wheel scrolled the
+ * wrong scroller, or nothing.
+ */
+function wheelLevels(win: Window, point: Point): WheelLevel[] {
+  const levels: WheelLevel[] = [];
+  let currentWin = win;
+  let currentPoint = point;
+  for (let depth = 0; depth <= MAX_NEST_DEPTH; depth += 1) {
+    const doc = currentWin.document;
+    if (!doc) {
+      break;
+    }
+    const hit = doc.elementFromPoint(currentPoint.x, currentPoint.y);
+    levels.push({ hit, win: currentWin });
+    if (hit?.tagName !== "IFRAME") {
+      break;
+    }
+    const iframe = hit as HTMLIFrameElement;
+    const innerWin = iframe.contentDocument?.defaultView;
+    if (!innerWin) {
+      break;
+    }
+    const rect = iframe.getBoundingClientRect();
+    currentPoint = {
+      x: currentPoint.x - rect.left - iframe.clientLeft,
+      y: currentPoint.y - rect.top - iframe.clientTop,
+    };
+    currentWin = innerWin;
+  }
+  return levels;
+}
+
+/** Does the document itself have anything to scroll in the direction asked? */
+function docScrolls(win: Window, dx: number, dy: number): boolean {
+  const doc = win.document;
+  const root = doc?.documentElement;
+  const body = doc?.body;
+  const height = Math.max(root?.scrollHeight ?? 0, body?.scrollHeight ?? 0);
+  const width = Math.max(root?.scrollWidth ?? 0, body?.scrollWidth ?? 0);
+  return (
+    (dy !== 0 && height > win.innerHeight + 1) ||
+    (dx !== 0 && width > win.innerWidth + 1)
+  );
+}
+
 export function scrollTargetAt(
   win: Window,
   point: Point,
@@ -195,25 +256,27 @@ export function scrollTargetAt(
   dy: number
 ): ScrollTarget | null {
   try {
-    const doc = win.document;
-    if (!doc) {
-      return null;
-    }
-    let node: Element | null = doc.elementFromPoint(point.x, point.y);
-    while (node) {
-      if (hasScrollExtent(win, node, dx, dy)) {
-        return node;
+    const levels = wheelLevels(win, point);
+    // Walk up from the deepest hit; at each iframe boundary continue from the
+    // iframe element in the document above, so a scrollable pane *holding*
+    // the nested document still answers.
+    for (let i = levels.length - 1; i >= 0; i -= 1) {
+      let node = levels[i].hit;
+      while (node) {
+        if (hasScrollExtent(levels[i].win, node, dx, dy)) {
+          return node;
+        }
+        node = node.parentElement;
       }
-      node = node.parentElement;
     }
-    const root = doc.documentElement;
-    const { body } = doc;
-    const height = Math.max(root?.scrollHeight ?? 0, body?.scrollHeight ?? 0);
-    const width = Math.max(root?.scrollWidth ?? 0, body?.scrollWidth ?? 0);
-    const scrolls =
-      (dy !== 0 && height > win.innerHeight + 1) ||
-      (dx !== 0 && width > win.innerWidth + 1);
-    return scrolls ? win : null;
+    // Then each document itself, deepest first — the answer for a gesture
+    // aimed at the page as a whole rather than at a pane inside it.
+    for (let i = levels.length - 1; i >= 0; i -= 1) {
+      if (docScrolls(levels[i].win, dx, dy)) {
+        return levels[i].win;
+      }
+    }
+    return null;
   } catch {
     // Cross-origin, or a frame torn down mid-gesture. Let the canvas have it.
     return null;
