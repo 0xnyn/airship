@@ -446,8 +446,8 @@ export function boot(): void {
     return;
   }
   injectStyles();
-  const config = (window as unknown as { __PIKA__?: AirshipWindowConfig })
-    .__PIKA__;
+  const config = (window as unknown as { __AIRSHIP__?: AirshipWindowConfig })
+    .__AIRSHIP__;
   // The whole config, not just `wsPath`: the surface switcher needs to know
   // which surface it is on and the clean app path to navigate back to, and an
   // injection old enough to carry neither still boots — it just falls back to

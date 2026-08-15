@@ -406,8 +406,10 @@ AIRSHIP_DEBUG           AIRSHIP_QUIET           AIRSHIP_CLAUDE_MODEL
 CLI unable to run anything. Booleans take `1`/`true`/`yes`/`on` or `0`/`false`/`no`/`off`;
 anything else is an error rather than a guess.
 
-Three more are honoured: `AIRSHIP_EDITOR` (`vscode`, `cursor`, `windsurf` or `zed` — which
-editor "open in editor" prefers, otherwise probed in that order), and `NO_COLOR` / `FORCE_COLOR`.
+Four more are honoured: `AIRSHIP_EDITOR` (`vscode`, `cursor`, `windsurf` or `zed` — which
+editor "open in editor" prefers, otherwise probed in that order), `AIRSHIP_AGENT_DEBUG` (stream
+the Claude backend's raw stderr to the terminal — separate from `--debug`, which logs airship
+itself), and `NO_COLOR` / `FORCE_COLOR`.
 
 ### `--cwd`
 

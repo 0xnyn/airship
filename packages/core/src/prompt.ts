@@ -106,7 +106,7 @@ export function systemPrompt(agent: AgentKind): string {
 }
 
 /** @deprecated Prefer {@link systemPrompt}; retained as the Claude spelling. */
-export const PIKA_SYSTEM_PROMPT = systemPrompt("claude");
+export const AIRSHIP_SYSTEM_PROMPT = systemPrompt("claude");
 
 export interface EditPromptInput {
   /** Direct-manipulation HTML attribute edits, when present. */
