@@ -11,14 +11,18 @@
     "./tokens": {
       "types": "./dist/tokens.d.ts",
       "import": "./dist/tokens.js"
+    },
+    "./models": {
+      "types": "./dist/models.d.ts",
+      "import": "./dist/models.js"
     }
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
-    "build": "tsup src/index.ts src/tokens.ts --format esm --dts --sourcemap --clean",
+    "build": "tsup src/index.ts src/tokens.ts src/models.ts --format esm --dts --sourcemap --clean",
     "clean": "node ../../scripts/clean.mjs dist .turbo",
-    "dev": "tsup src/index.ts src/tokens.ts --format esm --dts --sourcemap --watch",
+    "dev": "tsup src/index.ts src/tokens.ts src/models.ts --format esm --dts --sourcemap --watch",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

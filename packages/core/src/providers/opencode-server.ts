@@ -42,6 +42,29 @@ export interface OpencodeSettings {
  * carrying nothing but heartbeats).
  */
 export interface OpencodeClientLike {
+  config: {
+    /**
+     * Which providers this server can actually reach, and each one's models.
+     *
+     * Scoped to what the user has configured or authenticated — opencode
+     * resolves the models.dev registry itself at startup and reports back only
+     * the reachable subset. That is why the picker asks the server rather than
+     * reading the registry a second time: this answer already knows what a
+     * request would be allowed to do.
+     *
+     * `default` maps a provider id to the model it falls back to.
+     */
+    providers: (params?: { directory?: string }) => Promise<{
+      data?: {
+        default?: Record<string, string>;
+        providers?: {
+          id: string;
+          models?: Record<string, { id?: string; name?: string }>;
+          name?: string;
+        }[];
+      };
+    }>;
+  };
   event: {
     /**
      * The second argument is the transport options bag — `ServerSentEventsOptions`

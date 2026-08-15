@@ -10,6 +10,8 @@ import type {
 } from "@airship/core";
 import {
   buildEditPrompt,
+  listAllModels,
+  namesProvider,
   runEdit,
   shutdownOpencodeServer,
 } from "@airship/core";
@@ -36,6 +38,7 @@ import {
   type ElementContext,
   type JobDiffBundle,
   type JobStatus,
+  type ModelCatalogue,
   type MoveEdit,
   type ReviewComment,
   type ServerEvent,
@@ -54,10 +57,11 @@ import { createProxyServer } from "./proxy";
 export type {
   CodexConfigValue,
   CodexSettings,
+  ModelProbeOptions,
   OpencodeSettings,
 } from "@airship/core";
 /** Re-exported so the CLI depends only on @airship/server. */
-export { checkAuth } from "@airship/core";
+export { checkAuth, listModels } from "@airship/core";
 export { isGitRepo } from "@airship/git";
 export type { AgentKind, AirshipSurface, Effort } from "@airship/protocol";
 
@@ -76,7 +80,19 @@ export interface ServerOptions {
   maxBudgetUsd?: number;
   /** Claude-only turn cap. */
   maxTurns?: number;
+  /** Cross-harness model default, from `--model`. Superseded per backend by
+   * `models`, and by a turn that names its own. Kept because the launch banner
+   * reads it, and because it is still the right answer for a single-backend run. */
   model?: string;
+  /**
+   * Per-backend model defaults, already resolved by the CLI (`--claude-model`
+   * and friends, each falling back to `--model`).
+   *
+   * Per backend rather than one string because the overlay's picker can change
+   * harness mid-session: a single default would hand a `claude-opus-5` to Codex
+   * the first time someone switched.
+   */
+  models?: Partial<Record<AgentKind, string>>;
   /** OpenCode-only passthrough knobs; opaque here by design. */
   opencode?: OpencodeSettings;
   /** Port Airship's proxy listens on. */
@@ -113,6 +129,42 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   // Serialize edits: concurrent edits against the same working tree would
   // cross-contaminate diff capture and undo baselines.
   let editChain: Promise<void> = Promise.resolve();
+
+  /**
+   * The model catalogue, probed once and kept.
+   *
+   * Memoized as the in-flight promise rather than its value, so two tabs
+   * opening their pickers together share one probe instead of racing to start
+   * two `opencode serve` processes. A rejection is not possible to observe
+   * here — `listAllModels` reports failures as groups with a `note` — but the
+   * memo is cleared on one anyway, so a genuinely broken probe is retried
+   * rather than cached forever.
+   */
+  let catalogue: Promise<ModelCatalogue> | null = null;
+
+  function modelCatalogue(refresh?: boolean): Promise<ModelCatalogue> {
+    if (refresh) {
+      catalogue = null;
+    }
+    catalogue ??= listAllModels(cwd, {
+      opencode: opts.opencode,
+      safe: opts.safe,
+    })
+      .then((groups) =>
+        // The daemon's own resolved default outranks whatever the backend
+        // reports: if someone launched with `--codex-model gpt-5.4`, that is
+        // what an unpicked turn will run, so it is what the menu must lead with.
+        groups.map((group) => ({
+          ...group,
+          default: opts.models?.[group.agent] ?? group.default,
+        }))
+      )
+      .catch((err) => {
+        catalogue = null;
+        throw err;
+      });
+    return catalogue;
+  }
 
   function broadcast(event: ServerEvent): void {
     const data = JSON.stringify(event);
@@ -170,6 +222,13 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     switch (parsed.type) {
       case "edit": {
         const { request } = parsed;
+        // Refused here rather than inside `startEdit`, so a model opencode
+        // cannot run neither creates a job nor takes a place in the edit chain.
+        const refusal = modelRefusal(request, opts);
+        if (refusal) {
+          send(ws, { message: refusal, type: "error" });
+          break;
+        }
         editChain = editChain
           .then(() => startEdit(request))
           .catch((err) => {
@@ -197,6 +256,22 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
           scan: scanProjectTokens(cwd, { refresh: parsed.refresh }),
           type: "tokens:result",
         });
+        break;
+      // Off `editChain` like `tokens`, and for a stronger reason: the probe
+      // talks to the same backends a running turn is using, and queueing it
+      // would leave the picker spinning for the length of an edit. Answered to
+      // the asking socket only — the menu that asked is the one waiting.
+      case "models":
+        modelCatalogue(parsed.refresh)
+          .then((result) =>
+            send(ws, { catalogue: result, type: "models:result" })
+          )
+          .catch((err) => {
+            send(ws, {
+              message: `model list failed: ${err instanceof Error ? err.message : String(err)}`,
+              type: "error",
+            });
+          });
         break;
       // Off `editChain` for the same reason as `tokens`: it only resolves
       // sources and renders a string. Queueing it behind a running edit would
@@ -248,7 +323,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     // the two must render the identical string.
     const promptInput = preparePromptInput(cwd, request);
 
-    const agent = request.agent ?? opts.agent ?? "claude";
+    const { agent, model } = resolveTarget(request, opts);
     const resumeSessionId = resolveResume(cwd, request.parentJobId, agent);
 
     const abort = new AbortController();
@@ -269,7 +344,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
         images: request.images,
         maxBudgetUsd: opts.maxBudgetUsd,
         maxTurns: opts.maxTurns,
-        model: opts.model,
+        model,
         opencode: opts.opencode,
         resumeSessionId,
         safe: opts.safe,
@@ -304,6 +379,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       createdAt: rec.createdAt,
       displayPrompt,
       jobId: rec.jobId,
+      model,
       parentJobId: request.parentJobId,
       primaryElement: promptInput.element,
       result,
@@ -633,6 +709,68 @@ function jobStatus(aborted: boolean, ok: boolean): JobStatus {
 const RESUME_WALK_LIMIT = 3;
 
 /**
+ * Which backend this turn runs on, and on which model.
+ *
+ * Three steps each: what the turn asked for, else the default resolved for the
+ * backend that is actually running, else the cross-harness one. Unlike `agent`,
+ * a missing model is fine — every adapter reads an absent model as "use your
+ * own default".
+ *
+ * Per backend rather than one string because the overlay's picker can change
+ * harness mid-session, so a single default would follow it and hand Codex an id
+ * only Claude answers to.
+ *
+ * One function, and module-level rather than a closure, for two reasons: the
+ * `edit` handler validates the model that `startEdit` then sends, and resolving
+ * it in both places would let the checked value drift from the run one; and a
+ * precedence chain this load-bearing should be reachable from a test without
+ * standing a server up.
+ */
+export function resolveTarget(
+  request: Pick<CreateJobRequest, "agent" | "model">,
+  opts: Pick<ServerOptions, "agent" | "model" | "models">
+): { agent: AgentKind; model?: string } {
+  const agent = request.agent ?? opts.agent ?? "claude";
+  return {
+    agent,
+    model: request.model ?? opts.models?.[agent] ?? opts.model,
+  };
+}
+
+/**
+ * Why this turn's model cannot run, or `null` if it can.
+ *
+ * `toModelBody` drops an opencode ref that does not name a provider, which makes
+ * asking for one indistinguishable from asking for nothing: the turn runs on the
+ * server's default while the composer goes on showing what was picked.
+ *
+ * It reads `request.model` and deliberately **not** the resolved model. The
+ * three ways a model gets here are guarded differently on purpose, and `args.ts`
+ * spells out why:
+ *
+ * - `--opencode-model` names its backend, so a bare id there can only be a
+ *   mistake — a hard error at parse time.
+ * - `--model` reaches all three backends, where a bare id is correct for two of
+ *   them. It warns at launch and the turn runs on opencode's own default.
+ * - The picker's custom-model box had no guard at either end. It is the one door
+ *   left, and the one where the user is choosing right now and can act on being
+ *   told.
+ *
+ * Guarding the *resolved* model would fold the second case into the first and
+ * turn a documented warn-and-continue into "every edit refused".
+ */
+export function modelRefusal(
+  request: Pick<CreateJobRequest, "agent" | "model">,
+  opts: Pick<ServerOptions, "agent" | "model" | "models">
+): string | null {
+  const { agent } = resolveTarget(request, opts);
+  if (agent !== "opencode" || !request.model || namesProvider(request.model)) {
+    return null;
+  }
+  return `opencode cannot run '${request.model}': it resolves a model through its provider, so it needs the provider/model form — try 'anthropic/${request.model}'.`;
+}
+
+/**
  * The session to resume, or null to start clean.
  *
  * `sessionId` names a Claude session on one backend and a Codex thread on the
@@ -674,6 +812,7 @@ function buildBundle(args: {
   createdAt: number;
   displayPrompt: string;
   jobId: string;
+  model?: string;
   parentJobId?: string;
   primaryElement?: ElementContext;
   result: RunEditResult;
@@ -693,6 +832,7 @@ function buildBundle(args: {
     filesChanged: result.diffs.length,
     followUps: result.followUps,
     jobId: args.jobId,
+    model: args.model,
     parentJobId: args.parentJobId,
     prompt: displayPrompt,
     promptPreview: preview(displayPrompt),

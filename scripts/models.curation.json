@@ -1,0 +1,48 @@
+{
+  "$comment": [
+    "Hand-maintained curation for scripts/gen-models.mjs. The generator filters",
+    "models.dev mechanically; everything that needs judgement lives here, so the",
+    "generated file stays purely derived and this file is what gets reviewed.",
+    "",
+    "Run `make models:refresh` after editing."
+  ],
+
+  "since": "2025-08-01",
+  "$since": "Release-date floor. Cuts o1/o3/o4, gpt-oss and the Claude 3.x/4.0 era without naming them one by one.",
+
+  "limit": 10,
+  "$limit": "Rows kept per harness from models.dev, newest first — `extra` below is pinned on top of these rather than counted against them, so claude ships 14. A picker is a menu, not a scroll: `popover-host.ts` caps and scrolls past roughly this many.",
+
+  "deny": [
+    "-chat-latest$",
+    "-instant$",
+    "^openai/gpt-realtime-",
+    "^openai/gpt-oss-",
+    "-deep-research$",
+    "-\\d{8}$"
+  ],
+  "$deny": [
+    "Regexes matched against the models.dev id. In order:",
+    "chat-latest / instant  — chat tiers, not agentic; they have no tool loop worth offering here.",
+    "gpt-realtime           — voice; passes the tool_call+reasoning filter but is not a coding model.",
+    "gpt-oss                — open weights, not served on the OpenAI API these harnesses call.",
+    "deep-research          — a hosted research product, not a coding model.",
+    "-YYYYMMDD              — models.dev lists both `claude-opus-4-5` and `claude-opus-4-5-20251101`.",
+    "                         The undated id is the better menu row and pins to the same weights."
+  ],
+
+  "extra": {
+    "claude": [
+      { "id": "opus", "label": "Opus", "hint": "latest" },
+      { "id": "sonnet", "label": "Sonnet", "hint": "latest" },
+      { "id": "haiku", "label": "Haiku", "hint": "latest" },
+      { "id": "fable", "label": "Fable", "hint": "latest" }
+    ]
+  },
+  "$extra": [
+    "Rows models.dev cannot know about, pinned above the derived ones.",
+    "`claude --model` accepts these aliases and resolves each to the current",
+    "model in its family, so they stay correct between refreshes in a way a",
+    "pinned id cannot. `codex -m` and opencode take no aliases, so they get none."
+  ]
+}

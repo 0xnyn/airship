@@ -93,6 +93,9 @@ function scriptedClient(attempts: AttemptScript[]): {
   let call = 0;
   const script = () => attempts[Math.min(call, attempts.length - 1)];
   const client: OpencodeClientLike = {
+    // Never called on a run — the model catalogue is a separate request. Present
+    // because the interface describes the real client, not one turn's slice.
+    config: { providers: () => Promise.resolve({ data: { providers: [] } }) },
     event: {
       subscribe: () => {
         const { sse } = script();
