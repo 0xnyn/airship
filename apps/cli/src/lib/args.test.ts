@@ -5,6 +5,7 @@ import {
   requireAmount,
   requireEnum,
   requireInteger,
+  requireModelRef,
   requirePort,
 } from "./args";
 import { CliError, closest, EXIT } from "./errors";
@@ -145,6 +146,29 @@ describe("requireEnum", () => {
     expect(thrown(() => requireEnum("zzzzzz", "agent")).hint).toContain(
       "claude, codex, opencode"
     );
+  });
+});
+
+describe("requireModelRef", () => {
+  it("passes a provider/model reference through", () => {
+    expect(requireModelRef("anthropic/claude-sonnet-5", "opencode-model")).toBe(
+      "anthropic/claude-sonnet-5"
+    );
+  });
+
+  // opencode drops an id it cannot attribute to a provider, so a bare one is
+  // not "close enough" — it means the turn silently runs on something else.
+  it.each(["sonnet", "", "/sonnet", "anthropic/", "anthropic//x"])(
+    "rejects %o",
+    (value) => {
+      expect(() => requireModelRef(value, "opencode-model")).toThrow(CliError);
+    }
+  );
+
+  it("shows the shape rather than only naming it", () => {
+    expect(
+      thrown(() => requireModelRef("sonnet", "opencode-model")).hint
+    ).toContain("anthropic/sonnet");
   });
 });
 

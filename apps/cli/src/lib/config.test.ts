@@ -104,6 +104,33 @@ describe("loadConfig", () => {
     expect(hintOf(() => loadConfig(root))).toBe("Did you mean target?");
   });
 
+  // The per-backend model keys are not declared anywhere in this module: they
+  // exist in `airship.config.json` only because they are flags, and the schema
+  // is the flag registry. These three assert that pipe end to end, which is
+  // also what makes `airship init` writing `claudeModel` safe.
+  it.each([
+    ["claudeModel", "claude-model"],
+    ["codexModel", "codex-model"],
+    ["opencodeModel", "opencode-model"],
+  ])("reads %s as %s", (written, flag) => {
+    const root = fixture({
+      "airship.config.json": `{ "${written}": "some-model" }`,
+    });
+    expect(loadConfig(root).values[flag]).toBe("some-model");
+  });
+
+  it("accepts the kebab spelling of a per-backend model too", () => {
+    const root = fixture({
+      "airship.config.json": '{ "claude-model": "opus" }',
+    });
+    expect(loadConfig(root).values["claude-model"]).toBe("opus");
+  });
+
+  it("suggests the near miss on a mistyped model key", () => {
+    const root = fixture({ "airship.config.json": '{ "claudModel": "opus" }' });
+    expect(hintOf(() => loadConfig(root))).toBe("Did you mean claude-model?");
+  });
+
   it("rejects a non-boolean for a boolean setting", () => {
     const root = fixture({ "airship.config.json": '{ "safe": "yes" }' });
     expect(() => loadConfig(root)).toThrow(CliError);

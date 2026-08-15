@@ -126,7 +126,7 @@ export const FLAGS: readonly FlagSpec[] = [
     alias: "m",
     defaultHint: "the agent's own default",
     group: "AGENT",
-    help: "Model id.",
+    help: "Model id for whichever agent runs. Per-backend flags outrank it.",
     hint: "<id>",
     name: "model",
     type: "string",
@@ -166,6 +166,30 @@ export const FLAGS: readonly FlagSpec[] = [
     help: "Confine edits to the project directory and cut network access. See Sandboxing below.",
     name: "safe",
     type: "boolean",
+  },
+  {
+    defaultHint: "--model, then the agent's own",
+    group: "BACKEND",
+    help: "Model for the claude backend. Takes an alias or a full id.",
+    hint: "<id>",
+    name: "claude-model",
+    type: "string",
+  },
+  {
+    defaultHint: "--model, then the agent's own",
+    group: "BACKEND",
+    help: "Model for the codex backend.",
+    hint: "<id>",
+    name: "codex-model",
+    type: "string",
+  },
+  {
+    defaultHint: "--model, then the agent's own",
+    group: "BACKEND",
+    help: "Model for the opencode backend. Needs the provider/model form.",
+    hint: "<provider/model>",
+    name: "opencode-model",
+    type: "string",
   },
   {
     defaultHint: "bundled",
@@ -407,6 +431,30 @@ export function requireEnum(value: string, name: string): string {
     exitCode: EXIT.usage,
     hint:
       didYouMean(value, allowed, "") ?? `Use one of: ${allowed.join(", ")}.`,
+  });
+}
+
+/**
+ * An opencode model reference, which must name its provider.
+ *
+ * `modelRefFor` splits on the first slash and drops an id it cannot attribute,
+ * so `--opencode-model sonnet` would be silently ignored and the turn would run
+ * on the server's default — the user having explicitly asked for something else.
+ *
+ * A hard error is right *here* and wrong for `--model`, and the difference is
+ * which backend the flag is aimed at. This one names opencode, so a bare id can
+ * only be a mistake. `--model` applies to whichever agent the picker lands on,
+ * where a bare id is correct for two of the three, so that one keeps the launch
+ * warning in `banner.ts` instead.
+ */
+export function requireModelRef(value: string, name: string): string {
+  const [provider, ...rest] = value.split("/");
+  if (provider && rest.length > 0 && rest.every(Boolean)) {
+    return value;
+  }
+  throw new CliError(`Invalid --${name} '${value}'`, {
+    exitCode: EXIT.usage,
+    hint: `opencode resolves a model through its provider, so it needs the provider/model form — try 'anthropic/${value}' or run \`opencode models\` to list what you have configured.`,
   });
 }
 

@@ -24,6 +24,7 @@ import {
   requireAmount,
   requireEnum,
   requireInteger,
+  requireModelRef,
   requirePort,
 } from "../lib/args";
 import { parseCodexConfig, readOpencodeConfig } from "../lib/backends";
@@ -54,6 +55,9 @@ export const SERVE_FLAGS: readonly string[] = [
   "max-budget",
   "commit",
   "safe",
+  "claude-model",
+  "codex-model",
+  "opencode-model",
   "codex-path",
   "codex-config",
   "opencode-path",
@@ -74,6 +78,8 @@ export interface ServeOptions {
   maxBudgetUsd?: number;
   maxTurns?: number;
   model?: string;
+  /** Per-backend model defaults, each already falling back to `model`. */
+  models: Partial<Record<AgentKind, string>>;
   open: boolean;
   opencode: OpencodeSettings;
   port?: number;
@@ -98,6 +104,8 @@ export function toServeOptions(settings: Settings, cwd: string): ServeOptions {
   const turns = asString(settings, "max-turns");
   const budget = asString(settings, "max-budget");
   const codexConfig = parseCodexConfig(asList(settings, "codex-config"));
+  const model = asString(settings, "model");
+  const opencodeModel = asString(settings, "opencode-model");
 
   return {
     agent: (agent ? requireEnum(agent, "agent") : "claude") as AgentKind,
@@ -112,7 +120,18 @@ export function toServeOptions(settings: Settings, cwd: string): ServeOptions {
     json: asBoolean(settings, "json"),
     maxBudgetUsd: budget ? requireAmount(budget, "max-budget") : undefined,
     maxTurns: turns ? requireInteger(turns, "max-turns") : undefined,
-    model: asString(settings, "model"),
+    model,
+    // The fallback collapses here rather than in the server so there is one
+    // place that decides it, and one place the tests have to cover. Only the
+    // opencode entry is validated: that flag names its backend, so a bare id
+    // is unambiguously wrong. `model` reaches all three and cannot be.
+    models: {
+      claude: asString(settings, "claude-model") ?? model,
+      codex: asString(settings, "codex-model") ?? model,
+      opencode: opencodeModel
+        ? requireModelRef(opencodeModel, "opencode-model")
+        : model,
+    },
     open: asBoolean(settings, "open"),
     opencode: {
       agent: asString(settings, "opencode-agent"),
@@ -262,7 +281,10 @@ export const serve = defineCommand({
       effort: opts.effort,
       maxBudgetUsd: opts.maxBudgetUsd,
       maxTurns: opts.maxTurns,
-      model: opts.model,
+      // The resolved per-backend map, not the raw `--model`. The opencode
+      // warning reads `models.opencode`, so passing only `model` left it reading
+      // `undefined` and the warning could never fire.
+      models: opts.models,
     });
 
     let dev: DevServer | undefined;
@@ -286,6 +308,7 @@ export const serve = defineCommand({
         maxBudgetUsd: opts.maxBudgetUsd,
         maxTurns: opts.maxTurns,
         model: opts.model,
+        models: opts.models,
         opencode: opts.opencode,
         port,
         safe: opts.safe,
@@ -306,6 +329,10 @@ export const serve = defineCommand({
             agent: opts.agent,
             cwd: opts.cwd,
             mode: opts.surface,
+            // The resolved model for the backend that will run, so a scripted
+            // caller can read back which of the four model flags won rather
+            // than re-deriving the precedence itself.
+            model: opts.models?.[opts.agent],
             port,
             safe: opts.safe,
             targetPort,
@@ -320,6 +347,7 @@ export const serve = defineCommand({
         launchBanner({
           agent: opts.agent,
           cwd: opts.cwd,
+          model: opts.models?.[opts.agent],
           safe: opts.safe,
           surface: opts.surface,
           targetPort,
