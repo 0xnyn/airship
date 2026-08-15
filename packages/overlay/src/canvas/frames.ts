@@ -1,7 +1,13 @@
 import { AIRSHIP_FRAME_NAME, AIRSHIP_MODE_PARAM } from "@airship/protocol";
 import { cls, el } from "../dom";
 import type { FrameAgent } from "../frame-agent";
-import { frameScreenRect, type Point, type Rect } from "./space";
+import {
+  frameScreenRect,
+  MAX_NEST_DEPTH,
+  type Point,
+  parentFrameElement,
+  type Rect,
+} from "./space";
 
 /**
  * Frames — the canvas's unit of content, in the design-tool sense of the word: a named,
@@ -228,6 +234,14 @@ export function framePreset(
 export interface Frame {
   /** Resolved once the frame's agent has registered itself. */
   agent: FrameAgent | null;
+  /**
+   * Every agent living inside this frame, keyed by its realm's window — the
+   * root document's agent plus one per nested same-origin document (a
+   * Storybook preview, say). `agent` stays the root's, for every existing
+   * reader; the map is cleared whenever the root realm is rebuilt, because
+   * the nested realms died with it.
+   */
+  readonly agents: Map<Window, FrameAgent>;
   /** The frame's document, or null before it has loaded. */
   readonly doc: Document | null;
   /** The world-space wrapper. Its screen rect is the frame's screen rect. */
@@ -284,8 +298,9 @@ export interface RemovedFrame {
 export interface FrameManagerDeps {
   /** Frames were added, removed, moved or resized. */
   onChanged?: () => void;
-  /** A frame's agent registered (initial load, or an HMR full reload). */
-  onFrameReady?: (frame: Frame) => void;
+  /** An agent registered (initial load, or an HMR full reload) — the frame's
+   * own, or one booted in a nested same-origin document of that frame. */
+  onFrameReady?: (frame: Frame, agent: FrameAgent) => void;
   /** App path every frame loads, carried through from the shell's own URL. */
   pathname: string;
   /** Storage key, so two projects on different ports keep separate layouts. */
@@ -337,12 +352,20 @@ export class FrameManager {
    * global — see there.
    */
   private readonly onFrameReady = (agent: FrameAgent): void => {
-    const frame = this.frames.find((f) => f.win === agent.window);
+    // The chain walk, not an exact match: a nested same-origin document's
+    // agent belongs to the frame it sits inside, however deep it sits.
+    const frame = this.frameOfWindow(agent.window);
     if (!frame) {
       return;
     }
-    frame.agent = agent;
-    this.deps.onFrameReady?.(frame);
+    if (frame.win === agent.window) {
+      // The root realm was (re)built; every nested realm died with it, so
+      // their agents go too — a nested agent re-registers when it reboots.
+      frame.agents.clear();
+      frame.agent = agent;
+    }
+    frame.agents.set(agent.window, agent);
+    this.deps.onFrameReady?.(frame, agent);
   };
 
   constructor(deps: FrameManagerDeps) {
@@ -391,7 +414,35 @@ export class FrameManager {
       return null;
     }
     const doc = node.ownerDocument ?? (node as Document);
-    return this.frames.find((f) => f.doc === doc) ?? null;
+    // The exact match first, so the common single-level path is unchanged.
+    const exact = this.frames.find((f) => f.doc === doc);
+    if (exact) {
+      return exact;
+    }
+    // A node in a *nested* same-origin document matches no frame document;
+    // its frame is up the window chain.
+    return this.frameOfWindow(doc.defaultView);
+  }
+
+  /** The frame whose realm contains `win`, walking nested iframes upward. */
+  frameOfWindow(win: Window | null): Frame | null {
+    let current: Window | null = win;
+    for (let depth = 0; depth <= MAX_NEST_DEPTH && current; depth += 1) {
+      const target = current;
+      const frame = this.frames.find((f) => f.win === target);
+      if (frame) {
+        return frame;
+      }
+      let frameEl: Element | null;
+      try {
+        frameEl = parentFrameElement(current);
+      } catch {
+        // Cross-origin boundary: nothing above here can be ours.
+        return null;
+      }
+      current = frameEl?.ownerDocument.defaultView ?? null;
+    }
+    return null;
   }
 
   /** Topmost frame under a screen point — later frames paint over earlier ones. */
@@ -850,6 +901,7 @@ export class FrameManager {
   destroy(): void {
     for (const frame of this.frames) {
       frame.el.remove();
+      frame.agents.clear();
     }
     this.frames.length = 0;
     // The global goes too. It is a closure over `this`, hung off `window` by
@@ -918,6 +970,7 @@ export class FrameManager {
 
     const frame: Frame = {
       agent: null,
+      agents: new Map(),
       get doc(): Document | null {
         return iframe.contentDocument;
       },
