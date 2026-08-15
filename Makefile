@@ -151,6 +151,9 @@ preflight: ## Run the full CI gate locally (lint + typecheck + test + route drif
 	@$(MAKE) typecheck
 	@printf "$(CYAN)» Test$(RESET)\n"
 	@$(MAKE) test
+	@printf "$(CYAN)» Controls reference$(RESET)\n"
+	@node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/gen-controls.mjs --check
+	@node scripts/sync-readme.mjs --check
 	@printf "$(CYAN)» Route tree$(RESET)\n"
 	@$(MAKE) "web:build"
 	@if ! git diff --quiet -- $(GENERATED); then \
@@ -167,6 +170,8 @@ preflight: ## Run the full CI gate locally (lint + typecheck + test + route drif
 preflight\:fix: ## preflight, but autofix first (ultracite fix + regenerate routes)
 	@printf "$(CYAN)» Fix (ultracite)$(RESET)\n"
 	@$(MAKE) fix
+	@printf "$(CYAN)» Controls reference$(RESET)\n"
+	@$(MAKE) controls
 	@printf "$(CYAN)» Route tree$(RESET)\n"
 	@$(MAKE) "web:build"
 	@printf "$(CYAN)» Typecheck$(RESET)\n"
@@ -283,7 +288,23 @@ demo: ## One-shot: install + build, then print the two-terminal recipe
 
 ##@ Release (@airshiplabs/cli)
 
-.PHONY: readme release release\:ci release\:retry release\:version
+.PHONY: controls models\:refresh readme release release\:ci release\:retry release\:version
+
+# Before `readme`, always: this writes the short table into the root README.md,
+# and `readme` copies the root README.md to apps/cli. Run the other way round
+# and the CLI's copy is one generation behind.
+controls: ## Regenerate CONTROLS.md and the README table from the command catalog
+	@node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/gen-controls.mjs
+	@$(MAKE) readme
+
+# Deliberately NOT in `preflight`, unlike `controls`. Every other generated file
+# here derives from something committed beside it, so its drift gate can only
+# fire when a human changed the input. This one derives from models.dev, which
+# changes whenever a vendor ships a model — gating on it would need network to
+# pass and would go red on PRs that touched nothing. See the header of
+# scripts/gen-models.mjs, and NEXT-STEPS §7 for what that costs.
+models\:refresh: ## Refresh the seed model catalogue from models.dev
+	@node scripts/gen-models.mjs
 
 readme: ## Regenerate apps/cli/README.md from the root README.md
 	@node scripts/sync-readme.mjs

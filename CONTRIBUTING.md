@@ -49,6 +49,8 @@ wrapper either way — every recipe is one `pnpm` or `node` call — so use thos
 | `make doctor`   | `node apps/cli/dist/index.js doctor --cwd apps/web`          |
 | `make check`    | `pnpm lint && pnpm typecheck && pnpm test`                    |
 | `make readme`   | `node scripts/sync-readme.mjs`                               |
+| `make controls` | `node --experimental-strip-types scripts/gen-controls.mjs`, then `make readme` |
+| `make models:refresh` | `node scripts/gen-models.mjs` — refetches the seed model list |
 | `make storybook`| `pnpm turbo run storybook --filter=@airship/overlay`          |
 
 `pnpm dev:web` rather than a bare `vite dev`: the site cannot start until
@@ -163,6 +165,8 @@ the adapter is explicit about each gap rather than faking it:
 | Cost | `total_cost_usd` | tokens only |
 | Fork a session | `forkSession` | starts a fresh thread, and says so |
 | `maxTurns` / `maxBudgetUsd` | enforced | unsupported; warned about at startup |
+| Model selection | `options.model` | `ThreadOptions.model` |
+| Listing its models | `query.supportedModels()`, account-scoped | **nothing** — no subcommand, no RPC |
 
 Codex items are normalized into the same tool vocabulary Claude uses (`command_execution` →
 `Bash`, `file_change` → `Edit`/`Write`/`Delete`), so one copy of the summarization rules serves
@@ -186,6 +190,8 @@ It is the most capable of the three in several places, and the adapter uses all 
 | Native undo | none | `session.revert`, snapshot-backed |
 | Cost | tokens only | real cost per message |
 | Reasoning effort | `modelReasoningEffort` | **none** — `--effort` is ignored |
+| Model selection | `ThreadOptions.model` | `{providerID, modelID}` on the prompt |
+| Listing its models | **nothing** | `client.config.providers()`, only what is authed |
 
 Gaps handled explicitly rather than faked:
 
@@ -241,6 +247,69 @@ component, and `content/resolve.ts` is the only place that turns a `{{token}}` o
 into a real value. That indirection is why the install command appears once, in `site.json`, and
 why `resolve.ts` throws at module load on an unknown token rather than shipping the literal
 `{{installCommand}}` to a visitor.
+
+### The controls reference
+
+`CONTROLS.md`, and the short table between the `<!-- controls:start -->` markers in
+`README.md`, are generated:
+
+```bash
+make controls    # rewrites both, then syncs apps/cli/README.md, then commit them
+```
+
+The source is `packages/overlay/src/keys/catalog.ts` — the same table the runtime binds
+from, the shortcuts panel and the ⌘K palette render from, and every tooltip chip resolves
+against. Nothing else in the editor is allowed to spell a chord: `MenuItem.command` renders
+one from the catalog, and `keys/catalog.test.ts` fails any `hint:` literal that looks like a
+keystroke.
+
+That is not tidiness. Chords used to be string literals at each `keys.bind` call site, so
+twenty-seven of the thirty-three shortcuts appeared nowhere in the product or the docs, five
+menu rows showed Mac glyphs to Windows users, one advertised `⌘Z` for a feature ⌘Z has never
+run, and the only reference — six hand-written rows in `README.md` — had already drifted in
+its own copy under `apps/cli/`.
+
+`gen-controls.mjs` imports the `.ts` catalog directly under `--experimental-strip-types`,
+which is why that module may contain **no value imports**; type imports are erased before
+resolution and are free. `keys/catalog.test.ts` enforces it, and
+`keys/controls-doc.test.ts` byte-compares the committed files against the same renderers the
+script uses — so drift fails the suite even where the script itself cannot run.
+
+Run it before `make readme`, never after: it writes into the root `README.md` that
+`sync-readme.mjs` copies. `make controls` does both in that order.
+
+### The seed model list
+
+`packages/protocol/src/models.ts` is generated from [models.dev](https://models.dev):
+
+```bash
+make models:refresh    # refetches, rewrites the module, then commit it
+```
+
+It exists because of an asymmetry between the backends. Claude answers
+`query.supportedModels()` and OpenCode answers `client.config.providers()`, both live and both
+scoped to what you are actually signed in to — so for those two this is only what the picker
+paints before the answer arrives, and what it falls back to offline. **Codex can enumerate
+nothing**, at any layer, so for that backend this file *is* the list.
+
+Two things about it are deliberate.
+
+**It is not in `make preflight`.** `gen-controls.mjs --check` belongs there because it derives
+from a file committed beside it, so it can only drift when someone edits that file. This one
+derives from a remote registry that changes whenever a vendor ships a model — gating on it
+would need network to pass and would turn PRs that touched nothing red. `reference/NEXT-STEPS.md`
+§7 describes what that costs. Treat a refresh like a lockfile bump: deliberate, and reviewed as
+a diff.
+
+**Judgement lives in `scripts/models.curation.json`, not in the output.** The mechanical filter
+— `tool_call`, `reasoning`, a release-date floor — admits things like `gpt-realtime-2.1`, which
+is not a coding model. The deny list, the cap, and the Claude CLI aliases models.dev cannot know
+about are all in that file, so the generated module stays purely derived and the taste is what
+gets reviewed.
+
+The generator formats its own output through the repo's biome before writing. Without that,
+`ultracite fix` would reformat the file the first time anyone linted and `--check` would report
+stale against a file nobody touched.
 
 ### The social card
 
