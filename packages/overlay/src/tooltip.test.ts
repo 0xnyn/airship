@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cls, el } from "./dom";
 import { sizeOf } from "./inspector/test-support";
-import { keys } from "./keys";
+import type { CommandId } from "./keys/catalog";
+// `tip` is taken here by the local helper that finds the rendered tip node.
+import { keys, tip as tipAttrs } from "./keys/registry";
 import { Tooltips } from "./tooltip";
 
 /*
@@ -17,9 +19,15 @@ import { Tooltips } from "./tooltip";
  * exists at all.
  */
 
-/** Bind a chord to `label`, undone after the test. `keys` is a singleton. */
-function bindChord(label: string): void {
-  unbind.push(keys.bind({ keys: "mod+z", label, run: () => undefined }));
+/**
+ * Make a command answerable, undone after the test. `keys` is a singleton.
+ *
+ * The chip does not actually need this any more — `keys.hint` reads the catalog
+ * and does not care whether anything is bound — but leaving it in keeps the
+ * case honest about the shape of the real thing.
+ */
+function bindChord(id: CommandId): void {
+  unbind.push(keys.bind({ id, run: () => undefined }));
 }
 let unbind: Array<() => void> = [];
 
@@ -33,8 +41,12 @@ const tip = (): HTMLElement =>
 const shown = (): boolean => !tip().classList.contains(cls("hidden"));
 
 /** A control carrying `data-tip`, placed in `parent`. */
-function control(text: string, parent: HTMLElement = document.body) {
-  const node = el("button", { "data-tip": text, type: "button" });
+function control(
+  text: string,
+  parent: HTMLElement = document.body,
+  id?: CommandId
+) {
+  const node = el("button", { type: "button", ...tipAttrs(text, id) });
   parent.append(node);
   sizeOf(node, { height: 24, left: 100, top: 400, width: 24 });
   return node;
@@ -142,9 +154,21 @@ describe("content", () => {
     expect(text?.textContent).toBe("Remove fill");
   });
 
-  it("appends the chord for a tip that names a binding", () => {
-    bindChord("Undo");
-    hover(control("Undo"));
+  it("appends the chord for a control that names a command", () => {
+    bindChord("history.undo");
+    hover(control("Undo", document.body, "history.undo"));
+    vi.advanceTimersByTime(400);
+
+    expect(tip().querySelector(`.${cls("tip-key")}`)?.textContent).toBeTruthy();
+  });
+
+  it("keeps the chord when the copy is reworded", () => {
+    // The failure this whole redesign is about. The chip used to be found by
+    // matching the tooltip's own text against a binding's label, so rewording
+    // a tooltip dropped its shortcut silently — nothing threw, nothing rendered
+    // wrong, the chip was simply gone.
+    bindChord("history.undo");
+    hover(control("Undo the last change", document.body, "history.undo"));
     vi.advanceTimersByTime(400);
 
     expect(tip().querySelector(`.${cls("tip-key")}`)?.textContent).toBeTruthy();

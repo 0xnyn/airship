@@ -1,7 +1,7 @@
 /*
  * The editor's one line of feedback.
  *
- * **A module singleton, not an injected dep.** `keys.ts` ("a singleton because
+ * **A module singleton, not an injected dep.** `keys/registry.ts` ("a singleton because
  * the document has exactly one keyboard") and `dnd/manager.ts` are already
  * imported directly from everywhere, and a toast is the same shape of thing:
  * one document, one place feedback appears, one at a time. Threading an

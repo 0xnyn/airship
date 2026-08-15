@@ -1,7 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
 import { cls, el } from "./dom";
 import { type IconName, icon } from "./icons";
-import { keys } from "./keys";
+import type { CommandId } from "./keys/catalog";
+import { keys, tip } from "./keys/registry";
 import { popoverHost } from "./popover-host";
 import {
   type Caption,
@@ -67,7 +68,7 @@ const DELAY = 450;
  * there, a tooltip anchored to any control inside a panel was drawn behind that
  * panel and never seen.
  */
-function hover(canvasElement: HTMLElement, tip: string): Promise<void> {
+function hover(canvasElement: HTMLElement, text: string): Promise<void> {
   const host = popoverHost();
   if (!host) {
     throw new Error(
@@ -83,9 +84,9 @@ function hover(canvasElement: HTMLElement, tip: string): Promise<void> {
   // throws. Reading the property back is the same lookup without the escaping.
   const target = [
     ...canvasElement.querySelectorAll<HTMLElement>("[data-tip]"),
-  ].find((node) => node.dataset.tip === tip);
+  ].find((node) => node.dataset.tip === text);
   if (!target) {
-    throw new Error(`No control in this story carries the tip ${tip}`);
+    throw new Error(`No control in this story carries the tip ${text}`);
   }
   target.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
   // `reject`, not a bare `throw`: an exception raised inside the timeout escapes
@@ -141,7 +142,7 @@ function assertClamped(): void {
 function assertChipOnFirstLine(): void {
   const { key, node } = openTip();
   if (!key) {
-    throw new Error("No chord chip rendered, so `hintFor` found no binding.");
+    throw new Error("No chord chip rendered, so the control names no command.");
   }
   const box = node.getBoundingClientRect();
   const chip = key.getBoundingClientRect();
@@ -193,15 +194,20 @@ function assertContained(host: HTMLElement): void {
   }
 }
 
-function tipButton(glyph: IconName, tip: string, extra = ""): HTMLElement {
+function tipButton(
+  glyph: IconName,
+  text: string,
+  extra = "",
+  id?: CommandId
+): HTMLElement {
   return el(
     "button",
     {
-      "aria-label": tip,
+      "aria-label": text,
       class: `${cls("action")} ${cls("action-icon")} ${extra}`.trim(),
-      "data-tip": tip,
       onClick: noop,
       type: "button",
+      ...tip(text, id),
     },
     [icon(glyph, "sm")]
   );
@@ -235,10 +241,12 @@ export const Grid: StoryObj = {
 /**
  * A tip that carries its shortcut.
  *
- * The whole reason this module exists rather than a `title` attribute.
- * `keys.hintFor(label)` looks the binding up by its *label*, so the tip and the
- * keymap cannot drift: a shortcut that is rebound changes here with no edit, and
- * one that is removed stops being advertised.
+ * The whole reason this module exists rather than a `title` attribute. The chip
+ * is resolved from the control's `data-key`, which is a `CommandId`, so the tip
+ * and the keymap cannot drift: a shortcut that is rebound changes here with no
+ * edit, one that is removed stops being advertised, and rewording the copy
+ * leaves the chord alone. It used to be matched on the tooltip's own *text* —
+ * elegant until the first rewording silently dropped a chip.
  *
  * The binding is registered by the story and its disposer handed to the
  * lifecycle registry — `keys` is a module singleton, so a story that bound
@@ -247,25 +255,22 @@ export const Grid: StoryObj = {
 export const WithShortcut: StoryObj = {
   play: ({ canvasElement }) => hover(canvasElement, "Undo"),
   render: () => {
-    onStoryTeardown(keys.bind({ keys: "mod+z", label: "Undo", run: noop }));
-    onStoryTeardown(
-      keys.bind({ keys: "mod+shift+z", label: "Redo", run: noop })
-    );
+    onStoryTeardown(keys.bind({ id: "history.undo", run: noop }));
+    onStoryTeardown(keys.bind({ id: "history.redo", run: noop }));
     return plainStage(
       [
         el("div", { class: cls("bar"), style: "display: flex; gap: 4px;" }, [
           // Both `rotate-ccw`, as the bottom bar builds them: there is no
           // redo glyph, and `.bar-redo` mirrors the undo one.
-          tipButton("rotate-ccw", "Undo"),
-          tipButton("rotate-ccw", "Redo", cls("bar-redo")),
-          // No binding registered for this one, so `hintFor` returns null and
-          // the tip is text alone — which is the common case and has to look
-          // deliberate rather than truncated.
+          tipButton("rotate-ccw", "Undo", "", "history.undo"),
+          tipButton("rotate-ccw", "Redo", cls("bar-redo"), "history.redo"),
+          // No command named, so the tip is text alone — the common case, and
+          // it has to look deliberate rather than truncated.
           tipButton("more", "More actions"),
         ]),
       ],
       {
-        try: "compare Undo with More actions — the chord is looked up by label, so an unbound control shows text and nothing else",
+        try: "compare Undo with More actions — the chord comes from the control's command, so one that names none shows text and nothing else",
         what: "A tooltip carrying its keyboard shortcut, which is the thing `title` cannot do.",
       }
     );
@@ -416,12 +421,11 @@ export const WrappedWithShortcut: StoryObj = {
   play: ({ canvasElement }) =>
     hover(canvasElement, STACK_TIP).then(assertChipOnFirstLine),
   render: () => {
-    // Bound by label, which is how `hintFor` finds it. The disposer goes to the
-    // lifecycle registry: `keys` is a singleton, and a story that bound without
-    // unbinding would leave a live shortcut in every story after it.
-    onStoryTeardown(
-      keys.bind({ keys: "mod+alt+f", label: STACK_TIP, run: noop })
-    );
+    // Any command with a long enough chord will do — what this story is about
+    // is the wrap, not the shortcut. The disposer goes to the lifecycle
+    // registry: `keys` is a singleton, and a story that bound without unbinding
+    // would leave a live shortcut in every story after it.
+    onStoryTeardown(keys.bind({ id: "history.redo", run: noop }));
     return plainStage(
       [
         dock(
@@ -429,7 +433,7 @@ export const WrappedWithShortcut: StoryObj = {
             section(
               "Text",
               el("div", { style: "display: grid; gap: 6px;" }, [
-                tipButton("style-text", STACK_TIP),
+                tipButton("style-text", STACK_TIP, "", "history.redo"),
               ])
             ),
           ])
