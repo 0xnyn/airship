@@ -4,7 +4,13 @@ import { FrameChrome } from "./canvas/frame-chrome";
 import { type Frame, FrameManager } from "./canvas/frames";
 import { FramesPanel } from "./canvas/frames-panel";
 import { Minimap } from "./canvas/minimap";
-import { frameScreenRect, type Point, type Rect } from "./canvas/space";
+import {
+  frameChain,
+  frameToScreen,
+  nestOffset,
+  type Point,
+  type Rect,
+} from "./canvas/space";
 import { CanvasViewport, type SafeInset } from "./canvas/viewport";
 import {
   axes,
@@ -16,7 +22,7 @@ import {
 } from "./canvas/wheel";
 import { ChromeLayer } from "./chrome-layer";
 import { cls, PREFIX } from "./dom";
-import type { FrameHost, FrameWheel } from "./frame-agent";
+import type { FrameAgent, FrameHost, FrameWheel } from "./frame-agent";
 import { keys } from "./keys/registry";
 import type { Mods, Selection } from "./picker";
 import { isElement } from "./realm";
@@ -46,8 +52,10 @@ class CanvasStage implements Stage {
   private readonly listeners: (() => void)[] = [];
   /** Subscribers to the trailing edge of a pan/zoom — see `isGesturing`. */
   private readonly gestureEndListeners: (() => void)[] = [];
-  /** Per-frame unsubscribers for agent layout notifications. */
-  private readonly frameUnsubs = new Map<string, () => void>();
+  /** Per frame id, one disposer per registered agent window — the frame's own
+   * realm and any nested same-origin document's. Keyed two-deep so a nested
+   * agent registering never tears down the root agent's subscriptions. */
+  private readonly frameUnsubs = new Map<string, Map<Window, () => void>>();
   private getSelection: (() => Selection | null) | null = null;
   /** Where a press inside a live frame goes. Set by `bindFramePress`. */
   private reportFramePress:
@@ -79,7 +87,7 @@ class CanvasStage implements Stage {
     });
     this.frames = new FrameManager({
       onChanged: () => this.onFramesChanged(),
-      onFrameReady: (frame) => this.onFrameReady(frame),
+      onFrameReady: (frame, agent) => this.onFrameReady(frame, agent),
       pathname: config.pathname ?? "/",
       storageKey: `${key}:frames`,
       world: this.canvas.world,
@@ -125,19 +133,17 @@ class CanvasStage implements Stage {
    * delivering the momentum events, exactly as the canvas pan relies on.
    */
   private onFrameWheel(win: Window, e: FrameWheel): boolean {
-    const frame = this.frames.all.find((f) => f.win === win);
+    const frame = this.frames.frameOfWindow(win);
     if (!frame) {
       return false;
     }
-    // The point arrives in the frame's own client coordinates; `routeWheel`
+    // The point arrives in the agent's own client coordinates; `routeWheel`
     // takes shell screen space and maps back. Round-tripping it rather than
     // adding a second entry point is what stops the two routes disagreeing.
-    const origin = frameScreenRect(frame.el);
-    const { scale } = this.canvas;
-    const screen = {
-      x: origin.left + e.clientX * scale,
-      y: origin.top + e.clientY * scale,
-    };
+    const screen = this.frameScreenPoint(frame, win, {
+      x: e.clientX,
+      y: e.clientY,
+    });
     // Frames may overlap, so route only when *this* frame is the selected one.
     // Without it, a wheel in an unselected frame sitting over the selected one
     // would pass the geometry test and scroll the wrong frame.
@@ -346,8 +352,14 @@ class CanvasStage implements Stage {
   setTextOwner(node: Element | null): void {
     const frame = node ? this.frames.frameOf(node) : null;
     this.frames.setTextFrame(frame);
+    // Every agent of the text frame, not just the root's: a text edit inside
+    // a nested document must be guarded in the realm the caret lives in.
     for (const f of this.frames.all) {
-      f.agent?.setTextGuard(f === frame);
+      const on = f === frame;
+      f.agent?.setTextGuard(on);
+      for (const agent of f.agents.values()) {
+        agent.setTextGuard(on);
+      }
     }
   }
 
@@ -363,7 +375,7 @@ class CanvasStage implements Stage {
       if (this.editing) {
         return;
       }
-      const frame = this.frames.all.find((f) => f.win === win);
+      const frame = this.frames.frameOfWindow(win);
       if (frame) {
         this.frames.setActive(frame.id);
       }
@@ -373,17 +385,12 @@ class CanvasStage implements Stage {
     // point lands back in the space `SelectionController.hitTest` expects and
     // both routes stay one code path.
     host.__airshipOnFrameTextPress = (win, e) => {
-      const frame = this.frames.all.find((f) => f.win === win);
+      const frame = this.frames.frameOfWindow(win);
       if (!frame) {
         return;
       }
-      const origin = frameScreenRect(frame.el);
-      const { scale } = this.canvas;
       this.reportFramePress?.(
-        {
-          x: origin.left + e.clientX * scale,
-          y: origin.top + e.clientY * scale,
-        },
+        this.frameScreenPoint(frame, win, { x: e.clientX, y: e.clientY }),
         { meta: e.metaKey || e.ctrlKey, shift: e.shiftKey },
         e.dbl
       );
@@ -492,8 +499,10 @@ class CanvasStage implements Stage {
    * gone would be pruning an empty list.
    */
   destroy(): void {
-    for (const off of this.frameUnsubs.values()) {
-      off();
+    for (const byWindow of this.frameUnsubs.values()) {
+      for (const off of byWindow.values()) {
+        off();
+      }
     }
     this.frameUnsubs.clear();
     this.listeners.length = 0;
@@ -543,12 +552,30 @@ class CanvasStage implements Stage {
    */
   private pruneFrameUnsubs(): void {
     const live = new Set(this.frames.all.map((f) => f.id));
-    for (const [id, off] of this.frameUnsubs) {
+    for (const [id, byWindow] of this.frameUnsubs) {
       if (!live.has(id)) {
-        off();
+        for (const off of byWindow.values()) {
+          off();
+        }
         this.frameUnsubs.delete(id);
       }
     }
+  }
+
+  /**
+   * A point in an agent's viewport coordinates → shell screen space,
+   * composing the nested chain when the agent's window sits below the frame's
+   * own document. The one transform every forwarded frame event shares.
+   */
+  private frameScreenPoint(frame: Frame, win: Window, point: Point): Point {
+    const chain = frame.win ? frameChain(win, frame.win) : null;
+    const rect = frameToScreen(
+      frame.el,
+      { height: 0, left: point.x, top: point.y, width: 0 },
+      this.canvas.scale,
+      chain ? nestOffset(chain) : undefined
+    );
+    return { x: rect.left, y: rect.top };
   }
 
   /**
@@ -579,16 +606,34 @@ class CanvasStage implements Stage {
    * Disposal-first, because this fires again on every reload with a brand-new
    * document, and `pruneFrameUnsubs` takes the rest when a frame goes away.
    */
-  private onFrameReady(frame: Frame): void {
-    this.frameUnsubs.get(frame.id)?.();
-    const offLayout = frame.agent?.onLayoutChange(() => this.notify());
-    const offKeys = frame.doc ? keys.observe(frame.doc) : null;
-    if (offLayout || offKeys) {
-      this.frameUnsubs.set(frame.id, () => {
-        offLayout?.();
-        offKeys?.();
-      });
+  private onFrameReady(frame: Frame, agent: FrameAgent): void {
+    let byWindow = this.frameUnsubs.get(frame.id);
+    if (byWindow && agent.window === frame.win) {
+      // The root realm was rebuilt; the nested realms died with it, so every
+      // subscription for this frame goes together — a surviving disposer
+      // would hold a dead realm alive, and a nested agent that reboots will
+      // re-register on its own.
+      for (const off of byWindow.values()) {
+        off();
+      }
+      byWindow.clear();
+    } else {
+      byWindow?.get(agent.window)?.();
     }
+    if (!byWindow) {
+      byWindow = new Map();
+      this.frameUnsubs.set(frame.id, byWindow);
+    }
+    const offLayout = agent.onLayoutChange(() => this.notify());
+    // The agent's own document, not `frame.doc`: for a nested agent that is
+    // the nested document, which is exactly where shortcuts would otherwise
+    // die the moment focus lands in it.
+    const doc = agent.window.document;
+    const offKeys = doc ? keys.observe(doc) : null;
+    byWindow.set(agent.window, () => {
+      offLayout();
+      offKeys?.();
+    });
     this.notify();
   }
 

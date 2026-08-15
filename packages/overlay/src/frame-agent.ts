@@ -2,6 +2,7 @@ import type { ElementContext, SourceLocation } from "@airship/protocol";
 import { AIRSHIP_FRAME_NAME } from "@airship/protocol";
 import type { TokenScanResult } from "@airship/protocol/tokens";
 import { extractElementInfo } from "@airship/source/browser";
+import { MAX_NEST_DEPTH } from "./canvas/space";
 import { PREFIX } from "./dom";
 import { SWALLOWED } from "./edit-guard";
 import { css as portable, TEXT_EDIT_MARK } from "./styles/portable.css";
@@ -124,6 +125,62 @@ export interface FrameHost {
 }
 
 /**
+ * The nearest ancestor window exposing the shell's hooks.
+ *
+ * `window.parent` is the wrong answer for a *nested* frame: its parent is the
+ * app document between it and the shell — Storybook's manager, say — which
+ * exposes no hooks, so the old one-hop reach silently stranded every agent
+ * booted below the first level (#17). The walk continues upward past such
+ * windows to the first one carrying `__airshipOnFrameReady`, capped at
+ * `MAX_NEST_DEPTH` hops; a cross-origin hop throws on property access and
+ * ends the search, which preserves the old "no reachable shell" behaviour
+ * exactly. Exported as a pure function so it can be tested against fake
+ * window chains.
+ */
+export function findHost(win: Window): FrameHost | null {
+  let current: Window = win;
+  for (let hops = 0; hops < MAX_NEST_DEPTH; hops += 1) {
+    let parent: Window | null;
+    try {
+      ({ parent } = current);
+    } catch {
+      return null;
+    }
+    if (!parent || parent === current) {
+      return null;
+    }
+    let ready = false;
+    try {
+      ready =
+        typeof (parent as unknown as FrameHost).__airshipOnFrameReady ===
+        "function";
+    } catch {
+      return null;
+    }
+    if (ready) {
+      return parent as unknown as FrameHost;
+    }
+    current = parent;
+  }
+  return null;
+}
+
+/**
+ * `findHost`, memoised on success. The shell window never changes for the
+ * life of a realm, but a nested agent can boot before the shell has
+ * installed its hooks in pathological orders — so a null answer is asked
+ * again next time rather than cached.
+ */
+let cachedHost: FrameHost | null = null;
+
+function host(): FrameHost | null {
+  if (!cachedHost) {
+    cachedHost = findHost(window);
+  }
+  return cachedHost;
+}
+
+/**
  * Is this document inside an Airship frame, judged by its window name?
  *
  * A secondary signal only. `window.name` turns out to be unreliable for this:
@@ -203,9 +260,7 @@ function createAgent(): FrameAgent {
     "pointerdown",
     () => {
       try {
-        (window.parent as unknown as FrameHost)?.__airshipOnFramePress?.(
-          window
-        );
+        host()?.__airshipOnFramePress?.(window);
       } catch {
         // No reachable shell; nothing to select.
       }
@@ -224,20 +279,17 @@ function createAgent(): FrameAgent {
       let handled = false;
       try {
         handled =
-          (window.parent as unknown as FrameHost)?.__airshipOnFrameWheel?.(
-            window,
-            {
-              altKey: e.altKey,
-              clientX: e.clientX,
-              clientY: e.clientY,
-              ctrlKey: e.ctrlKey,
-              deltaMode: e.deltaMode,
-              deltaX: e.deltaX,
-              deltaY: e.deltaY,
-              metaKey: e.metaKey,
-              shiftKey: e.shiftKey,
-            }
-          ) ?? false;
+          host()?.__airshipOnFrameWheel?.(window, {
+            altKey: e.altKey,
+            clientX: e.clientX,
+            clientY: e.clientY,
+            ctrlKey: e.ctrlKey,
+            deltaMode: e.deltaMode,
+            deltaX: e.deltaX,
+            deltaY: e.deltaY,
+            metaKey: e.metaKey,
+            shiftKey: e.shiftKey,
+          }) ?? false;
       } catch {
         // No reachable shell — leave the wheel to the app.
       }
@@ -303,17 +355,14 @@ function onGuardedPress(e: Event): void {
   }
   const me = e as MouseEvent;
   try {
-    (window.parent as unknown as FrameHost)?.__airshipOnFrameTextPress?.(
-      window,
-      {
-        clientX: me.clientX,
-        clientY: me.clientY,
-        ctrlKey: me.ctrlKey,
-        dbl: e.type === "dblclick",
-        metaKey: me.metaKey,
-        shiftKey: me.shiftKey,
-      }
-    );
+    host()?.__airshipOnFrameTextPress?.(window, {
+      clientX: me.clientX,
+      clientY: me.clientY,
+      ctrlKey: me.ctrlKey,
+      dbl: e.type === "dblclick",
+      metaKey: me.metaKey,
+      shiftKey: me.shiftKey,
+    });
   } catch {
     // No reachable shell. The press is already swallowed, which is the part
     // that matters — the app stays inert either way.
@@ -379,10 +428,10 @@ export function bootFrameAgent(): void {
   const agent = createAgent();
   (window as unknown as { __airshipFrame?: FrameAgent }).__airshipFrame = agent;
   try {
-    (window.parent as unknown as FrameHost)?.__airshipOnFrameReady?.(agent);
+    host()?.__airshipOnFrameReady?.(agent);
   } catch {
-    // Cross-origin parent: nothing to register with, and nothing here is worth
-    // breaking the frame over. The frame still renders; the editor just cannot
-    // resolve source in it.
+    // Cross-origin ancestors only: nothing to register with, and nothing here
+    // is worth breaking the frame over. The frame still renders; the editor
+    // just cannot resolve source in it.
   }
 }
