@@ -1,5 +1,5 @@
 import type { AirshipWindowConfig } from "@airship/protocol";
-import { AirshipApp, type Stage } from "./app";
+import { AirshipApp, claimBoot, publishDestroy, type Stage } from "./app";
 import { FrameChrome } from "./canvas/frame-chrome";
 import { type Frame, FrameManager } from "./canvas/frames";
 import { FramesPanel } from "./canvas/frames-panel";
@@ -17,6 +17,7 @@ import {
 import { ChromeLayer } from "./chrome-layer";
 import { cls, PREFIX } from "./dom";
 import type { FrameHost, FrameWheel } from "./frame-agent";
+import { keys } from "./keys/registry";
 import type { Mods, Selection } from "./picker";
 import { isElement } from "./realm";
 import { injectStyles } from "./styles";
@@ -481,6 +482,34 @@ class CanvasStage implements Stage {
     this.save();
   }
 
+  /**
+   * Release the canvas and everything hanging off it.
+   *
+   * The per-frame subscriptions go first: each one holds a listener on a
+   * frame's own document (`keys.observe`) and a callback into this stage, and
+   * both keep that frame's realm alive. `FrameManager.destroy` then takes the
+   * iframes themselves, so the order matters — pruning after the frames are
+   * gone would be pruning an empty list.
+   */
+  destroy(): void {
+    for (const off of this.frameUnsubs.values()) {
+      off();
+    }
+    this.frameUnsubs.clear();
+    this.listeners.length = 0;
+    this.gestureEndListeners.length = 0;
+    this.chrome.destroy();
+    this.framesPanel.destroy();
+    this.minimap.destroy();
+    this.frames.destroy();
+    this.canvas.destroy();
+    this.layer.destroy();
+    const host = window as unknown as Partial<FrameHost>;
+    host.__airshipOnFrameWheel = undefined;
+    host.__airshipOnFramePress = undefined;
+    host.__airshipOnFrameTextPress = undefined;
+  }
+
   // -- Internals -------------------------------------------------------------
 
   private onViewportChange(): void {
@@ -530,11 +559,35 @@ class CanvasStage implements Stage {
    * bound to the old realm died with it, and nothing else would tell us. Without
    * this, outlines would freeze in place the first time the user edited a file.
    */
+  /**
+   * Re-subscribe to a frame that has just loaded, or reloaded over HMR.
+   *
+   * Two subscriptions, disposed together. The layout notifications re-anchor
+   * the chrome; `keys.observe` is what makes the editor's own shortcuts work at
+   * all while focus is inside the frame.
+   *
+   * That second one had no caller for the life of the module, and the bug it
+   * fixes is written in its own docstring: a keydown inside a same-origin
+   * iframe never reaches the shell's `document`, so in view mode — the only
+   * mode where a frame takes focus, since edit mode makes them
+   * `pointer-events: none` — Escape, the zoom keys and everything else were
+   * simply dead the moment you clicked into your own app. Which commands are
+   * allowed through from there is the catalog's `inFrame` flag, not this
+   * line's business: routing all of them would let `f` add a frame while
+   * somebody filled in a form.
+   *
+   * Disposal-first, because this fires again on every reload with a brand-new
+   * document, and `pruneFrameUnsubs` takes the rest when a frame goes away.
+   */
   private onFrameReady(frame: Frame): void {
     this.frameUnsubs.get(frame.id)?.();
-    const off = frame.agent?.onLayoutChange(() => this.notify());
-    if (off) {
-      this.frameUnsubs.set(frame.id, off);
+    const offLayout = frame.agent?.onLayoutChange(() => this.notify());
+    const offKeys = frame.doc ? keys.observe(frame.doc) : null;
+    if (offLayout || offKeys) {
+      this.frameUnsubs.set(frame.id, () => {
+        offLayout?.();
+        offKeys?.();
+      });
     }
     this.notify();
   }
@@ -594,14 +647,17 @@ class CanvasStage implements Stage {
 }
 
 export function bootShell(config: AirshipWindowConfig): void {
-  const w = window as unknown as { __airshipBooted?: boolean };
-  if (w.__airshipBooted) {
+  // Same claim the inline path takes, and from the same module, so the two
+  // surfaces cannot both hold one page. This used to be an inline
+  // `__airshipBooted` check that published a teardown hook but never ran the
+  // previous one, so the shell leaked a whole overlay per bundle swap.
+  if (!claimBoot()) {
     return;
   }
-  w.__airshipBooted = true;
   document.documentElement.setAttribute(`data-${PREFIX}-shell`, "");
   injectStyles();
   const stage = new CanvasStage(config);
   const app = new AirshipApp(config, stage);
   app.mount();
+  publishDestroy(() => app.destroy());
 }
