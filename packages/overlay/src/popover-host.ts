@@ -30,9 +30,19 @@
  * together, and a singleton makes outside-press, Escape and "the panel just
  * rebuilt" one code path each instead of a registry to keep in step.
  */
+import {
+  DND,
+  DndScope,
+  DragDelta,
+  Draggable,
+  FEEDBACK,
+  manager,
+  POINTER_ONLY,
+} from "./dnd/manager";
 import { cls, el } from "./dom";
 import { type IconName, icon } from "./icons";
-import { type Binding, keys } from "./keys";
+import type { CommandId } from "./keys/catalog";
+import { type Binding, keys } from "./keys/registry";
 import { type PlaceOptions, placePopover, type Side } from "./popover";
 
 export type CloseReason =
@@ -44,16 +54,55 @@ export type CloseReason =
   | "select";
 
 export interface PopoverOptions extends PlaceOptions {
-  anchor: HTMLElement;
+  /**
+   * The control this popover belongs to, and the box it is placed against.
+   *
+   * Omitted only by a `modal` popover, which belongs to no control: the command
+   * palette and the shortcuts panel are opened by a chord from anywhere and
+   * have nowhere to point at.
+   */
+  anchor?: HTMLElement;
   /** Extra class on the shell — `pop-menu`, `pop-color`. */
   className?: string;
   content: HTMLElement;
   /** Match the shell's width to the anchor's. For selects. */
   matchAnchorWidth?: boolean;
+  /**
+   * A centred sheet over a scrim, rather than a box beside a control.
+   *
+   * Turns off everything that is about an anchor — the placement, the
+   * reposition-on-scroll and the frame-by-frame "is my anchor still there"
+   * watchdog — and adds a scrim that takes the press meant for the page behind
+   * it. Focus returns to wherever it was when the popover opened, since there
+   * is no anchor to return it to.
+   *
+   * Still a `.pop` shell in the same host, which is the point of putting it
+   * here rather than in a second layer: it inherits the token scope, membership
+   * of `edit-guard`'s `CHROME` list, and — the load-bearing one — the
+   * registry's rule that an unscoped binding never fires while focus is inside
+   * a popover. Without that, arrowing through the palette would nudge the
+   * selected element at the same time.
+   */
+  modal?: boolean;
   onClose?: (reason: CloseReason) => void;
   prefer?: Side;
   /** Arrow/Home/End roving over `[data-pop-item]` inside `content`. */
   roving?: boolean;
+  /**
+   * Give the popover a title bar you can drag it by.
+   *
+   * For the "advanced settings" shape, and not for menus. A menu is a
+   * click-once surface that should be gone before you could want it elsewhere;
+   * a settings form is one you hold open *against* the thing it edits, and the
+   * one place it is guaranteed to be in the way is directly over its own
+   * anchor. Every one of these was fixed to that spot, which is what made them
+   * read as half-finished.
+   *
+   * The string is the bar's label. There is no untitled variant: a bar with
+   * nothing in it is a grab handle nobody can identify, and every surface that
+   * wants one has a name already.
+   */
+  title?: string;
 }
 
 export interface PopoverHandle {
@@ -65,6 +114,132 @@ export interface PopoverHandle {
 const ITEM = "[data-pop-item]";
 
 let host: HTMLElement | null = null;
+
+/** Distinguishes one open popover's drag from another's on the shared monitor. */
+let dragSeq = 0;
+
+/** Kept off the viewport edge by this much when dragged. */
+const DRAG_MARGIN = 8;
+
+/**
+ * A title bar, and the drag that moves the shell by it.
+ *
+ * `element`, never dnd-kit's `handle` — the same call `armDockDrag` documents
+ * in `app.ts`: `preventActivation` tests `handle.contains(target)` first and
+ * returns early, which would turn any button placed in this bar into a drag
+ * origin instead of a button.
+ *
+ * `POINTER_ONLY` because this is a `feedback: "none"` draggable, and those
+ * cannot be dragged by keyboard — the sensor starts and ends a drag but every
+ * arrow between does nothing, latching the handle into a dragging state it
+ * cannot leave. Declining the keyboard route is better than pretending to it;
+ * the popover is dismissible with Escape either way.
+ *
+ * Returns the bar and a teardown, because the monitor is global: a listener
+ * left behind would go on moving a shell that had closed.
+ */
+function draggableBar(
+  shell: HTMLElement,
+  title: string,
+  onMoved: () => void
+): { bar: HTMLElement; destroy: () => void } {
+  const bar = el(
+    "div",
+    {
+      /*
+       * Hidden from assistive tech, and the title moved onto the shell instead.
+       *
+       * This is a `POINTER_ONLY` draggable, and dnd-kit's Accessibility plugin
+       * stamps `tabindex="0"` and `aria-roledescription="draggable"` on any
+       * handle regardless — so left alone this is a tab stop that announces
+       * itself as movable and answers no key, which is the exact promise
+       * `POINTER_ONLY`'s own docstring says not to make. Unlike the frame-list
+       * grips there is no keyboard verb to offer beside it, because there is
+       * nothing to offer: a popover that never moves is fully usable, and the
+       * drag is a convenience for people pushing it off what it covers.
+       *
+       * The name is not lost — `openPopover` puts `title` on the shell.
+       *
+       * `tabindex` is set here, and its value matters less than its presence:
+       * the plugin's guard is `!activator.hasAttribute("tabindex")`, so writing
+       * one ourselves is what stops it writing `0`. Without that the bar would
+       * be `aria-hidden` *and* focusable — a worse thing than what this fixes,
+       * because a keyboard user could tab onto something no screen reader can
+       * see. `aria-hidden` is only honest on a node nothing can reach.
+       */
+      "aria-hidden": "true",
+      class: cls("pop-bar"),
+      tabindex: "-1",
+    },
+    [el("span", { class: cls("pop-bar-title"), text: title })]
+  );
+  bar.dataset.tip = "Drag to move";
+
+  dragSeq += 1;
+  const id = `${DND.popMove}:${dragSeq}`;
+  const scope = new DndScope();
+  scope.add(
+    new Draggable(
+      {
+        element: bar,
+        id,
+        // The shell is positioned by `left`/`top`; a translate on top of that
+        // would double every pixel of the drag.
+        plugins: FEEDBACK.none,
+        sensors: POINTER_ONLY,
+        type: DND.popMove,
+      },
+      manager
+    )
+  );
+
+  const delta = new DragDelta();
+  let from: { x: number; y: number } | null = null;
+
+  const offs = [
+    manager.monitor.addEventListener("dragstart", () => {
+      if (manager.dragOperation.source?.id !== id) {
+        return;
+      }
+      // Measured live rather than read back off the style, so the first drag
+      // starts from wherever `placePopover` last put it.
+      const rect = shell.getBoundingClientRect();
+      from = { x: rect.left, y: rect.top };
+      delta.start();
+      // Before the first move, not after: `place()` runs on scroll and resize,
+      // and one of those landing mid-drag would snap the shell back under the
+      // pointer it is being dragged away from.
+      onMoved();
+    }),
+    manager.monitor.addEventListener("dragmove", (e) => {
+      if (!from) {
+        return;
+      }
+      const d = delta.update(e);
+      const max = {
+        x: window.innerWidth - shell.offsetWidth - DRAG_MARGIN,
+        y: window.innerHeight - shell.offsetHeight - DRAG_MARGIN,
+      };
+      // Clamped, or a popover can be pushed under the viewport edge and left
+      // there — it has no chrome of its own to drag it back by.
+      shell.style.left = `${Math.round(Math.min(Math.max(DRAG_MARGIN, from.x + d.x), Math.max(DRAG_MARGIN, max.x)))}px`;
+      shell.style.top = `${Math.round(Math.min(Math.max(DRAG_MARGIN, from.y + d.y), Math.max(DRAG_MARGIN, max.y)))}px`;
+    }),
+    manager.monitor.addEventListener("dragend", () => {
+      from = null;
+    }),
+  ];
+
+  return {
+    bar,
+    destroy: () => {
+      for (const off of offs) {
+        off();
+      }
+      scope.clear();
+    },
+  };
+}
 
 /*
  * Popovers nest, shallowly.
@@ -86,7 +261,8 @@ let host: HTMLElement | null = null;
 const stack: OpenPopover[] = [];
 
 interface OpenPopover {
-  anchor: HTMLElement;
+  /** Null for a modal popover, which belongs to no control. */
+  anchor: HTMLElement | null;
   dispose: () => void;
   handle: PopoverHandle;
   onClose?: (reason: CloseReason) => void;
@@ -163,17 +339,70 @@ export function openPopover(opts: PopoverOptions): PopoverHandle {
    * it go. Anything else is a hand-off, which is the old unconditional close and
    * still the common case.
    */
-  const mine = stack.findIndex((entry) => entry.anchor === opts.anchor);
+  const { anchor } = opts;
+  // The toggle only applies to an anchored popover. Two modal ones both have a
+  // null anchor, so without this guard opening the palette while the shortcuts
+  // panel was up would read as re-clicking the panel's trigger: it would close
+  // the panel and open nothing.
+  const mine = anchor
+    ? stack.findIndex((entry) => entry.anchor === anchor)
+    : -1;
   if (mine !== -1) {
     closeAbove(mine - 1, "reopen");
     return DEAD;
   }
-  closeAbove(levelOf(opts.anchor), "reopen");
+  // `levelOf(null)` is -1, so a modal closes every open popover before it opens
+  // — which is what you want from a sheet that covers the editor.
+  closeAbove(levelOf(anchor ?? null), "reopen");
 
-  const mount = host ?? mountPopoverHost(document.body);
+  // `isConnected`, not a null check. `mountPopoverHost` keeps the host in a
+  // module variable and re-appends it, so a host that was detached — by a teardown,
+  // or by anything that replaced the body's children — stayed non-null and
+  // kept being used. Popovers then mounted into a node that was in no
+  // document: no error, no popover, and nothing to see in the DOM you were
+  // inspecting. Re-mounting on demand makes the reference a cache rather than
+  // a claim about the tree.
+  const mount = host?.isConnected ? host : mountPopoverHost(document.body);
+  // Whatever had focus when this opened, so a modal can hand it back. An
+  // anchored popover returns focus to its anchor instead and ignores this.
+  const restoreFocus = document.activeElement as HTMLElement | null;
+  const scrim = opts.modal ? el("div", { class: cls("pop-scrim") }) : null;
+  if (scrim) {
+    mount.append(scrim);
+  }
+  // `scroll-y` on every shell: a popover is the overlay's own surface and had
+  // been the largest family still painting a platform scrollbar — a font list
+  // or a token picker sat beside an inspector that hides its own, which is
+  // where "the submenus look nothing like the panel" came from.
   const shell = el("div", {
-    class: opts.className ? `${cls("pop")} ${cls(opts.className)}` : cls("pop"),
+    class: [
+      cls("pop"),
+      cls("scroll-y"),
+      opts.className ? cls(opts.className) : "",
+      opts.modal ? cls("pop-modal") : "",
+    ]
+      .filter(Boolean)
+      .join(" "),
   });
+  // Once the user has put the popover somewhere, it stays there. `place()` is
+  // wired to scroll and resize, and re-anchoring a shell that was deliberately
+  // moved would drag it back the moment the panel behind it scrolled — the
+  // thing that makes a movable surface feel broken rather than absent.
+  let moved = false;
+  const dragging = opts.title
+    ? draggableBar(shell, opts.title, () => {
+        moved = true;
+      })
+    : null;
+  if (dragging) {
+    // The name the bar can no longer carry — see `draggableBar`. `group` rather
+    // than `dialog`: these are anchored, non-modal, and do not trap focus; the
+    // two that *are* modal set `role="dialog"` on their own content and pass no
+    // title, so neither branch reaches this.
+    shell.setAttribute("role", "group");
+    shell.setAttribute("aria-label", opts.title as string);
+    shell.prepend(dragging.bar);
+  }
   shell.append(opts.content);
   // Appended after its parent and left at `z-index: auto` like every other
   // shell, inside the host's single stacking context — so DOM order alone paints
@@ -181,9 +410,16 @@ export function openPopover(opts: PopoverOptions): PopoverHandle {
   mount.append(shell);
 
   const place = (): void => {
+    // A modal is centred by CSS. There is no anchor to measure against, and
+    // running the placement would write a `left`/`top` over the centring.
+    // A popover the user has dragged is in the same position for a different
+    // reason: its coordinates are now an answer, not a derivation.
+    if (!anchor || moved) {
+      return;
+    }
     placePopover(
       shell,
-      opts.anchor.getBoundingClientRect(),
+      anchor.getBoundingClientRect(),
       opts.prefer ?? "below",
       {
         align: opts.align,
@@ -199,9 +435,7 @@ export function openPopover(opts: PopoverOptions): PopoverHandle {
          * difference. As a floor it does the one thing a select wants (never
          * narrower than its trigger) and lets the content have the rest.
          */
-        minWidth: opts.matchAnchorWidth
-          ? opts.anchor.offsetWidth
-          : opts.minWidth,
+        minWidth: opts.matchAnchorWidth ? anchor.offsetWidth : opts.minWidth,
         scroll: opts.scroll,
       }
     );
@@ -240,8 +474,13 @@ export function openPopover(opts: PopoverOptions): PopoverHandle {
       const active = shell.ownerDocument.activeElement;
       const hadFocus = active instanceof Node && shell.contains(active);
       shell.remove();
-      if (hadFocus && opts.anchor.isConnected) {
-        opts.anchor.focus?.();
+      scrim?.remove();
+      // A modal has no anchor to go back to, so it goes back to whatever the
+      // user was on when they hit ⌘K — otherwise focus lands on `<body>` and
+      // the next Tab restarts at the top of the document.
+      const back = anchor ?? restoreFocus;
+      if (hadFocus && back?.isConnected) {
+        back.focus?.();
       }
       // Out of the stack before `onClose` runs, as before — a parent's `onClose`
       // may destroy a control that owns a child popover, and every path has to
@@ -252,9 +491,16 @@ export function openPopover(opts: PopoverOptions): PopoverHandle {
     reposition: place,
   };
 
-  const dispose = install(opts, handle);
+  const installed = install(opts, handle);
+  // The drag's listeners live on the shared monitor rather than on the shell,
+  // so removing the element does not remove them — a closed popover would go
+  // on answering a drag it can no longer show.
+  const dispose = (): void => {
+    installed();
+    dragging?.destroy();
+  };
   stack.push({
-    anchor: opts.anchor,
+    anchor: anchor ?? null,
     dispose,
     handle,
     onClose: opts.onClose,
@@ -281,7 +527,7 @@ function install(opts: PopoverOptions, handle: PopoverHandle): () => void {
     // Inside *any* open shell counts as inside. `shell.contains` — all this used
     // to test — cannot see a child, because children are siblings in the host,
     // so a press in a menu opened from this popover read as a press outside it.
-    if (levelOf(target) !== -1 || opts.anchor.contains(target)) {
+    if (levelOf(target) !== -1 || opts.anchor?.contains(target)) {
       return;
     }
     handle.close("outside");
@@ -316,18 +562,23 @@ function install(opts: PopoverOptions, handle: PopoverHandle): () => void {
    * parent's body: when that parent scrolls, the child's anchor really has
    * moved, and the child really does have to follow it.
    */
+  const watched = opts.anchor;
   const onReflow = (e: Event): void => {
     if (e.type === "scroll" && handle.element.contains(e.target as Node)) {
       return;
     }
-    if (!opts.anchor.isConnected) {
+    if (!watched?.isConnected) {
       handle.close("anchor-gone");
       return;
     }
     handle.reposition();
   };
-  window.addEventListener("scroll", onReflow, true);
-  window.addEventListener("resize", onReflow);
+  // A modal is centred and belongs to no control, so there is nothing for a
+  // scroll or a resize to move it away from and nothing to watch for removal.
+  if (watched) {
+    window.addEventListener("scroll", onReflow, true);
+    window.addEventListener("resize", onReflow);
+  }
 
   /*
    * A frame-by-frame check that the anchor still exists.
@@ -339,13 +590,15 @@ function install(opts: PopoverOptions, handle: PopoverHandle): () => void {
    * work is one property read per frame while a popover is open — and nothing at
    * all when none is.
    */
-  let frame = requestAnimationFrame(function watch() {
-    if (!opts.anchor.isConnected) {
-      handle.close("anchor-gone");
-      return;
-    }
-    frame = requestAnimationFrame(watch);
-  });
+  let frame = watched
+    ? requestAnimationFrame(function watch() {
+        if (!watched.isConnected) {
+          handle.close("anchor-gone");
+          return;
+        }
+        frame = requestAnimationFrame(watch);
+      })
+    : 0;
 
   /*
    * Through the registry, not a raw listener, and every one of them scoped to
@@ -362,33 +615,29 @@ function install(opts: PopoverOptions, handle: PopoverHandle): () => void {
    * which is correct for the arrows (they should move the caret inside the
    * picker's hex field) but means a focused field swallows Escape too. Fields
    * inside a popover therefore keep their own Escape handler, which is what
-   * `keys.ts` prescribes for field-local commit/cancel anyway.
+   * `keys/registry.ts` prescribes for field-local commit/cancel anyway.
    */
   const bindings: Binding[] = [
     {
-      keys: "escape",
-      label: "Close",
+      id: "popover.close",
       run: () => handle.close("escape"),
     },
   ];
   if (opts.roving) {
     const step = (delta: number) => () => moveItem(opts.content, delta);
     bindings.push(
-      { keys: "arrowdown", label: "Next option", run: step(1) },
-      { keys: "arrowup", label: "Previous option", run: step(-1) },
+      { id: "popover.next", run: step(1) },
+      { id: "popover.prev", run: step(-1) },
       {
-        keys: "home",
-        label: "First option",
+        id: "popover.first",
         run: () => focusItem(opts.content, 0),
       },
       {
-        keys: "end",
-        label: "Last option",
+        id: "popover.last",
         run: () => focusItem(opts.content, -1),
       },
       {
-        keys: "enter",
-        label: "Choose option",
+        id: "popover.choose",
         run: () => activeItem(opts.content)?.click(),
       }
     );
@@ -475,9 +724,25 @@ const DEAD: PopoverHandle = {
 // -- Menus --------------------------------------------------------------------
 
 export interface MenuItem {
+  /**
+   * The command this row runs, so its chord is rendered from the registry.
+   *
+   * Prefer this over spelling a chord into `hint`. Five rows in
+   * `canvas/frame-chrome.ts` used to carry hand-written Mac glyphs — `"⌘+"`
+   * where the binding was `mod+=`, `"⌘−"` with a U+2212 minus, all of them
+   * shown unchanged to Windows and Linux — and one row in `chat/transcript.ts`
+   * advertised `⌘Z` for the server-side revert, which ⌘Z has never run.
+   */
+  command?: CommandId;
   /** Present but unusable — greyed, and skipped by the keyboard cursor. */
   disabled?: boolean;
-  /** Rendered right-aligned in a dimmed mono — a shortcut, a size, a unit. */
+  /**
+   * Rendered right-aligned in a dimmed mono.
+   *
+   * For a size or a unit. If it is a *shortcut*, use `command` instead — a
+   * chord typed in here is a copy of the registry that nothing keeps honest,
+   * and `keys/catalog.test.ts` will reject one that looks like a chord.
+   */
   hint?: string;
   /** Leading glyph. Optional: a menu of plain verbs is better without one. */
   icon?: IconName;
@@ -501,6 +766,16 @@ export interface MenuItem {
 export interface MenuGroup {
   /** Stable id, written to `data-group`. What `open` is matched against. */
   group: string;
+  /**
+   * Glyph on the header, after the disclosure chevron.
+   *
+   * For a group whose identity is a mark rather than a word — the agent
+   * picker's three backends are known by their logos, and a shut accordion
+   * that reads "Claude / Codex / OpenCode" in plain text throws away the
+   * fastest thing about it. Optional, because a group of *sizes* has no glyph
+   * worth showing and the device menus are right not to carry one.
+   */
+  icon?: IconName;
   items: MenuItem[];
   label: string;
   open?: boolean;
@@ -588,7 +863,11 @@ function buildGroup(
       },
       type: "button",
     },
-    [icon("chev-right", "xs"), el("span", { text: entry.label })]
+    [
+      icon("chev-right", "xs"),
+      ...(entry.icon ? [icon(entry.icon, "sm")] : []),
+      el("span", { text: entry.label }),
+    ]
   );
   return el("div", { class: cls("pop-group"), "data-group": entry.group }, [
     head,
@@ -719,8 +998,11 @@ export function createMenu(entries: MenuEntry[]): MenuHandle {
         ]),
       ]
     );
-    if (entry.hint) {
-      row.append(el("span", { class: cls("pop-item-hint"), text: entry.hint }));
+    // The command's own chord wins over a hand-written `hint`, so a row that
+    // names a command can never disagree with the key that runs it.
+    const hint = entry.command ? keys.hint(entry.command) : entry.hint;
+    if (hint) {
+      row.append(el("span", { class: cls("pop-item-hint"), text: hint }));
     }
     return row;
   };

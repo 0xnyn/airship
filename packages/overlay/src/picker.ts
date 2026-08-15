@@ -39,7 +39,7 @@ import {
   snapAxis,
 } from "./inspector/snap";
 import { isEditableText } from "./inspector/text-edit";
-import { keys } from "./keys";
+import { isInsidePopover, isTypingTarget, keys } from "./keys/registry";
 import {
   clipToSurface,
   localRect,
@@ -176,6 +176,14 @@ export interface SelectionDeps {
   isGesturing?: () => boolean;
   /** Where chrome is drawn. */
   layer: ChromeLayer;
+  /**
+   * A right-click landed on a selectable element, which is now selected.
+   *
+   * The picker does not build the menu: it knows about nodes and surfaces and
+   * nothing about commands. The app owns what a right-click offers, the same
+   * way it owns what ⌘Z does.
+   */
+  onContextMenu?: (at: Point, node: Element) => void;
   /** Resolves screen points and nodes to the surface they belong to. */
   resolver: SurfaceResolver;
   /** See `EditGuardOptions.swallowPresses` — true inline, false on the canvas. */
@@ -518,6 +526,7 @@ export class SelectionController {
       document.addEventListener("mousemove", this.onMove, true);
       document.addEventListener("click", this.onClick, true);
       document.addEventListener("dblclick", this.onDblClick, true);
+      document.addEventListener("contextmenu", this.onContextMenu, true);
       window.addEventListener("pointerdown", this.onMarqueeDown, true);
       window.addEventListener("pointermove", this.onMarqueeMove);
       // Capture, like the down handler — and not only for symmetry. In the
@@ -527,8 +536,7 @@ export class SelectionController {
       // inline: the band stayed painted and the selection never landed.
       window.addEventListener("pointerup", this.onMarqueeUp, true);
       this.unbindKeys = keys.bind({
-        keys: "escape",
-        label: "Deselect",
+        id: "selection.deselect",
         run: () => this.deselect(),
         // Escape belongs to the drag while one is in flight — it cancels the
         // operation, and deselecting on the same keypress would tear down the
@@ -548,6 +556,7 @@ export class SelectionController {
       document.removeEventListener("mousemove", this.onMove, true);
       document.removeEventListener("click", this.onClick, true);
       document.removeEventListener("dblclick", this.onDblClick, true);
+      document.removeEventListener("contextmenu", this.onContextMenu, true);
       window.removeEventListener("pointerdown", this.onMarqueeDown, true);
       window.removeEventListener("pointermove", this.onMarqueeMove);
       window.removeEventListener("pointerup", this.onMarqueeUp, true);
@@ -792,7 +801,17 @@ export class SelectionController {
     // A modifier pressed while typing is a character, not a gesture. Option-E
     // for an accented `e` would otherwise flip `altKey` and paint a spacing
     // measurement across the text you are in the middle of editing.
-    if (this.textOwner) {
+    //
+    // `textOwner` alone only covered the *in-place* case, so holding ⌥ over the
+    // composer or a CSS value field still repainted measurements over whatever
+    // the pointer happened to be resting on. This is a raw listener rather than
+    // a binding, so it has to ask the registry's questions for itself — the
+    // same pair `CanvasViewport.onSpaceDown` asks, and for the same reason.
+    if (
+      this.textOwner ||
+      isTypingTarget(e.target, e) ||
+      isInsidePopover(e.target)
+    ) {
       return;
     }
     if (e.key === "Alt" && this.altKey !== e.altKey) {
@@ -1144,6 +1163,40 @@ export class SelectionController {
     // first thing anyone tries. `select` has a synchronous fast path for
     // exactly this case, so the re-emit costs a measurement, not a round trip.
     this.select(found.node, found.surface, modeOf(e));
+  };
+
+  /**
+   * A right-click on the page, while editing.
+   *
+   * Right-click did nothing anywhere in this editor: `contextmenu` was on
+   * `EditGuard`'s `SWALLOWED` list and nothing was ever put in its place, so
+   * the single most conventional mouse affordance in any design tool was a dead
+   * gesture. It belongs to the picker for the same reason `dblclick` does —
+   * this is the layer that can turn a screen point into a node — and the picker
+   * hands the *menu* to the app, which is the layer that knows what commands
+   * exist.
+   *
+   * Declining is as important as answering. Over the editor's own chrome, over
+   * empty canvas, and in view mode where the page is the user's, the browser's
+   * own menu is the right answer and this must not `preventDefault`. That is
+   * also why it selects first: a menu of verbs about "the selection" is a lie
+   * if the thing you right-clicked is not it.
+   */
+  private readonly onContextMenu = (e: MouseEvent): void => {
+    if (this.inspecting || isOwn(e.target) || this.textOwner) {
+      return;
+    }
+    const at = { x: e.clientX, y: e.clientY };
+    const found = this.pick(at);
+    if (!found) {
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    // Replace, never extend: a right-click that quietly added to a multi-select
+    // would change what the menu's verbs apply to as it opened.
+    this.select(found.node, found.surface, "replace");
+    this.deps.onContextMenu?.(at, found.node);
   };
 
   /**

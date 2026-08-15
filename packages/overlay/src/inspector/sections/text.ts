@@ -1,6 +1,6 @@
 import { cls, el } from "../../dom";
 import { type IconName, icon } from "../../icons";
-import { createMenu, type MenuEntry } from "../../popover-host";
+import { createMenu, type MenuEntry, openPopover } from "../../popover-host";
 import { computedStyle, ownerDocument } from "../../realm";
 import { tokensFor, tokensForPicker } from "../../tokens/match";
 import { tokenValue } from "../../tokens/registry";
@@ -29,7 +29,9 @@ const RUN_OF_WHITESPACE = /\s+/;
  * "more" popover for case, decoration and truncation.
  */
 function renderTextExtras(ctx: SectionContext, node: Element): HTMLElement {
-  const wrap = el("div", { class: cls("text-extras") });
+  const wrap = el("div", {
+    class: `${cls("text-extras")} ${cls("group")}`,
+  });
 
   /*
    * Font family: free text over the stack, with a picker beside it.
@@ -187,7 +189,16 @@ function renderTextExtras(ctx: SectionContext, node: Element): HTMLElement {
         slot: familySlot,
         stack,
       })
-    ).open(pick, "below");
+      // Anchored to the field, not to the caret that opens it.
+      //
+      // `placePopover` aligns a menu's left edge to its anchor's, and the
+      // caret is a 20px glyph at the field's right edge — so the list hung off
+      // that glyph and out past the dock until the viewport clamp pushed it
+      // back, which reads as a kebab menu rather than as this field's list.
+      // `matchAnchorWidth` then floors the menu at the field's width, so it
+      // opens as wide as the control it belongs to. `select.ts` has always
+      // done both; this was the one dropdown that did neither.
+    ).open(familyField, "below", { matchAnchorWidth: true });
   });
 
   const familyField = el(
@@ -535,38 +546,92 @@ export function renderText(
   if (group.id === "typography") {
     body.append(renderTextExtras(ctx, node));
   }
-  body.append(renderAdvancedType(ctx, node));
-  return ctx.section(group.id, group.label, body);
+  return ctx.section(group.id, group.label, body, {
+    actions: [advancedTypeAction(ctx, node)],
+  });
 }
 
 /**
- * The axes a variable font is chosen *for*, behind a collapsed sub-section.
+ * The header button that opens Advanced type.
+ *
+ * Built here rather than through a bare `ctx.headerAction` call for the reason
+ * `filters.ts` gives about its own `+`: the popover has to anchor to the button,
+ * and the callback is handed no anchor to open against.
+ */
+function advancedTypeAction(ctx: SectionContext, node: Element): HTMLElement {
+  const button = ctx.headerAction("var-settings", "Advanced type", () =>
+    openAdvancedType(ctx, node, button)
+  );
+  return button;
+}
+
+/**
+ * The axes a variable font is chosen *for*, in a movable popover.
  *
  * The section had a weight select and nothing else — no width, no optical sizing, no
  * numeral variants, and no way to reach a font's own axes at all except by typing into
- * the CSS pane. Collapsed by default because most type is not variable, and a section
- * that opens onto six rows nobody needs is how a panel stops being scannable.
+ * the CSS pane.
+ *
+ * It arrived as a collapsed sub-section, which was the wrong shape twice over. A
+ * nested `.sect` paid the body inset a second time, so its heading sat 48px in
+ * while the rows it headed sat at 24 — and the 48px it cost every row was
+ * exactly what pushed them past their wrap threshold, so each label broke onto
+ * its own line and each control went full-bleed under it. That much is now
+ * fixed in the stylesheet. What is not fixable there is the rest of it: six
+ * rows nobody needs most of the time, in the middle of the section, pushing
+ * everything below them down whenever they were open.
+ *
+ * A popover answers both. It is out of the section's everyday height, and being
+ * movable it can sit beside the text it is tuning rather than on top of it —
+ * which is the whole point of a variable-axis control you are watching the page
+ * respond to. Same `.pop-form` shape as the stroke settings.
  *
  * The two `*-settings` properties stay free text: their grammar is `"wght" 450, "opsz" 32`,
  * the axis tags are per-font, and a closed control would have to either guess a font's axes
  * or refuse the ones it does not know.
  */
-function renderAdvancedType(ctx: SectionContext, node: Element): HTMLElement {
-  const body = el("div", { class: cls("sect-body") });
-  const grid = el("div", { class: cls("grid") });
-  grid.append(ctx.fieldCell(FONT_STRETCH, node));
-  body.append(grid);
-  for (const descriptor of [FONT_OPTICAL_SIZING, FONT_VARIANT]) {
-    body.append(ctx.fieldCell(descriptor, node));
-  }
-  for (const [property, label, placeholder] of [
-    ["font-variation-settings", "Variation axes", '"wght" 450, "opsz" 32'],
-    ["font-feature-settings", "Feature settings", '"ss01" 1, "liga" 0'],
-  ] as const) {
-    body.append(freeformType(ctx, node, property, label, placeholder));
-  }
-  return ctx.section("text:advanced", "Advanced type", body, {
-    startCollapsed: true,
+function openAdvancedType(
+  ctx: SectionContext,
+  node: Element,
+  anchor: HTMLElement
+): void {
+  const body = el("div", { class: cls("pop-form") });
+  // Everything below registers into the panel's own control registry, and a
+  // scope is what lets this popover hand its share of that registry back.
+  //
+  // The teardown used to be skipped entirely, on the grounds that `renderBody`
+  // closes every popover in the same breath as it destroys the registry. That
+  // is true of the *render* path and not of the *user* path: Escape, an outside
+  // press or a drag away closes this without re-rendering anything, so its rows
+  // stayed registered. `reseed` then wrote into detached fields on every
+  // refresh, and each open/close cycle added another set.
+  const scope = ctx.repaintScope();
+  scope(() => {
+    const grid = el("div", { class: cls("grid") });
+    grid.append(ctx.fieldCell(FONT_STRETCH, node));
+    body.append(grid);
+    for (const descriptor of [FONT_OPTICAL_SIZING, FONT_VARIANT]) {
+      body.append(ctx.fieldCell(descriptor, node));
+    }
+    // "Axes" and "Features", not "Variation axes" and "Feature settings": both
+    // sat over the rail's budget, and the qualifier is carried by the group they
+    // are in — every row in here is about the variable font already.
+    for (const [property, label, placeholder] of [
+      ["font-variation-settings", "Axes", '"wght" 450, "opsz" 32'],
+      ["font-feature-settings", "Features", '"ss01" 1, "liga" 0'],
+    ] as const) {
+      body.append(freeformType(ctx, node, property, label, placeholder));
+    }
+  });
+  openPopover({
+    anchor,
+    content: body,
+    // Re-running the scope with an empty paint is what disposes and unregisters
+    // what the paint above adopted. Safe on the render path too: the second run
+    // finds the same set and drops it once.
+    onClose: () => scope(() => undefined),
+    prefer: "below",
+    title: "Advanced type",
   });
 }
 

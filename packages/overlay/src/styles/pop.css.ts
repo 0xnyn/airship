@@ -96,8 +96,103 @@ export const css = `
   border: 1px solid var(--ap-border-default);
   border-radius: var(--ap-radius-md);
   box-shadow: var(--ap-elevation-floating);
-  overflow-x: hidden; overflow-y: auto;
-  overscroll-behavior: contain;
+  /* Vertical overflow and the scrollbar itself come from \`.scroll-y\`, which
+     every shell carries. \`overflow-x\` stays here: it is a clipping decision
+     rather than a scrolling one, and the note above depends on it. */
+  overflow-x: hidden;
+}
+
+/* A popover's title bar, and the only part of it you can drag by.
+   Reads as the section heading it sits under — same mono uppercase eyebrow as
+   \`.sect-head\` — because a settings popover is a section that happens to
+   float, and giving it a second visual language would make it a dialog.
+
+   \`sticky\` rather than static: the shell is the scroller (\`.scroll-y\`), and a
+   bar that scrolled away would take the grab handle with it, stranding a
+   popover you had scrolled to the bottom of. */
+.${PREFIX}-pop-bar {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; align-items: center; gap: var(--ap-control-row-gap);
+  padding: var(--ap-space-xs) var(--ap-space-sm);
+  margin-bottom: var(--ap-control-row-gap);
+  background: var(--ap-surface-panel);
+  border-bottom: 1px solid var(--ap-border-default);
+  cursor: grab; user-select: none; touch-action: none;
+}
+.${PREFIX}-pop-bar:active { cursor: grabbing; }
+.${PREFIX}-pop-bar-title {
+  flex: 1 1 auto; min-width: 0;
+  font-family: var(--ap-font-mono); text-transform: uppercase;
+  font-size: var(--ap-font-size-caption); letter-spacing: .6px; opacity: .6;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* A modal popover: the command palette and the shortcuts panel.
+
+   Centred by CSS rather than placed, which is why \`openPopover\` skips
+   \`placePopover\` entirely for one of these — the placement writes a \`left\` and
+   a \`top\`, and either would fight the transform below.
+
+   Above centre, not at it: a sheet pinned to the exact middle of the window
+   reads as lower than centre, and this one grows downward as you type, so
+   anchoring it high keeps the first result where the eye already is. The same
+   trick every command palette uses.
+
+   \`overflow: hidden\` overrides \`.pop\`'s \`auto\`: a palette scrolls its
+   *results*, not its shell, or the search field scrolls away from the query
+   being typed into it. The rows below own the scrolling; this only clips them
+   to the rounded corner. */
+.${PREFIX}-pop-modal {
+  position: fixed; left: 50%; top: 18vh; transform: translateX(-50%);
+  width: min(560px, calc(100vw - 2 * var(--ap-space-xl)));
+  max-height: min(60vh, 520px);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+
+/* The palette, at the modal's own size. Declared rather than left to the
+   fallback so the class \`openPalette\` passes has a rule to find: an applied
+   class with no rule anywhere is indistinguishable from a missing stylesheet,
+   and \`styles/index.test.ts\` now fails one. */
+.${PREFIX}-pop-palette {
+  width: min(560px, calc(100vw - 2 * var(--ap-space-xl)));
+}
+
+/* The shortcuts sheet is a reference, not a search box, and wants a different
+   box from the palette it shares \`.pop-modal\` with.
+
+   \`.sc-body\` sets \`columns: 2\`, so at the modal's 560px each column is about
+   250px — and the sheet renders every command, every gesture and the closing
+   notes, roughly sixty rows, into that. Both classes were applied with no rule
+   of their own, so this inherited a box sized for ten results and a query.
+
+   Higher, too: a taller box anchored at 18vh would push its own tail off the
+   bottom of the window. */
+.${PREFIX}-pop-shortcuts {
+  top: 10vh;
+  width: min(880px, calc(100vw - 2 * var(--ap-space-xl)));
+  max-height: min(80vh, 720px);
+}
+
+/* The scrim. Takes the press meant for the page behind it — without one, a
+   click beside the palette lands on the app and selects an element on the way
+   to closing the palette. \`pointer-events: auto\` because \`.pop-host\` is
+   \`none\`, and the host's own outside-press handler is what closes it.
+
+   A literal rather than a token: the set has no scrim colour, and inventing an
+   \`--ap-\` name here would put a value in the stylesheet that
+   \`packages/editor-tokens/EDITOR.md\` has never heard of. */
+.${PREFIX}-pop-scrim {
+  position: fixed; inset: 0; pointer-events: auto;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+/* A stand-in for the pointer, so a context menu can be anchored at a *point*.
+   \`openPopover\` places against an element's rect and watches that element for
+   removal, so a bare coordinate needs a box; this is the smallest honest one.
+   Removed when the menu closes. */
+.${PREFIX}-point-anchor {
+  position: fixed; width: 1px; height: 1px; pointer-events: none;
 }
 
 /* Menu. Mirrors \`.fc-menu-item\` rather than sharing it: the canvas keeps its
@@ -164,8 +259,13 @@ export const css = `
 /* Rotating \`chev-right\` a quarter turn reproduces \`chev-down\` exactly — the set
    draws them as one path at two rotations — so one glyph serves both states.
    Driven from \`aria-expanded\`, which is where the state already lives. */
-.${PREFIX}-pop-group-head .${PREFIX}-ic { flex: 0 0 16px; opacity: .5; }
-.${PREFIX}-pop-group-head[aria-expanded="true"] .${PREFIX}-ic { transform: rotate(90deg); }
+/* \`:first-child\` because a group may now carry a second glyph — its own mark,
+   after the chevron. Both of these are about the *disclosure*: an unscoped
+   selector dimmed the mark to half and, worse, spun it a quarter turn every
+   time the group opened. */
+.${PREFIX}-pop-group-head > .${PREFIX}-ic { flex: 0 0 16px; }
+.${PREFIX}-pop-group-head > .${PREFIX}-ic:first-child { opacity: .5; }
+.${PREFIX}-pop-group-head[aria-expanded="true"] > .${PREFIX}-ic:first-child { transform: rotate(90deg); }
 /* 8px padding + 16px glyph + 6px gap, so a group's name and every row under it
    share one left edge and the triangle hangs in a gutter of its own. Getting
    this wrong is what makes an accordion read as two unrelated lists rather than
@@ -204,11 +304,35 @@ export const css = `
 /* The "advanced settings" shape: the two or three properties you set once
    and then forget, kept out of the section's everyday height. Same labelled
    rows as the panel, so it reads as the same system rather than a dialog. */
+/* A gap, and the rows give up their margins to it — the same correction
+   \`.sect-body\` takes, and for a sharper reason: this is a flex column, and
+   margins do not collapse between flex items, so two rows each asking for 6px
+   were sitting 12px apart. The form read a pitch looser than the panel it is
+   supposed to look like. */
 .${PREFIX}-pop-form {
   display: flex; flex-direction: column;
+  gap: var(--ap-control-row-gap);
   padding: var(--ap-space-sm); min-width: 236px;
 }
+.${PREFIX}-pop-form > .${PREFIX}-row { margin: 0; }
 .${PREFIX}-pop-form .${PREFIX}-row-label { flex: 0 0 60px; }
+/* The control's floor, restated for this shell rather than inherited.
+
+   \`--ap-row-ctl-min\` is 192px, measured against a dock: 60 + 8 + 192 is 260,
+   and a 236px form minus its padding leaves 212 — so every labelled row in
+   here wrapped its label onto its own line, in a popover with no dock edge
+   forcing it to. 144 is what actually fits, and it is arrived at rather than
+   guessed: the content box less the rail and the gutter.
+
+   Not by widening the shell instead: 236 is shared with the token picker
+   deliberately, after this panel had grown three popover widths for three
+   popovers. A number that exists to be the same everywhere is the wrong one to
+   change for one caller. */
+.${PREFIX}-pop-form > .${PREFIX}-row > .${PREFIX}-ctl-seg,
+.${PREFIX}-pop-form > .${PREFIX}-row > .${PREFIX}-select-wrap,
+.${PREFIX}-pop-form > .${PREFIX}-row > .${PREFIX}-pad-row {
+  --${PREFIX}-row-ctl-min: 144px;
+}
 /* The honest footnote. Quiet, and wrapped rather than truncated — it is the
    only place the panel explains what CSS cannot express, so it has to be
    readable rather than tidy. */
@@ -253,6 +377,34 @@ export const css = `
   display: flex; flex-direction: column; min-width: 0; min-height: 0;
 }
 
+/* ---- A typed value at the end of a list --------------------------------- */
+/* The escape hatch a menu of presets needs: the list can only offer what was
+   known when it was built, and a model shipped this morning is not on it.
+
+   Its own classes rather than the canvas's \`.fc-menu-custom\` trio, which is
+   the same idea one shape away — that row holds two 62px number fields for a
+   width and a height, and an identifier wants the whole width. Sharing them
+   would mean one of the two callers overriding most of what it inherited. */
+.${PREFIX}-pop-custom {
+  display: flex; align-items: center; gap: 4px; padding: 4px 8px 6px;
+}
+.${PREFIX}-pop-custom-input {
+  flex: 1 1 auto; min-width: 0; padding: 3px 6px;
+  border-radius: var(--ap-radius-xs);
+  background: var(--ap-input-bg); color: var(--ap-text-primary);
+  border: 1px solid var(--ap-input-border);
+  font-family: var(--ap-font-mono); font-size: var(--ap-font-size-caption);
+}
+.${PREFIX}-pop-custom-input:focus {
+  outline: none; border-color: var(--ap-input-focus-border);
+}
+.${PREFIX}-pop-custom-go {
+  flex: 0 0 auto; padding: 3px 8px; border: 0; cursor: pointer;
+  border-radius: var(--ap-radius-xs);
+  background: var(--ap-primary); color: var(--ap-text-primary);
+  font-family: var(--ap-font-sans); font-size: var(--ap-font-size-caption);
+}
+
 /* ---- Colour picker ------------------------------------------------------ */
 
 .${PREFIX}-pop-color { width: 232px; }
@@ -293,8 +445,21 @@ export const css = `
 .${PREFIX}-pop-slider-fill {
   position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
 }
+/* The knob travels inside the track, not across it.
+   \`left\` used to be the raw percentage against a \`-7px\` margin, which put the
+   knob's centre on the track's end at both extremes — so half of a 14px dial
+   hung outside a 12px track, into the 8px of \`.pop-color-body\` padding, and
+   came to rest one pixel from the shell's border. At 0% and 100%, which is
+   where an alpha slider spends most of its life, it read as falling off.
+
+   Travelling the *box* from 0 to \`100% - 14px\` keeps both ends flush with the
+   track instead: the knob still marks the value it always did, because the
+   track's own ends are what moved under it. The 14px is stated twice here and
+   has to stay in step with \`width\`; there is no third place it appears.
+   \`--knob\` is a 0-1 number written by \`color-picker.ts\`. */
 .${PREFIX}-pop-slider-knob {
-  position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  position: absolute; top: 50%; width: 14px; height: 14px; margin: -7px 0 0 0;
+  left: calc((100% - 14px) * var(--${PREFIX}-knob, 0));
   background: #fff; border-radius: var(--ap-radius-full);
   box-shadow: 0 0 0 1px rgba(0,0,0,.35); pointer-events: none;
 }

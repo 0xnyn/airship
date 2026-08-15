@@ -10,6 +10,7 @@ import { css as cssPane } from "./css-pane.css";
 import { css as docks } from "./docks.css";
 import { css as empty } from "./empty.css";
 import { css as framesPanel } from "./frames-panel.css";
+import { css as help } from "./help.css";
 import { css as inspector } from "./inspector.css";
 import { css as minimap } from "./minimap.css";
 import { css as motion } from "./motion.css";
@@ -112,6 +113,10 @@ const CSS = [
   empty,
   controls,
   pop,
+  // After `pop`, because both discovery surfaces are `.pop` shells and this is
+  // what fills them — the shell's recipe has to land first for these to be
+  // overrides of it rather than a parallel definition.
+  help,
   chrome,
   toast,
   // Last, and it has to be: it overrides the motion every module above declares,

@@ -1,5 +1,5 @@
 import { PREFIX } from "../dom";
-import { Z } from "./const";
+import { LABEL_RAIL_W, Z } from "./const";
 
 /** Right dock: tabs, the DOM tree, sections, the field grid, the CSS tab. */
 export const css = `
@@ -149,13 +149,33 @@ export const css = `
    panel's empty state pinned itself to the top while the transcript's (already
    a flex column) centred correctly. Same block, two different results, which is
    the bug. Both hosts are columns now. */
+/* The overflow and the scrollbar come from \`.scroll-y\` in base.css. This panel
+   is the tallest scroll surface in the editor and it had no scrollbar at all, so
+   nothing said how far down the sections went. */
 .${PREFIX}-insp-body {
-  flex: 1 1 auto; overflow-y: auto; scrollbar-width: none;
+  flex: 1 1 auto;
   display: flex; flex-direction: column;
 }
-.${PREFIX}-insp-body::-webkit-scrollbar { display: none; }
 .${PREFIX}-insp-hint { font-size: var(--ap-font-size-label); opacity: .5; padding: var(--ap-space-md) var(--ap-space-lg); }
 .${PREFIX}-sect { border-bottom: 1px solid var(--ap-border-default); }
+/* A sub-section does not pay the inset twice.
+   \`section()\` builds one shape, and four callers nest it inside a body that has
+   already spent \`--ap-space-lg\` on each side — Advanced type, Filters, Matched
+   CSS rules and Source. The head and body then add their own, so the heading
+   sat 48px in while the rows it headed sat at 24, and it drew a divider through
+   the middle of the section containing it.
+
+   The width mattered more than the alignment did. A labelled row wraps when the
+   rail, the gutter and \`--ap-row-ctl-min\` stop fitting, so at the narrowest
+   dock the doubled padding was the 48px that decided it: every row inside
+   Advanced type broke its label onto its own line and went full-bleed, while
+   the identical rows one level up did not. Un-inset, they wrap together or not
+   at all. */
+.${PREFIX}-sect-body > .${PREFIX}-sect { border-bottom: 0; }
+.${PREFIX}-sect-body > .${PREFIX}-sect > .${PREFIX}-sect-head,
+.${PREFIX}-sect-body > .${PREFIX}-sect > .${PREFIX}-sect-body {
+  padding-left: 0; padding-right: 0;
+}
 /* Symmetric inset, matching \`sect-body\` and the field grid: with the chevron
    moved to the right (see \`section()\`) the heading starts on the same margin
    as the rows it heads, and no arrow is pressed against the dock edge. */
@@ -187,9 +207,26 @@ export const css = `
    divider — the heading crowded its own body and floated away from the section
    above it. A heading is now exactly one group-gap from its content, which is
    the same distance two groups inside it are from each other. */
+/* A column with one pitch, rather than every child arguing its own case.
+   The separation used to come from \`.row\`'s own margin plus five \`+\` pairs
+   naming which neighbours earned a group-gap. Between them they covered
+   \`.group\`/\`.grid\`/\`.rows\` and missed \`.row\`+\`.grid\`, \`.grid\`+\`.grid\` and
+   \`.grid-tracks\`+\`.grid\` — and \`.grid\` carries no margin, so those pairs
+   touched. Layout's grid branch stacked a track editor, a gap grid and three
+   rows at three different distances, none of them chosen.
+
+   Stated as a gap, the default is the row pitch and every child gets it
+   whatever it is; \`.group\` then adds the difference to reach a group-gap. Two
+   rules instead of six, and a new block shape cannot arrive unspaced. */
 .${PREFIX}-sect-body {
+  display: flex; flex-direction: column;
+  gap: var(--ap-control-row-gap);
   padding: var(--ap-control-group-gap) var(--ap-space-lg);
 }
+/* The body owns the separation now. Rows outside one — \`.pop-form\`'s, and the
+   source kv list — keep the margin below, because those containers have no gap
+   of their own to fall back on. */
+.${PREFIX}-sect-body > .${PREFIX}-row { margin: 0; }
 
 /* The field grid.
    A design tool's rail is two columns of glyph-fielded controls, not a label rail with
@@ -228,9 +265,10 @@ export const css = `
 }
 .${PREFIX}-grid > .${PREFIX}-span2 { grid-column: 1 / -1; }
 .${PREFIX}-grid > .${PREFIX}-cell { min-width: 0; }
-/* Margin, not gap: a .row is a sibling of grids and lists rather than a child
-   of one, so it owns its own separation. Collapsed against the section's own
-   padding at the edges. */
+/* The margin is the fallback, not the rule. Inside a \`.sect-body\` the parent's
+   gap owns the separation and this is zeroed above; it survives for the rows
+   that live somewhere else — \`.pop-form\`'s and the source kv list — whose
+   containers have no gap to inherit. */
 /* Wraps, so the 68px label rail gives up its line before the control gives up
    its legibility. The rail is \`flex: 0 0 68px\` and never yielded, so at the
    narrowest dock Padding, Margin and Stroke position were working in 154px —
@@ -249,16 +287,21 @@ export const css = `
 
 /* A group: the level between a row and a section. Everything inside it is one
    decision — the alignment pad and the fields beside it, a stroke's colour and
-   its weight — and the gap above says where the previous decision ended. */
-.${PREFIX}-group + .${PREFIX}-group,
-.${PREFIX}-group + .${PREFIX}-grid,
-.${PREFIX}-grid + .${PREFIX}-group,
-.${PREFIX}-group + .${PREFIX}-rows,
-.${PREFIX}-rows + .${PREFIX}-group {
-  margin-top: var(--ap-control-group-gap);
+   its weight — and the gap above says where the previous decision ended.
+
+   A marker, never a box: \`.group\` is composed onto four different shapes
+   (\`row group\`, \`grid group\`, \`size-wrap group\`, and a bare div), so it must
+   not declare \`display\` — giving it a column direction would lay every
+   \`row group\` out vertically. It only ever adds the distance above itself.
+
+   The difference, not the whole gap, because the parent already spent one
+   row-gap on this child. \`:not(:first-child)\` so a group opening a section
+   does not push itself off its own heading. */
+.${PREFIX}-group:not(:first-child) {
+  margin-top: calc(var(--ap-control-group-gap) - var(--ap-control-row-gap));
 }
 .${PREFIX}-row-label {
-  flex: 0 0 68px; font-size: var(--ap-font-size-label); color: var(--ap-text-tertiary);
+  flex: 0 0 ${LABEL_RAIL_W}px; font-size: var(--ap-font-size-label); color: var(--ap-text-tertiary);
 }
 /* Opt out of the row's centring, for a one-line control standing beside a
    control that stacks. A .row centres because almost everything in it is one

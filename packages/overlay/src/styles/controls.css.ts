@@ -145,16 +145,36 @@ ${[
   font-family: var(--ap-font-mono); font-size: var(--ap-font-size-body);
   color: var(--ap-text-tertiary);
 }
-/* A unit belongs to the number it follows, so the number goes to meet it.
+/* A unit belongs to the number it follows, so the suffix goes to meet it.
 
-   The input is \`flex: 1 1 auto\` and its text is left-aligned, so it absorbed
-   every pixel between the digits and the rigid suffix: the fill row's alpha
-   field rendered "25" and its "%" about 29px apart, at two different sizes and
-   two different tones, which read as two controls rather than one value. Only
-   where there is a suffix — a field without one has nothing to meet, and its
-   digits belong on the left beside the glyph that names them. */
+   The goal has not changed. The input is \`flex: 1 1 auto\`, so it absorbed every
+   pixel between the digits and the rigid suffix: the fill row's alpha field
+   rendered "25" and its "%" about 29px apart, at two different sizes and two
+   different tones, which read as two controls rather than one value.
+
+   What changed is which half moves. Sending the *number* right closed that gap
+   but bought a second one: Rotation right-aligned while X, Y and Z beside it —
+   same row, same field, no suffix — stayed left, so four numbers that belong to
+   one element sat on two different margins. Nothing about a degree sign should
+   move the digits it qualifies.
+
+   So the input sizes to its content and the suffix follows it. Both stay on the
+   left margin, the unit still touches its number, and alignment stops depending
+   on whether a field happens to carry a unit.
+
+   \`field-sizing\` is the only way to content-size a replaced element in CSS, and
+   it is Chromium-and-Safari for now. The old rule is the fallback rather than
+   nothing: without it Firefox would render the 29px gap this rule exists to
+   close, which is worse than an alignment that varies by unit. */
 .${PREFIX}-ctl-num:has(> .${PREFIX}-ctl-suffix) > .${PREFIX}-ctl-input {
-  text-align: right;
+  field-sizing: content;
+  flex: 0 1 auto; width: auto; min-width: 2ch; max-width: 100%;
+}
+@supports not (field-sizing: content) {
+  .${PREFIX}-ctl-num:has(> .${PREFIX}-ctl-suffix) > .${PREFIX}-ctl-input {
+    flex: 1 1 auto; width: 100%; min-width: 0; max-width: none;
+    text-align: right;
+  }
 }
 
 /* Segmented group. Text options stay pills; an all-icon group becomes square
@@ -190,7 +210,9 @@ ${ROOT} .${PREFIX}-ctl-seg-on .${PREFIX}-ic { --${PREFIX}-ic-tone: var(--ap-text
 /* ---- Auto layout ------------------------------------------------------- */
 
 /* Direction row, then the 3x3 pad beside a stack of fields — the design-tool layout. */
-.${PREFIX}-al-dir { margin-bottom: var(--ap-control-group-gap); }
+/* No margin under the direction row: \`.al-main\` carries \`group\`, so the
+   section body puts a group-gap between them the same way it does everywhere
+   else. A margin here would be added to that gap, not instead of it. */
 .${PREFIX}-al-main { display: flex; align-items: flex-start; gap: var(--ap-control-gutter); }
 .${PREFIX}-al-fields { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: var(--ap-control-row-gap); }
 
@@ -539,13 +561,16 @@ ${ROOT} .${PREFIX}-select[aria-expanded="true"] .${PREFIX}-ic { --${PREFIX}-ic-t
    with \`margin: 6px 0\` (see inspector.css.ts) and margins do not collapse
    between flex items, so a 6px column gap put 18px between two rows and 12px
    above the first — one pitch reading as three. Block flow is the model those
-   margins were written for, the one .sect-body already gives every other
-   section, and the one where :first-child and :last-child mean what they say.
-   What is left here is the group gap above, which is all this wrapper was ever
-   for. The font-family field is still full width under it: a \`display: flex\`
-   box in block flow is block-level and fills the line exactly as a stretching
-   column made it. */
-.${PREFIX}-text-extras { margin-top: var(--ap-control-group-gap); }
+   margins were written for, and the one where :first-child and :last-child mean
+   what they say. That still holds *inside* this wrapper, which is why it stays
+   a block: \`.sect-body\` is a flex column now, but it zeroes the margin on its
+   own direct children only, so rows nested one level down keep collapsing.
+
+   The gap above comes from \`group\` on the element rather than a margin here —
+   a margin would be added to the body's gap, not instead of it. The
+   font-family field is still full width under it: a \`display: flex\` box in
+   block flow is block-level and fills the line exactly as a stretching column
+   made it. */
 /* An icon group is not three word pills, and {row-ctl-min} is a measurement of
    words — "Inside / Centre / Outside", per the note where it is defined. Three
    icon cells are legible from 24px, so 3x40 plus the group's 8px of chrome is

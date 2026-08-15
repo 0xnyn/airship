@@ -527,7 +527,9 @@ export class DesignPanel {
     deps.controller.guard.allowPressOn(() => this.reorder.proxyElement);
     this.headEl = el("div", { class: cls("insp-head") });
     this.tabsEl = el("div", { class: cls("insp-tabs") });
-    this.bodyEl = el("div", { class: cls("insp-body") });
+    this.bodyEl = el("div", {
+      class: `${cls("insp-body")} ${cls("scroll-y")}`,
+    });
 
     // Tree drag-to-reparent indicators. These track *tree rows*, which are the
     // panel's own chrome and therefore already in screen space — no surface

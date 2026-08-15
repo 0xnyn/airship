@@ -27,6 +27,7 @@ import {
 import { declaredValue } from "../sizing";
 import { readValue } from "../style-model";
 import type { SectionContext } from "./context";
+import { labelled } from "./row";
 
 /**
  * Auto Layout, which is very nearly flexbox with better naming.
@@ -58,12 +59,14 @@ export function renderAutoLayout(
   const displayDesc = LAYOUT_GROUP.descriptors.find((d) => d.key === "display");
   if (displayDesc) {
     const control = ctx.buildControl(displayDesc, node, () => ctx.rerender());
-    body.append(
-      el("div", { class: cls("row") }, [
-        el("span", { class: cls("row-label"), text: "Layout" }),
-        control.element,
-      ])
-    );
+    // `labelled()` rather than the same markup written out again, and the
+    // descriptor's own label rather than a literal: this row said "Layout"
+    // while its descriptor said something else, so a sweep driven off
+    // `descriptors.ts` could not see it. `group` because the switch is its own
+    // decision — everything below it describes the layout it just chose.
+    const row = labelled(displayDesc.label, control.element);
+    row.classList.add(cls("group"));
+    body.append(row);
   }
 
   if (isGrid) {
@@ -76,18 +79,24 @@ export function renderAutoLayout(
      * no `grid-auto-flow`, and one `gap` field carrying a horizontal glyph for both of
      * its independent axes.
      */
-    const gaps = el("div", { class: cls("grid") });
+    const gaps = el("div", { class: `${cls("grid")} ${cls("group")}` });
     for (const axis of ["row", "column"] as const) {
       gaps.append(ctx.fieldCell(GRID_GAP(axis), node));
     }
     body.append(gaps);
+    // The three of them are one decision — how the items sit in the tracks —
+    // so they are grouped rather than appended loose. Before the section body
+    // owned its spacing these landed as bare siblings of the gap grid, which
+    // no adjacency rule named, and the two blocks touched.
+    const placement = el("div", { class: cls("group") });
     for (const descriptor of [
       JUSTIFY_ITEMS,
       ALIGN_ITEMS_GRID,
       GRID_AUTO_FLOW,
     ]) {
-      body.append(ctx.fieldCell(descriptor, node));
+      placement.append(ctx.fieldCell(descriptor, node));
     }
+    body.append(placement);
     return ctx.section("auto-layout", "Layout grid", body);
   }
 
@@ -228,9 +237,15 @@ export function renderAutoLayout(
   ctx.register(dirSeg);
   dirRow.append(dirSeg.element);
 
+  // `group` on the pad cluster, not a margin under the direction row: the two
+  // are separate decisions, and saying so in the shared vocabulary lets the
+  // section body space them like every other pair.
   body.append(
     dirRow,
-    el("div", { class: cls("al-main") }, [pad.element, fields])
+    el("div", { class: `${cls("al-main")} ${cls("group")}` }, [
+      pad.element,
+      fields,
+    ])
   );
 
   // No "Remove auto layout" header action either — same reasoning as the
@@ -347,11 +362,13 @@ function renderGridTracks(ctx: SectionContext, node: Element): HTMLElement {
     wrap.append(row);
   }
 
-  // Gutter and margin, which is what a design tool calls gap and padding.
-  const grid = el("div", { class: cls("grid") });
-  grid.append(ctx.fieldCell(LAYOUT_GAP(false), node));
-  wrap.append(grid);
-
+  // Margin, which is what a design tool calls padding. The gutter is not here:
+  // this runs for grid containers only, and the caller already gives them
+  // `row-gap` and `column-gap` as separate fields. A `gap` shorthand beside
+  // them is a third control writing the same declaration as the other two, so
+  // whichever was touched last silently overwrote the pair — and the shorthand
+  // is the one carrying a horizontal glyph for both of a grid's independent
+  // axes, which is the confusion the axis fields were added to end.
   const padding = ctx.spacingControl(node, "padding");
   ctx.register(padding);
   wrap.append(padding.element);

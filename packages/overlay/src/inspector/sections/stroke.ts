@@ -420,6 +420,9 @@ function openStrokeSettings(
       style.destroy?.();
     },
     prefer: "below",
+    // Movable: this one opens directly over the stroke rows it edits, so
+    // watching a dashed border take effect meant closing the form that set it.
+    title: "Stroke settings",
   });
 }
 

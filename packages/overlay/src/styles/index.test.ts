@@ -1,3 +1,5 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { buildCss, design } from "@airship/editor-tokens";
 import { describe, expect, it } from "vitest";
 import { overlayCss } from "./index";
@@ -110,5 +112,95 @@ describe("overlay stylesheet", () => {
     expect(css.indexOf("prefers-reduced-motion", at + 1)).toBe(-1);
     // And last, so it outranks the modules it overrides on order alone.
     expect(css.slice(at)).not.toContain("transition:");
+  });
+});
+
+/*
+ * A class the product applies must be a class the stylesheet defines.
+ *
+ * `.pop-palette` and `.pop-shortcuts` were passed as `className` by the palette
+ * and the shortcuts sheet, and neither had a rule anywhere. Both silently took
+ * their whole box from `.pop-modal` — right for the palette, and wrong for a
+ * sixty-row two-column reference that got a container sized for ten results.
+ *
+ * `scripts/check-css.mjs` cannot see this: it checks backtick escaping and the
+ * no-transition rule against the stylesheet alone, and an applied-but-undefined
+ * class is only visible by comparing the sheet with the call sites.
+ *
+ * Scoped to `className:` popover options rather than every `cls()` call in the
+ * product. Those are the ones whose entire purpose is to carry styling — a
+ * `cls()` used as a query hook legitimately has no rule.
+ */
+const POPOVER_CLASS = /className:\s*"([a-z][\w-]*)"/g;
+
+/**
+ * The overlay's own sources, found from the working directory.
+ *
+ * `import.meta.url` is an http URL under happy-dom, and vitest's root is the
+ * package while turbo can run from the repo root — the same two facts
+ * `tooltip.copy.test.ts` resolves the same way.
+ */
+const SRC = [
+  join(process.cwd(), "src"),
+  join(process.cwd(), "packages/overlay/src"),
+  process.cwd(),
+].find((dir) => existsSync(join(dir, "tooltip.ts"))) as string;
+
+function sourceFiles(dir: string, found: string[] = []): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      sourceFiles(path, found);
+    } else if (
+      entry.name.endsWith(".ts") &&
+      !(entry.name.includes(".test.") || entry.name.includes(".stories."))
+    ) {
+      found.push(path);
+    }
+  }
+  return found;
+}
+
+describe("popover classNames", () => {
+  const css = overlayCss().replace(CSS_COMMENT, "");
+  const files = sourceFiles(SRC);
+
+  it("finds the sources to scan", () => {
+    // A scan that matched nothing would make the case below pass forever.
+    expect(files.length).toBeGreaterThan(20);
+  });
+
+  /**
+   * Whether the stylesheet has a rule for `.${PREFIX}-<name>`.
+   *
+   * The boundary matters in both directions. A bare `includes` would accept
+   * `.ap-pop-menu-hint` as a definition of `pop-menu`, and would *reject* a real
+   * rule written `.ap-pop-foo:hover` or `.ap-pop-foo{`. So: the name, then
+   * anything that can legally end a class in a selector.
+   */
+  const defines = (name: string): boolean =>
+    new RegExp(`\\.[\\w-]*-${name}(?![\\w-])`).test(css);
+
+  it("agrees with itself about what counts as defined", () => {
+    // The matcher is the whole case below; a broken one passes silently.
+    expect(defines("pop-modal")).toBe(true);
+    expect(defines("pop-menu")).toBe(true);
+    expect(defines("definitely-not-a-class")).toBe(false);
+    // A prefix of a real class is not that class.
+    expect(defines("pop-mod")).toBe(false);
+  });
+
+  it("defines every class a popover asks for", () => {
+    const undefinedClasses: string[] = [];
+    for (const path of files) {
+      const src = readFileSync(path, "utf8");
+      for (const [, name] of src.matchAll(POPOVER_CLASS)) {
+        if (!defines(name)) {
+          undefinedClasses.push(`${path.slice(SRC.length)} "${name}"`);
+        }
+      }
+    }
+
+    expect(undefinedClasses.sort((a, b) => a.localeCompare(b))).toEqual([]);
   });
 });

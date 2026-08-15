@@ -39,6 +39,7 @@ import {
 } from "../../dnd/manager";
 import { cls, el } from "../../dom";
 import { hasIcon, type IconName, icon } from "../../icons";
+import { isTypingTarget } from "../../keys/registry";
 import { clamp, round } from "../../num";
 import {
   formatLength,
@@ -144,7 +145,15 @@ function trackModifiers(): {
     state.shift = e.shiftKey;
   };
   const onPointer = (e: Event): void => from(e as PointerEvent);
-  const onKey = (e: Event): void => from(e as KeyboardEvent);
+  const onKey = (e: Event): void => {
+    // Same question the registry asks, asked by hand because this is a raw
+    // listener: ⇧ typed into a field is a capital letter, not a coarse-step
+    // modifier for a scrub that happens to be live in another panel.
+    if (isTypingTarget((e as KeyboardEvent).target, e as KeyboardEvent)) {
+      return;
+    }
+    from(e as KeyboardEvent);
+  };
   document.addEventListener("pointermove", onPointer, true);
   document.addEventListener("keydown", onKey, true);
   document.addEventListener("keyup", onKey, true);
@@ -550,6 +559,25 @@ export function createNumField(
   if (spec.fieldKey) {
     wrap.dataset.field = spec.fieldKey;
   }
+  /*
+   * The whole field is still the click target.
+   *
+   * A suffixed input sizes to its content now (see `controls.css.ts`), so it no
+   * longer stretches under the empty half of the field the way a `width: 100%`
+   * input did — and clicking there landed on this div and focused nothing. On
+   * Rotation that is most of the control.
+   *
+   * Guarded on the target being this element: the glyph is a scrub handle and
+   * the input takes its own clicks, and stealing either would break the caret
+   * position a click inside the text is asking for.
+   */
+  wrap.addEventListener("pointerdown", (ev) => {
+    if (ev.target === wrap) {
+      ev.preventDefault();
+      input.focus();
+      input.select();
+    }
+  });
   // On the whole field, not just the glyph, whenever the glyph is a letter or
   // absent: a one-character mark like "W" or "Z" is the only thing naming this
   // control, and hitting a 20px target to find out what it does is not an

@@ -73,13 +73,20 @@ export function isEditorNode(node: Element): boolean {
  * be allowed through on the drag source so dnd-kit's PointerSensor — which binds
  * element-level listeners, i.e. after document capture — can still see it.
  *
- * `click` and `dblclick` are both absent because the picker owns them outright:
- * one selects, the other enters in-place text editing, and it swallows each
- * itself in capture before the app can act. Two owners of one event type is an
- * ordering hazard worth avoiding — `onPress` uses `stopPropagation`, not
+ * `click`, `dblclick` and `contextmenu` are all absent because the picker owns
+ * them outright: one selects, one enters in-place text editing, one opens the
+ * editor's own menu on the selection, and it swallows each itself in capture
+ * before the app can act. Two owners of one event type is an ordering hazard
+ * worth avoiding — `onPress` uses `stopPropagation`, not
  * `stopImmediatePropagation`, so a picker listener on the same node *would*
  * still fire, but only by accident of `SelectionController.setEditing` calling
  * `guard.setEditing` before registering its own.
+ *
+ * `contextmenu` was on this list for a long time, which is why right-clicking
+ * anywhere in the editor did nothing whatsoever: it was swallowed and nothing
+ * was ever put in its place. It moves to the picker rather than simply coming
+ * off, because the browser's own menu over an element you are editing is not
+ * the right answer either.
  *
  * Exported for the frame agent, which runs this same list one realm down while a
  * frame is live for a text edit.
@@ -89,7 +96,6 @@ export const SWALLOWED = [
   "mousedown",
   "mouseup",
   "pointerup",
-  "contextmenu",
   "auxclick",
   "dragstart",
 ] as const;
