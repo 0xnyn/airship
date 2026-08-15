@@ -48,6 +48,7 @@ import {
 } from "@airship/protocol";
 import { scanProjectTokens } from "@airship/source/tokens";
 import { type RawData, WebSocket, WebSocketServer } from "ws";
+import { bindUrl, buildAllowedHosts } from "./access";
 import { listHistory, readBundle, thread, writeBundle } from "./history";
 import { JobStore } from "./jobs";
 import { openInEditor } from "./open-editor";
@@ -70,6 +71,11 @@ const WS_PATH = "/__airship/ws";
 export interface ServerOptions {
   /** Default backend for turns that do not name one. */
   agent?: AgentKind;
+  /**
+   * Hostnames the server answers for beyond `localhost` and IP literals —
+   * `/etc/hosts` aliases, tunnel names. Exact matches only.
+   */
+  allowedHosts?: readonly string[];
   /** Auto-commit each accepted edit with a Conventional-Commits message. */
   autoCommit?: boolean;
   /** Codex-only passthrough knobs; opaque here by design. */
@@ -77,6 +83,12 @@ export interface ServerOptions {
   /** Project root for file edits. */
   cwd: string;
   effort?: Effort;
+  /**
+   * Interface the proxy *listens* on — not `targetHost`, the upstream dev
+   * server it forwards to. Loopback by default: this is an unauthenticated
+   * server that drives a coding agent with write access to the project.
+   */
+  host?: string;
   /**
    * Keep upstream `Content-Security-Policy` headers on served surfaces
    * instead of stripping them. `X-Frame-Options` is dropped regardless.
@@ -126,6 +138,10 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   // `localhost` (::1) only, so a hardcoded IPv4 target gets ECONNREFUSED. Node's
   // happy-eyeballs (autoSelectFamily) then reaches whichever family it bound.
   const targetHost = opts.targetHost ?? "localhost";
+  // Explicit, and never a wildcard by default — the same posture as the
+  // opencode server (opencode-server.ts): this is an unauthenticated HTTP
+  // server that can drive a coding agent with filesystem write access.
+  const host = opts.host ?? "127.0.0.1";
   const { cwd } = opts;
   const jobs = new JobStore();
   const clients = new Set<WebSocket>();
@@ -584,6 +600,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   }
 
   const server = createProxyServer({
+    allowedHosts: buildAllowedHosts(opts.allowedHosts, opts.host),
     defaultMode: surfaceToMode(opts.surface ?? "canvas"),
     keepCsp: opts.keepCsp,
     onAirshipUpgrade: (req, socket, head) => {
@@ -613,7 +630,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   // airship started with `--exec` is never stopped either.
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(opts.port, () => {
+    server.listen(opts.port, host, () => {
       server.removeListener("error", reject);
       resolve();
     });
@@ -621,7 +638,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
 
   const addr = server.address() as AddressInfo | null;
   const port = addr?.port ?? opts.port;
-  const url = `http://localhost:${port}`;
+  const url = bindUrl(host, port);
 
   return {
     close: () =>

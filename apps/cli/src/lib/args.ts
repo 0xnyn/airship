@@ -16,6 +16,7 @@
  *    enums are declared as strings here and checked by `requireEnum`.
  */
 
+import net from "node:net";
 import type { ArgsDef } from "citty";
 import { CliError, didYouMean, EXIT } from "./errors";
 
@@ -77,6 +78,22 @@ export const FLAGS: readonly FlagSpec[] = [
     help: "Port for the airship proxy.",
     hint: "<port>",
     name: "port",
+    type: "string",
+  },
+  {
+    defaultHint: "127.0.0.1",
+    group: "CORE",
+    help: "Interface the airship proxy listens on. Loopback by default; 0.0.0.0 exposes an unauthenticated editor to your whole network.",
+    hint: "<address>",
+    name: "host",
+    type: "string",
+  },
+  {
+    group: "CORE",
+    help: "Extra hostnames airship answers to, repeatable or comma-separated. localhost and IP addresses are always allowed; anything else is refused to block DNS rebinding.",
+    hint: "<names>",
+    multiple: true,
+    name: "allowed-hosts",
     type: "string",
   },
   {
@@ -476,6 +493,34 @@ export function requirePort(value: string, name: string): number {
     });
   }
   return port;
+}
+
+// A hostname as `--host`/`--allowed-hosts` accept one: letters, digits, dots,
+// hyphens. Deliberately narrower than the wire format — schemes, ports and
+// paths are the plausible user errors, and each would otherwise surface as a
+// raw EADDRNOTAVAIL at listen time.
+const HOSTNAME = /^[a-zA-Z0-9.-]+$/;
+
+/**
+ * A bind address or hostname: an IP literal (IPv6 bare or bracketed) or a
+ * plain name. `net.isIP` runs first — a naive colon check would reject `::1`.
+ */
+export function requireHost(value: string, name: string): string {
+  const trimmed = value.trim();
+  const bare =
+    trimmed.startsWith("[") && trimmed.endsWith("]")
+      ? trimmed.slice(1, -1)
+      : trimmed;
+  if (net.isIP(bare) !== 0) {
+    return bare;
+  }
+  if (HOSTNAME.test(bare)) {
+    return bare.toLowerCase();
+  }
+  throw new CliError(`Invalid --${name} '${value}'`, {
+    exitCode: EXIT.usage,
+    hint: "Give a bare address or hostname — no scheme, port or path. The port comes from --port.",
+  });
 }
 
 export function requireInteger(value: string, name: string): number {

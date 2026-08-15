@@ -23,6 +23,12 @@ import {
   readSurfaceCookie,
   surfaceToMode,
 } from "@airship/protocol";
+import {
+  denyResponse,
+  isAllowedHost,
+  originMatchesHost,
+  parseHostHeader,
+} from "./access";
 import { escapeForScript, shellHtml } from "./shell";
 
 /** The only shape of font filename this server will read off disk. */
@@ -223,6 +229,12 @@ function tokensFontPath(name: string): string | null {
 
 export interface ProxyDeps {
   /**
+   * Hostnames the server answers for beyond `localhost` and IP literals,
+   * already normalized. The gate this feeds is what stops DNS rebinding —
+   * see `isAllowedHost`.
+   */
+  allowedHosts: ReadonlySet<string>;
+  /**
    * Surface a top-level navigation gets when nothing overrides it — the launch
    * `--mode`, translated. Overridable per request by `?__airship=` and per
    * browser by the surface cookie; see `resolveMode`.
@@ -246,7 +258,20 @@ export interface ProxyDeps {
 
 export function createProxyServer(deps: ProxyDeps): http.Server {
   const server = http.createServer((req, res) => handleHttp(req, res, deps));
+  // One gate for both doors — the control socket and the HMR tunnel. The
+  // rejection happens before any upgrade completes, because afterwards there
+  // is no way to send a 403; and it covers the tunnel too, or a cross-site
+  // page could read the dev server's HMR traffic through us.
   server.on("upgrade", (req, socket, head) => {
+    const host = parseHostHeader(req.headers.host);
+    if (!(host && isAllowedHost(host.hostname, deps.allowedHosts))) {
+      socket.end(denyResponse("Forbidden host"));
+      return;
+    }
+    if (!originMatchesHost(req.headers.origin, req.headers.host)) {
+      socket.end(denyResponse("Forbidden origin"));
+      return;
+    }
     if (req.url === deps.wsPath) {
       deps.onAirshipUpgrade(req, socket, head);
       return;
@@ -261,6 +286,20 @@ function handleHttp(
   res: http.ServerResponse,
   deps: ProxyDeps
 ): void {
+  // Host gate first, ahead of even the editor's own assets: under DNS
+  // rebinding the attacker's Origin and Host *match*, so this — not the
+  // Origin check — is what stands between a hostile page and the proxy.
+  const host = parseHostHeader(req.headers.host);
+  if (!(host && isAllowedHost(host.hostname, deps.allowedHosts))) {
+    res.writeHead(403, {
+      connection: "close",
+      "content-type": "text/plain; charset=utf-8",
+      "x-content-type-options": "nosniff",
+    });
+    res.end("Forbidden host\n");
+    return;
+  }
+
   if (req.url?.startsWith("/__airship/")) {
     serveAirshipAsset(req, res);
     return;

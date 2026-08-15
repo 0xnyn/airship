@@ -29,6 +29,19 @@ export function safetyBanner(agent: AgentKind, safe: boolean): string {
   );
 }
 
+/** Said whenever the bind reaches beyond loopback — there is no auth here. */
+export function exposureBanner(host: string): string {
+  const name = host.replace(/^\[|\]$/g, "").toLowerCase();
+  if (name === "127.0.0.1" || name === "::1" || name === "localhost") {
+    return "";
+  }
+  return (
+    `  ${style.yellow("⚠ Exposed:")} listening on ${host} with no authentication. Anything that\n` +
+    "    can reach this interface can drive a coding agent with write access to\n" +
+    "    this project. Use only on networks where you trust every device.\n\n"
+  );
+}
+
 /** Everything a backend silently will not do, said once at launch. */
 export function warnBackendLimits(o: {
   agent: AgentKind;
@@ -100,6 +113,8 @@ function surfaceLines(surface: AirshipSurface): string {
 export function launchBanner(info: {
   agent: AgentKind;
   cwd: string;
+  /** The interface the proxy is listening on, for the exposure warning. */
+  host: string;
   /** The resolved model for `agent`, when one was configured. */
   model?: string;
   safe: boolean;
@@ -117,6 +132,7 @@ export function launchBanner(info: {
     `\n  ${style.magenta("◆")} ${style.bold("airship")}  —  editing ${info.cwd} with ${info.agent}${on}\n` +
     `  → open ${style.cyan(info.url)}\n` +
     `    ${style.dim(`(proxying your dev server at http://localhost:${info.targetPort})`)}\n\n` +
+    exposureBanner(info.host) +
     // Stated at every launch, not just in --help: a tool that can write
     // anywhere on disk should say so where the user is actually looking.
     `${safetyBanner(info.agent, info.safe)}\n` +

@@ -4,6 +4,7 @@ import {
   collectRepeated,
   requireAmount,
   requireEnum,
+  requireHost,
   requireInteger,
   requireModelRef,
   requirePort,
@@ -131,6 +132,28 @@ describe("collectRepeated", () => {
       collectRepeated(["--", "--codex-config", "a=1"], "codex-config")
     ).toEqual([]);
   });
+});
+
+describe("requireHost", () => {
+  it("accepts IPv4, bare IPv6 and bracketed IPv6", () => {
+    expect(requireHost("127.0.0.1", "host")).toBe("127.0.0.1");
+    expect(requireHost("0.0.0.0", "host")).toBe("0.0.0.0");
+    // The naive colon check would reject both of these.
+    expect(requireHost("::1", "host")).toBe("::1");
+    expect(requireHost("[::1]", "host")).toBe("::1");
+  });
+
+  it("accepts a hostname and lowercases it", () => {
+    expect(requireHost("Dev.Local", "host")).toBe("dev.local");
+  });
+
+  for (const bad of ["http://x", "localhost:3000", "a/b", "", "local host"]) {
+    it(`rejects ${JSON.stringify(bad)} with a usable hint`, () => {
+      const err = thrown(() => requireHost(bad, "host"));
+      expect(err.exitCode).toBe(EXIT.usage);
+      expect(err.hint).toContain("--port");
+    });
+  }
 });
 
 describe("requireEnum", () => {

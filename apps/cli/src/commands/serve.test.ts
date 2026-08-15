@@ -9,9 +9,10 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { FLAGS } from "../lib/args";
 import { mergeSettings, type Settings } from "../lib/config";
 import { CliError } from "../lib/errors";
-import { toServeOptions } from "./serve";
+import { SERVE_FLAGS, toServeOptions } from "./serve";
 
 const CWD = "/tmp/airship-serve-test";
 
@@ -124,5 +125,66 @@ describe("toServeOptions — the surrounding validation still holds", () => {
     expect(
       errorFrom(() => optionsFor({ "max-budget": "lots" }))?.message
     ).toContain("max-budget");
+  });
+});
+
+describe("toServeOptions — host and allowed hosts", () => {
+  it("leaves both unset by default", () => {
+    const opts = optionsFor({});
+    expect(opts.host).toBeUndefined();
+    expect(opts.allowedHosts).toEqual([]);
+  });
+
+  it("passes a valid host through, lowercased", () => {
+    expect(optionsFor({ host: "0.0.0.0" }).host).toBe("0.0.0.0");
+    expect(optionsFor({ host: "Dev.Local" }).host).toBe("dev.local");
+  });
+
+  it("accepts IPv6 literals, bare or bracketed", () => {
+    expect(optionsFor({ host: "::1" }).host).toBe("::1");
+    expect(optionsFor({ host: "[::1]" }).host).toBe("::1");
+  });
+
+  it("rejects a host carrying a scheme, port or path", () => {
+    for (const bad of ["http://x", "localhost:3000", "a/b"]) {
+      expect(errorFrom(() => optionsFor({ host: bad }))?.message).toBe(
+        `Invalid --host '${bad}'`
+      );
+    }
+  });
+
+  it("splits allowed hosts on commas — the env form cannot repeat", () => {
+    expect(
+      optionsFor({ "allowed-hosts": "a.test, B.Test," }).allowedHosts
+    ).toEqual(["a.test", "b.test"]);
+  });
+
+  it("keeps repeated --allowed-hosts entries and still splits each", () => {
+    const merged = mergeSettings({
+      "allowed-hosts": ["a.test", "b.test,c.test"],
+    } as unknown as Settings);
+    expect(toServeOptions(merged, CWD).allowedHosts).toEqual([
+      "a.test",
+      "b.test",
+      "c.test",
+    ]);
+  });
+
+  it("validates each allowed host like a host", () => {
+    expect(
+      errorFrom(() => optionsFor({ "allowed-hosts": "https://evil.test" }))
+        ?.message
+    ).toContain("Invalid --allowed-hosts");
+  });
+});
+
+// The half-wired-flag trap: a flag in the registry but missing here works via
+// env and config while `assertKnownFlags` rejects it on the command line — a
+// state no other test can see.
+describe("SERVE_FLAGS", () => {
+  it("carries every non-global flag", () => {
+    for (const spec of FLAGS.filter((flag) => flag.group !== "GLOBAL")) {
+      expect(SERVE_FLAGS).toContain(spec.name);
+    }
   });
 });
