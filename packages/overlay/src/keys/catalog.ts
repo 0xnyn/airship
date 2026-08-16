@@ -504,7 +504,7 @@ export const COMMANDS = [
     doc: "Every shortcut and gesture, grouped, with what is live right now.",
     essential: true,
     group: "Help",
-    icon: "keyboard",
+    icon: "question",
     id: "help.shortcuts",
     inFrame: true,
     keys: ["shift+/", "mod+/"],
@@ -628,7 +628,7 @@ export const COMMANDS = [
     scoped: true,
     surface: "both",
     title: "Next result",
-    where: "in the palette",
+    where: "in the command palette",
   },
   {
     allowWhileTyping: true,
@@ -641,7 +641,7 @@ export const COMMANDS = [
     scoped: true,
     surface: "both",
     title: "Previous result",
-    where: "in the palette",
+    where: "in the command palette",
   },
   {
     allowWhileTyping: true,
@@ -654,7 +654,7 @@ export const COMMANDS = [
     scoped: true,
     surface: "both",
     title: "Run result",
-    where: "in the palette",
+    where: "in the command palette",
   },
   {
     allowWhileTyping: true,
@@ -667,7 +667,7 @@ export const COMMANDS = [
     scoped: true,
     surface: "both",
     title: "Close the palette",
-    where: "in the palette",
+    where: "in the command palette",
   },
 ] as const satisfies readonly CommandSpec[];
 
@@ -1019,7 +1019,27 @@ const DISPLAY_PC: Readonly<Record<string, string>> = {
  * silently emit the Windows spelling for every reader.
  */
 export function displayChord(chord: string, platform: ChordPlatform): string {
-  const map = platform === "mac" ? DISPLAY_MAC : DISPLAY_PC;
-  const parts = chord.split("+").map((p) => map[p] ?? p.toUpperCase());
+  const parts = displayChordParts(chord, platform);
   return platform === "mac" ? parts.join("") : parts.join("+");
+}
+
+/**
+ * The same chord, as the keys you actually press.
+ *
+ * `"mod+shift+z"` → `["⌘", "⇧", "Z"]`. For prose — a table cell, a tooltip — the
+ * joined form above is right. For a *chip* it is not: "⌘⇧Z" set in 10px mono is
+ * three glyphs with no space between them, and a reader has to know the set
+ * already to tell where one key ends and the next begins. One chip per key is
+ * the difference between a label you decode and one you read.
+ *
+ * `displayChord` is written in terms of this rather than beside it, so the two
+ * cannot drift — a chip and the `CONTROLS.md` row it documents must never
+ * disagree about which keys a chord is.
+ */
+export function displayChordParts(
+  chord: string,
+  platform: ChordPlatform
+): string[] {
+  const map = platform === "mac" ? DISPLAY_MAC : DISPLAY_PC;
+  return chord.split("+").map((p) => map[p] ?? p.toUpperCase());
 }

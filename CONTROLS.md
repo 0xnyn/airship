@@ -82,10 +82,10 @@ the editor also answers to a plain `+` and `-`.
 | Last option | End | End | in an open menu | Jump to the last option. |
 | Choose option | ↩ | Enter | in an open menu | Take the option you are on. |
 | Close the device menu | Esc | Esc | in the device menu | Close the frame's device menu. |
-| Next result | ↓ | ↓ | in the palette | Move down the results. |
-| Previous result | ↑ | ↑ | in the palette | Move up the results. |
-| Run result | ↩ | Enter | in the palette | Run the result you are on. |
-| Close the palette | Esc | Esc | in the palette | Clear the search, then close. |
+| Next result | ↓ | ↓ | in the command palette | Move down the results. |
+| Previous result | ↑ | ↑ | in the command palette | Move up the results. |
+| Run result | ↩ | Enter | in the command palette | Run the result you are on. |
+| Close the palette | Esc | Esc | in the command palette | Clear the search, then close. |
 
 ## Mouse and trackpad
 

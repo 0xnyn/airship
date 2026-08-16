@@ -180,6 +180,32 @@ describe("searching", () => {
 
     expect(card().querySelector(`.${cls("pop-head")}`)).toBeNull();
   });
+
+  it("does not compose the menu row", () => {
+    /*
+     * `.pop-item` brought three faults with it, none of them visible under
+     * happy-dom, which is why this asserts the *cause* rather than the layout.
+     * `justify-content: space-between` made a title's x-position a function of
+     * the icon and chord widths beside it, so every row started somewhere
+     * different; `.pop-item-main` is an `inline-flex` row, so the sentence
+     * printed beside the title rather than as its own column; and
+     * `.pop-item:hover` at (0,2,0) out-ranked `.palette-row-on` at (0,1,0), so
+     * the pointer beat the arrow keys in a surface navigated by arrow keys.
+     */
+    expect(rows()[0].classList.contains(cls("pop-item"))).toBe(false);
+    expect(rows()[0].querySelector(`.${cls("ic")}`)).toBeNull();
+  });
+
+  it("gives every row the same three cells, chord or no chord", () => {
+    // The cells are placed into the list's subgrid by source order, so a row
+    // that omitted its empty chord would put its sentence in the chord column.
+    for (const row of rows()) {
+      expect(row.children).toHaveLength(3);
+      expect(row.children[0].className).toBe(cls("palette-title"));
+      expect(row.children[1].className).toBe(cls("palette-doc"));
+      expect(row.children[2].className).toBe(cls("keys"));
+    }
+  });
 });
 
 describe("navigating", () => {

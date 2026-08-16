@@ -1735,30 +1735,47 @@ export class AirshipApp {
       ...this.editOnlyBar,
       ...this.viewOnlyBar,
       // Outside both mode lists on purpose: the shortcuts sheet documents both
-      // modes, and a help button that disappears in the mode you are stuck in
-      // is the one place it is least useful. Ahead of the surface toggle so it
-      // reads as furniture rather than as another mode switch.
+      this.buildSurfaceToggle(),
+      el("div", { class: cls("bar-sep") }),
+      this.buildEditToggle(),
+      el("div", { class: `${cls("bar-sep")} ${cls("bar-sep-tools")}` }),
+      this.barTools,
+      // The two help surfaces, last, and that placement is arithmetic rather
+      // than taste. The bar is `left: 50%` with a `-50%` translate, so it is the
+      // *bar* that is centred and any control's offset from the middle is
+      // (what precedes it − what follows it) / 2. Everything here used to
+      // precede the mode toggle and almost nothing followed it, which pushed
+      // Edit/View — the one control you aim at without looking — well right of
+      // centre, with a pair of glyphs sitting in the middle instead. Moving the
+      // pair to the tail moves the toggle back by half their width.
       //
-      // The palette sits beside it for a reason that is the whole point of both:
-      // it had no pointer affordance at all, so the one surface that lists every
-      // command the editor can run was reachable only by already knowing ⌘K.
+      // Outside both mode lists on purpose: the shortcuts sheet documents both
+      // modes, and a help button that disappears in the mode you are stuck in is
+      // the one place it is least useful.
+      //
+      // Its own separator rather than reusing `bar-sep-tools`, which the inline
+      // overlay hides along with the stage slot it divides. Inline that slot is
+      // empty, so a shared separator would leave the pair welded to the mode
+      // toggle; this one is always the divider between them.
+      el("div", { class: cls("bar-sep") }),
+      // The palette had no pointer affordance at all, so the one surface that
+      // lists every command the editor can run was reachable only by already
+      // knowing ⌘K.
       this.iconButton(
         "command",
         "Command palette",
         () => openPalette(),
         "help.palette"
       ),
+      // `question`, not `keyboard`: the sheet's own chord is `?`, and the glyph
+      // that names it should be the one you press. It also stops reading as
+      // "keyboard settings" beside a `command` mark that is already a key.
       this.iconButton(
-        "keyboard",
+        "question",
         "Keyboard shortcuts",
         () => openShortcuts(),
         "help.shortcuts"
       ),
-      this.buildSurfaceToggle(),
-      el("div", { class: cls("bar-sep") }),
-      this.buildEditToggle(),
-      el("div", { class: `${cls("bar-sep")} ${cls("bar-sep-tools")}` }),
-      this.barTools,
     ]);
     this.root.append(this.bar);
     this.syncSurfaceToggle();

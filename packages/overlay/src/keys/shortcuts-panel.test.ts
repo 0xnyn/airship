@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cls } from "../dom";
 import { mountPopoverHost } from "../popover-host";
-import { ALL_COMMANDS, ALL_GESTURES, COMMAND_GROUPS } from "./catalog";
+import { ALL_COMMANDS, ALL_GESTURES, COMMAND_GROUPS, NOTES } from "./catalog";
 import { keys } from "./registry";
 import { closeShortcuts, openShortcuts } from "./shortcuts-panel";
 
@@ -57,22 +57,67 @@ afterEach(() => {
 });
 
 describe("what the sheet shows", () => {
-  it("has a section for every group in the catalog", () => {
+  it("gives a group a section when it has rows of its own, and not otherwise", () => {
     openShortcuts();
 
     const shown = headings();
     for (const group of COMMAND_GROUPS) {
-      if (ALL_COMMANDS.some((c) => c.group === group)) {
-        expect(shown).toContain(group);
-      }
+      const hasUnscoped = ALL_COMMANDS.some(
+        (c) => c.group === group && !c.where
+      );
+      // Both directions, and the second half is what this case is about.
+      // "Menus" is the case it exists for: all eleven of its commands are
+      // scoped, so the group contributes three scope sections and none of its
+      // own, and a heading over nothing would advertise the wrong list.
+      expect(shown.includes(group)).toBe(hasUnscoped);
     }
+  });
+
+  it("promotes every scope in the catalog to a section of its own", () => {
+    openShortcuts();
+
+    const shown = headings();
+    for (const where of new Set(
+      ALL_COMMANDS.map((c) => c.where).filter((w): w is string => Boolean(w))
+    )) {
+      expect(shown).toContain(`${where[0].toUpperCase()}${where.slice(1)}`);
+    }
+  });
+
+  it("keeps a scope beside the group it came out of", () => {
+    // Read on its own, "On the change strip" is a place with no subject. The
+    // scopes are derived per group rather than swept up globally so that they
+    // land next to the section that gives them one.
+    openShortcuts();
+
+    const shown = headings();
+    expect(shown.indexOf("On the change strip")).toBeGreaterThan(
+      shown.indexOf("Agent")
+    );
+    expect(shown.indexOf("On the change strip")).toBeLessThan(
+      shown.indexOf("Help")
+    );
+  });
+
+  it("does not dim a scoped row, or repeat its scope on it", () => {
+    // The regression the whole restructure is about. Every `popover.*` binding
+    // exists only while a popover is up, and the sheet builds its sections
+    // before it opens one — so the Menus section was grey every time anybody
+    // looked at it, as a matter of arithmetic rather than of their editor.
+    openShortcuts();
+
+    const row = rowFor("Next option");
+
+    expect(row.classList.contains(cls("sc-row-off"))).toBe(false);
+    expect(row.querySelector(`.${cls("sc-why")}`)).toBeNull();
   });
 
   it("lists every command, bound or not", () => {
     openShortcuts();
 
     const rows = sheet().querySelectorAll(`.${cls("sc-row")}`);
-    // Every command, every gesture, and the field-local notes.
+    // Every command and every gesture. The field-local notes are no longer
+    // among them — they are prose, and `.sc-note` is asserted below.
     expect(rows.length).toBeGreaterThanOrEqual(
       ALL_COMMANDS.length + ALL_GESTURES.length
     );
@@ -106,9 +151,15 @@ describe("what the sheet shows", () => {
 
     // Redo answers to two, and a tooltip only ever showed the first. This is
     // the surface where ⌘Y and ⇧0 finally appear.
-    expect(rowFor("Redo").querySelectorAll(`.${cls("sc-key")}`)).toHaveLength(
-      2
-    );
+    //
+    // Counted as *chords*, not chips: a chord is a group of one chip per key
+    // now, so ⌘⇧Z alone is three of them. The grouping is the thing that has to
+    // survive — five chips in an undifferentiated row would not say where the
+    // first chord stops and the second starts.
+    expect(rowFor("Redo").querySelectorAll(`.${cls("chord")}`)).toHaveLength(2);
+    expect(
+      rowFor("Redo").querySelectorAll(`.${cls("key")}`).length
+    ).toBeGreaterThan(2);
   });
 
   it("renders the pointer gestures too", () => {
@@ -119,10 +170,15 @@ describe("what the sheet shows", () => {
     expect(rowFor("Scroll the pending changes")).toBeDefined();
   });
 
-  it("renders the field conventions that are not commands", () => {
+  it("renders the field conventions as prose rather than as rows", () => {
+    // As `sc-row`s they came out as three shortcuts with an empty chord column,
+    // which reads as a rendering fault rather than as a note.
     openShortcuts();
 
     expect(headings()).toContain("In any field");
+    expect(sheet().querySelectorAll(`.${cls("sc-note")}`)).toHaveLength(
+      NOTES.length
+    );
   });
 
   it("stays quiet when nothing conflicts", () => {
