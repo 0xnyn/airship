@@ -97,6 +97,22 @@ export const css = `
 .${PREFIX}-dock-left { left: var(--ap-space-md); width: var(--${PREFIX}-left-w, 340px); }
 .${PREFIX}-dock-right { right: var(--ap-space-md); width: var(--${PREFIX}-right-w, 360px); }
 
+/* A docked panel with a pinned height.
+
+   \`.dock\` anchors \`top\` *and* \`bottom\`, so a docked column fills its edge and
+   re-fits a resized window with no JS at all — which is why the default is to
+   have no height here, and why \`resetSize\` *removes* the pin rather than
+   replacing it with a number. A literal for "the window, less two insets" would
+   be stale the moment the window changed and would need re-deriving on every
+   resize; \`bottom\` answers the same question for free and keeps answering it.
+
+   \`bottom\` and \`height\` cannot both win, so the pinned case drops the anchor
+   rather than fighting it. Two classes, so this beats the single-class edge
+   anchors above without \`!important\`, the same bargain \`.dock-float\` makes. */
+.${PREFIX}-dock-h { bottom: auto; }
+.${PREFIX}-dock-left.${PREFIX}-dock-h { height: var(--${PREFIX}-left-h); }
+.${PREFIX}-dock-right.${PREFIX}-dock-h { height: var(--${PREFIX}-right-h); }
+
 /* A swappable dock body — the chat and the frame list share the left dock, one
    per mode (see \`AirshipApp.syncDocks\`).
 
@@ -157,6 +173,19 @@ export const css = `
 .${PREFIX}-splitter:hover::after { opacity: .7; }
 .${PREFIX}-splitter-left { right: -1px; }
 .${PREFIX}-splitter-right { left: -1px; }
+
+/* The same strip, turned. \`top\` and \`width\` are *reset*, not merely unset:
+   \`.splitter\` sets both, so a rule that only added \`height\` would leave a
+   7px-wide full-height column lying across the panel's left edge, eating clicks
+   on everything under it. Same for the hairline's \`top\`/\`bottom\`/\`width\`. */
+.${PREFIX}-splitter-bottom {
+  top: auto; bottom: -1px; left: 0; right: 0;
+  width: auto; height: 7px; cursor: row-resize;
+}
+.${PREFIX}-splitter-bottom::after {
+  top: 50%; bottom: auto; left: 0; right: 0;
+  width: auto; height: 2px; transform: translateY(-50%);
+}
 
 /* Collapsed panel — the dock's header row, left floating in the corner the dock
    itself would occupy. Same surface recipe as \`.dock\` and, crucially, the same

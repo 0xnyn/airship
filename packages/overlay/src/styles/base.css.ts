@@ -159,6 +159,12 @@ html[data-${PREFIX}-drag], html[data-${PREFIX}-drag] body, html[data-${PREFIX}-d
   user-select: none !important;
 }
 html[data-${PREFIX}-drag="col-resize"] { --${PREFIX}-drag-cursor: col-resize; }
+/* The horizontal twin of \`col-resize\`, for a dock's bottom edge. Not
+   \`ns-resize\`, which is beside it: that is the cursor for a *handle* that moves
+   an edge in space, and this is a splitter that redistributes room between two
+   things — the distinction the pointer-cursor spec draws, and the one the width
+   splitter already relies on. */
+html[data-${PREFIX}-drag="row-resize"] { --${PREFIX}-drag-cursor: row-resize; }
 html[data-${PREFIX}-drag="ns-resize"] { --${PREFIX}-drag-cursor: ns-resize; }
 html[data-${PREFIX}-drag="ew-resize"] { --${PREFIX}-drag-cursor: ew-resize; }
 html[data-${PREFIX}-drag="nwse-resize"] { --${PREFIX}-drag-cursor: nwse-resize; }

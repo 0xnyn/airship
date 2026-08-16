@@ -40,6 +40,15 @@ export interface Coordinates {
  */
 export const DND = {
   canvasNode: "airship:canvas-node",
+  /**
+   * Dragging a dock's bottom edge to set its height.
+   *
+   * Its own type rather than a suffix on `splitter`, and that is load-bearing:
+   * `watchSplitters` selects a width drag with `id.startsWith(DND.splitter)`, so
+   * an `"airship:splitter-v"` would match it and be read as one — with the *side*
+   * then parsed off the end of the wrong id.
+   */
+  dockHeight: "airship:dock-height",
   /** Dragging a dock's header — or its collapsed pill — to float or move it. */
   dockMove: "airship:dock-move",
   /** Dragging a frame's edge or corner grip to resize the frame itself. */

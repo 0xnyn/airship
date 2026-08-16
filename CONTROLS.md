@@ -106,6 +106,8 @@ the editor also answers to a plain `+` and `-`.
 | Jump the camera | Press or drag the minimap | Press or drag the minimap | view mode, canvas only | Press anywhere on the minimap to jump there, and keep dragging to keep moving. |
 | Scrub a number | Drag a field's glyph | Drag a field's glyph | edit mode | Drag a field's glyph sideways. Shift for ten at a time, Alt for a tenth. |
 | Re-dock a panel | Double-click a panel header | Double-click a panel header | anywhere | Double-click a floating panel's header to put it back against the edge. |
+| Resize a panel | Drag a panel edge | Drag a panel edge | anywhere | Drag the inner edge for width, the bottom edge for height. |
+| Reset a panel's size | Double-click a panel edge | Double-click a panel edge | anywhere | Width goes back to its default; a docked panel goes back to filling its edge. |
 | Scroll the pending changes | Wheel over the strip | Wheel over the strip | anywhere | A vertical wheel scrolls the strip sideways, because a mouse has no sideways. |
 
 ## In any field
