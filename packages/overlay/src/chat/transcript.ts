@@ -1,4 +1,4 @@
-import type { Editor, JobDiffBundle } from "@airship/protocol";
+import type { Editor, GitHealth, JobDiffBundle } from "@airship/protocol";
 import { firstHunkLine, renderDiff, selectedLineRange } from "../diff-view";
 import { clear, cls, el } from "../dom";
 import { icon } from "../icons";
@@ -9,6 +9,16 @@ import { type TimelineView, timelineView } from "./timeline";
 
 /** Callbacks a finished assistant turn can offer. Omit any to hide its entry. */
 export interface AssistantActions {
+  /**
+   * Whether git works, from the daemon.
+   *
+   * Present for the git-backed rows, which are shown greyed with the reason
+   * rather than hidden: a Commit that is simply missing reads as a bug, and a
+   * Commit that fails after the click has already cost the user the click.
+   * Absent is treated as healthy, which is what an older daemon that never
+   * sends `git:health` should look like.
+   */
+  git?: GitHealth;
   onBranch?: () => void;
   onComment?: (file: string, body: HTMLElement) => void;
   onCommit?: (push: boolean) => void;
@@ -334,18 +344,30 @@ function turnMenuButton(
   return btn;
 }
 
-/** The turn kebab's contents, grouped. Exported for the same reason it is
- * separate: the shape of this menu is a product decision worth reading. */
-export function turnMenu(
+/**
+ * The "This change" rows: revert, commit, and open a pull request.
+ *
+ * Separate from `turnMenu` because all three carry an availability gate, and
+ * there are two different gates. Revert does not need git at all — it rewrites
+ * files from the before-state the turn captured — so it is greyed only when
+ * this turn has files whose baseline was never captured, which is a fact the
+ * bundle already carries. Commit and Create pull request do need git, equally
+ * for every turn, so they read the daemon's health report.
+ *
+ * Greyed with a reason rather than hidden: a Commit that is simply missing
+ * reads as a bug, and one that fails after the click has already cost the click.
+ */
+function changeRows(
   bundle: JobDiffBundle,
   actions: AssistantActions,
   anchor: HTMLElement
 ): MenuEntry[] {
-  const out: MenuEntry[] = [];
-  const file = bundle.diffs?.[0]?.file ?? bundle.target?.source?.file;
-  const line = bundle.diffs?.[0]
-    ? firstHunkLine(bundle.diffs[0].patch)
-    : (bundle.target?.source?.line ?? undefined);
+  // The reason only, never the hint: `GitStatus.hint` is a command to run, sized
+  // for a terminal, and a tooltip clamps at three lines. The banner and `airship
+  // doctor` are where the fix gets spelled out.
+  const gitBroken = actions.git && !actions.git.ok;
+  const gitTip = gitBroken ? actions.git?.reason : undefined;
+  const unrestorable = bundle.diffs?.some((d) => d.noBaseline) ?? false;
 
   const change: MenuEntry[] = [];
   if (actions.onUndo) {
@@ -358,23 +380,29 @@ export function turnMenu(
       // direct-manipulation stack. `app.ts` says in as many words that the two
       // must never be wired together — and this menu was telling the user they
       // were. There is no chord for this, so it advertises none.
+      disabled: unrestorable,
       icon: "rotate-ccw",
       label: "Revert this change",
       run: actions.onUndo,
+      tip: unrestorable ? "No previous content to restore from" : undefined,
     });
   }
   const { onCommit } = actions;
   if (onCommit) {
     change.push(
       {
+        disabled: gitBroken,
         icon: "version-current",
         label: "Commit to git",
         run: () => onCommit(false),
+        tip: gitTip,
       },
       {
+        disabled: gitBroken,
         icon: "version-merged",
         label: "Commit & push",
         run: () => onCommit(true),
+        tip: gitTip,
       }
     );
   }
@@ -382,6 +410,7 @@ export function turnMenu(
   if (onCreatePr) {
     const files = bundle.diffs?.length ?? 0;
     change.push({
+      disabled: gitBroken,
       icon: "version-branch",
       label: "Create pull request…",
       // Pushing is the only thing in this application that cannot be taken
@@ -397,8 +426,26 @@ export function turnMenu(
             run: onCreatePr,
           },
         ]).open(anchor, "above"),
+      tip: gitTip,
     });
   }
+  return change;
+}
+
+/** The turn kebab's contents, grouped. Exported for the same reason it is
+ * separate: the shape of this menu is a product decision worth reading. */
+export function turnMenu(
+  bundle: JobDiffBundle,
+  actions: AssistantActions,
+  anchor: HTMLElement
+): MenuEntry[] {
+  const out: MenuEntry[] = [];
+  const file = bundle.diffs?.[0]?.file ?? bundle.target?.source?.file;
+  const line = bundle.diffs?.[0]
+    ? firstHunkLine(bundle.diffs[0].patch)
+    : (bundle.target?.source?.line ?? undefined);
+
+  const change = changeRows(bundle, actions, anchor);
   if (change.length) {
     out.push({ header: "This change" }, ...change);
   }

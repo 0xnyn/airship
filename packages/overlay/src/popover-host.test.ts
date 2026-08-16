@@ -5,6 +5,7 @@ import {
   closeOpenPopover,
   createMenu,
   type MenuGroup,
+  type MenuItem,
   mountPopoverHost,
   openPopover,
   type PopoverHandle,
@@ -527,6 +528,66 @@ describe("a menu with collapsible groups", () => {
     handle.open(anchor(), "below");
 
     expect(shells()[0].querySelector(".custom-form")).toBe(custom);
+  });
+
+  /*
+   * A greyed row that carries a reason has to stay hoverable.
+   *
+   * Browsers do not dispatch pointer events from a `disabled` form control, and
+   * `Tooltips` matches on `pointerover`, so `data-tip` on one is never read. The
+   * greying comes from `[aria-disabled="true"]` in `pop.css.ts` rather than from
+   * `:disabled`, which is what makes dropping the attribute free.
+   */
+  describe("a disabled row", () => {
+    const rowFor = (item: MenuItem): HTMLElement => {
+      createMenu([item]).open(anchor(), "below");
+      return shells()[0].querySelector<HTMLElement>(
+        `.${cls("pop-item")}`
+      ) as HTMLElement;
+    };
+
+    it("stays hoverable, and out of both cursors, when it has a tip", () => {
+      const row = rowFor({
+        disabled: true,
+        label: "Commit to git",
+        run: () => undefined,
+        tip: "not a git repository",
+      });
+
+      expect(row.getAttribute("aria-disabled")).toBe("true");
+      expect(row.hasAttribute("disabled")).toBe(false);
+      expect(row.dataset.tip).toBe("not a git repository");
+      // Neither the roving cursor nor Tab reaches it.
+      expect(row.hasAttribute("data-pop-item")).toBe(false);
+      expect(row.getAttribute("tabindex")).toBe("-1");
+      // The reason rides the accessible name too: `aria-disabled` alone
+      // announces that the row is unavailable and never why.
+      expect(row.getAttribute("aria-label")).toBe(
+        "Commit to git. not a git repository"
+      );
+    });
+
+    it("keeps the plain disabled attribute when it has no reason to give", () => {
+      const row = rowFor({ disabled: true, label: "Nothing", run: vi.fn() });
+
+      expect(row.hasAttribute("disabled")).toBe(true);
+      expect(row.hasAttribute("data-tip")).toBe(false);
+      expect(row.hasAttribute("aria-label")).toBe(false);
+    });
+
+    it("does not run when clicked", () => {
+      const run = vi.fn();
+      rowFor({
+        disabled: true,
+        label: "Commit to git",
+        run,
+        tip: "not a git repository",
+      }).click();
+
+      expect(run).not.toHaveBeenCalled();
+      // And the menu stays open, so the tip can still be read.
+      expect(shells()).toHaveLength(1);
+    });
   });
 });
 
