@@ -1,4 +1,15 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { exposureBanner, warnBackendLimits } from "./banner";
 import { setColorEnabled } from "./terminal";
 
@@ -173,6 +184,50 @@ describe("warnBackendLimits", () => {
     );
 
     expect(out).toBe("");
+  });
+
+  /*
+   * Said once at launch, rather than discovered at the first click.
+   *
+   * Unconditional, unlike the rest of this file's warnings: whatever is wrong
+   * with git breaks Commit and Create pull request on every backend. The
+   * backend-specific half is the diff baseline, which only codex and opencode
+   * reconstruct from HEAD.
+   */
+  describe("git", () => {
+    const plain = mkdtempSync(join(tmpdir(), "airship-banner-nogit-"));
+
+    afterAll(() => {
+      rmSync(plain, { force: true, maxRetries: 3, recursive: true });
+    });
+
+    it("warns for a directory that is not a repository, naming it", () => {
+      const out = stderrFrom(() =>
+        warnBackendLimits({ agent: "claude", cwd: plain })
+      );
+
+      expect(out).toContain("not a git repository");
+      expect(out).toContain(plain);
+      expect(out).toContain("git init");
+    });
+
+    it("adds the baseline consequence only for a backend that has one", () => {
+      const claude = stderrFrom(() =>
+        warnBackendLimits({ agent: "claude", cwd: plain })
+      );
+      const codex = stderrFrom(() =>
+        warnBackendLimits({ agent: "codex", cwd: plain })
+      );
+
+      expect(claude).not.toContain("diff baseline");
+      expect(codex).toContain("diff baseline");
+    });
+
+    it("stays silent in a healthy repository", () => {
+      expect(
+        stderrFrom(() => warnBackendLimits({ agent: "claude", cwd: REPO }))
+      ).toBe("");
+    });
   });
 });
 

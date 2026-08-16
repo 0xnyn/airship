@@ -10,6 +10,7 @@
  * layer; the choke point is here.
  */
 
+import { onGitFailure } from "@airship/server";
 import { runCommand } from "citty";
 import { DOCTOR_FLAGS, doctor } from "./commands/doctor";
 import { INIT_FLAGS, init } from "./commands/init";
@@ -20,6 +21,7 @@ import {
   out,
   setColorEnabled,
   shouldColor,
+  style,
 } from "./lib/terminal";
 import { type CommandHelp, renderHelp } from "./lib/usage";
 import { VERSION } from "./lib/version";
@@ -174,14 +176,39 @@ async function main(rawArgs: string[]): Promise<void> {
 }
 
 const argv = process.argv.slice(2);
+// Read off the raw argv rather than the parsed settings: this has to be known
+// before parsing, which is itself something that can fail.
+const debug = argv.includes("--debug") || Boolean(process.env.AIRSHIP_DEBUG);
 // Set before anything can fail, so an error raised during parsing is styled the
 // same as one raised after. Each command re-derives it once it knows --json.
 setColorEnabled(shouldColor({ json: argv.includes("--json") }));
 
+/*
+ * Every git invocation that failed, in full.
+ *
+ * The result objects carry one line each, which is what a toast can show. This
+ * is the other half: the argv, the exit status and the whole of stderr, for the
+ * case where the one line is not enough. stderr rather than stdout, so `--json`
+ * stays parseable, and `AIRSHIP_DEBUG=1` works without changing how the daemon
+ * is launched — which matters when the person who needs the trace is not the
+ * person who knows the flags.
+ */
+if (debug) {
+  onGitFailure((failure) => {
+    const argvText = [failure.bin, ...failure.args].join(" ");
+    const status = failure.errno ?? `exit ${failure.code}`;
+    const detail = [failure.stderr, failure.stdout]
+      .map((part) => part.trimEnd())
+      .filter(Boolean)
+      .join("\n");
+    process.stderr.write(
+      style.dim(
+        `  ${argvText}\n    ${status}${failure.cwd ? ` in ${failure.cwd}` : ""}\n${detail ? `${detail}\n` : ""}`
+      )
+    );
+  });
+}
+
 main(argv).catch((err: unknown) => {
-  process.exit(
-    reportError(err, {
-      debug: argv.includes("--debug") || Boolean(process.env.AIRSHIP_DEBUG),
-    })
-  );
+  process.exit(reportError(err, { debug }));
 });

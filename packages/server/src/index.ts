@@ -66,7 +66,7 @@ export type {
 /** Re-exported so the CLI depends only on @airship/server. */
 export { checkAuth, listModels } from "@airship/core";
 export type { GitFailure, GitStatus } from "@airship/git";
-export { gitStatus, isGitRepo, onGitFailure } from "@airship/git";
+export { gitStatus, onGitFailure } from "@airship/git";
 export type { AgentKind, AirshipSurface, Effort } from "@airship/protocol";
 
 const WS_PATH = "/__airship/ws";

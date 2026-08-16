@@ -47,7 +47,18 @@ const SOURCE = "https://models.dev/models.json";
 /** models.dev id prefix → the harness whose group the model belongs in. */
 const HARNESS = { "anthropic/": "claude", "openai/": "codex" };
 
-const BIOME = new URL("../node_modules/.bin/biome", import.meta.url);
+/**
+ * `.bin/biome` is the POSIX shell wrapper, which Windows cannot execute. pnpm
+ * writes a `biome.CMD` beside it for exactly this, and spawning that needs a
+ * shell — a batch file is not an executable image. The arguments here are
+ * fixed and the generated source travels on stdin rather than argv, so there is
+ * nothing for a shell to mis-split.
+ */
+const WIN32 = process.platform === "win32";
+const BIOME = new URL(
+  `../node_modules/.bin/biome${WIN32 ? ".CMD" : ""}`,
+  import.meta.url
+);
 
 function die(message) {
   process.stderr.write(`gen-models: ${message}\n`);
@@ -74,7 +85,7 @@ function format(source) {
   const out = spawnSync(
     fileURLToPath(BIOME),
     ["check", "--write", "--stdin-file-path=models.ts"],
-    { encoding: "utf8", input: source }
+    { encoding: "utf8", input: source, shell: WIN32 }
   );
   if (out.error || out.status !== 0) {
     die(

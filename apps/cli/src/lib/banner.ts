@@ -7,7 +7,7 @@
  */
 
 import type { AgentKind, AirshipSurface } from "@airship/server";
-import { isGitRepo } from "@airship/server";
+import { gitStatus } from "@airship/server";
 import { style } from "./terminal";
 
 /** What `--safe` actually buys on this backend, stated where the user looks. */
@@ -57,12 +57,28 @@ export function warnBackendLimits(o: {
     process.stderr.write(`\n  ${style.yellow(`⚠ ${message}`)}\n`);
   };
 
-  // Codex refuses to run outside a git repo, and both non-Claude backends
-  // reconstruct their diff baseline from git — so this is worth saying before
-  // the first edit silently produces an empty diff.
-  if (o.agent !== "claude" && !isGitRepo(o.cwd)) {
+  /*
+   * Said once, before the first edit, rather than discovered at the first
+   * click.
+   *
+   * Unconditional now, where it used to fire only for the non-Claude backends.
+   * Whatever is wrong with git — not installed, not a repository, no commits
+   * yet, no commit identity — it breaks Commit and Create pull request on every
+   * backend. The extra sentence for codex and opencode is the part that really
+   * is backend-specific: they reconstruct their diff baseline from HEAD, so a
+   * broken git also costs them their undo.
+   */
+  const git = gitStatus(o.cwd);
+  if (git.error) {
+    // `GitStatus.error` carries no path, because its other reader is a tooltip.
+    // Here there is room, and which directory is meant is the first thing a
+    // user asks.
+    const baseline =
+      o.agent === "claude"
+        ? ""
+        : ` ${o.agent} also needs git for its diff baseline, so undo will refuse rather than restore.`;
     warn(
-      `${o.cwd} is not a git repository. ${o.agent} needs git for its diff baseline, and undo needs git.`
+      `${git.error} (${o.cwd}).${baseline}${git.hint ? `\n    ${git.hint}` : ""}`
     );
   }
   if (o.agent !== "claude" && o.maxBudgetUsd !== undefined) {
