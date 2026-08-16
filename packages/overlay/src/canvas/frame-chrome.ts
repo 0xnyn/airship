@@ -570,9 +570,11 @@ export class FrameChrome {
    * That primitive also *detaches* a closed body, which would put collapsed rows
    * out of reach of `syncMenuState`'s `[data-preset]` sweep and let a mark go
    * stale while its group was shut. Hiding rather than detaching keeps every row
-   * addressable and still measures zero for `placePopover`.
+   * addressable and still measures zero *height* for `placePopover` — while
+   * going on contributing its full *width*, which is what keeps the menu from
+   * resizing as you open groups.
    *
-   * `aria-expanded` and the `hidden` class here are seeds only, on the same
+   * `aria-expanded` and the `inert` attribute here are seeds only, on the same
    * terms as `isCurrent` above: `syncGroups` owns them from the first sync on.
    */
   private presetGroups(
@@ -594,9 +596,13 @@ export class FrameChrome {
           },
           [icon("chev-right", "xs"), el("span", { text: group.label })]
         ),
+        // `inert`, not the `hidden` utility, for the reason `.fc-dgroup-body`
+        // gives in `canvas.css.ts`: a body taken out of layout contributes
+        // nothing to the shrink-to-fit width, which is what the hand-measured
+        // `min-width` on `.fc-menu` used to exist to paper over.
         el(
           "div",
-          { class: `${cls("fc-dgroup-body")} ${cls("hidden")}` },
+          { class: cls("fc-dgroup-body"), inert: "" },
           group.presets.map((preset) => this.presetRow(preset, pick, isCurrent))
         ),
       ])
@@ -972,7 +978,7 @@ export class FrameChrome {
         ?.setAttribute("aria-expanded", String(open));
       group
         .querySelector(`.${cls("fc-dgroup-body")}`)
-        ?.classList.toggle(cls("hidden"), !open);
+        ?.toggleAttribute("inert", !open);
     }
   }
 

@@ -195,6 +195,36 @@ describe("FramesPanel rows", () => {
     expect(frames.all).toHaveLength(1);
   });
 
+  it("keeps a shut group's rows in layout, so the menu cannot resize", () => {
+    /*
+     * The width jump this row menu shipped with: `.hidden` is
+     * `display: none !important`, so a collapsed device group contributed
+     * nothing to the shrink-to-fit box — about 158px with everything shut,
+     * about 250 with one group open — and `seedOpenGroup` opens one at build
+     * time, so the menu painted wide and snapped narrow on the first collapse.
+     * Because `placePopover` derives `left` from `offsetWidth`, that was a
+     * sideways jump as well as a resize.
+     *
+     * happy-dom does no layout, so what is asserted here is the mechanism: a
+     * shut body is `inert` and still carries its rows, rather than being taken
+     * out of the box model. The pixels are asserted in the browser tier.
+     */
+    frames.add({ name: "one" });
+    panel.element.querySelector<HTMLElement>(`.${cls("fp-more")}`)?.click();
+
+    const shut = [
+      ...document.querySelectorAll<HTMLElement>(`.${cls("pop-group-body")}`),
+    ].filter((body) => body.hasAttribute("inert"));
+
+    expect(shut.length).toBeGreaterThan(0);
+    for (const body of shut) {
+      expect(body.classList.contains(cls("hidden"))).toBe(false);
+      expect(
+        body.querySelectorAll(`.${cls("pop-item")}`).length
+      ).toBeGreaterThan(0);
+    }
+  });
+
   it("reuses rows when nothing about the set has changed", () => {
     // `render` is driven from the stage's `notify`, which fires on every frame
     // of a pan. Rebuilding there would destroy and recreate a dnd entity per

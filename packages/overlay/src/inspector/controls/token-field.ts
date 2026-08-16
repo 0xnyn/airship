@@ -330,8 +330,16 @@ function row(
    */
   item.append(
     main,
+    // `token-value` beside the hint class, because this hint is not a hint.
+    // `.pop-item-hint` is `flex: 0 0 auto` and its row is `nowrap` — right for a
+    // chord or a "402 × 874", which are wrong rather than merely short when they
+    // break. A token's value is arbitrary: a font stack, a long `clamp()`. Left
+    // unshrinkable under `.pop-menu`'s width cap it would elide the *name* to
+    // nothing and then overrun the menu, and since `.pop-menu` sets `overflow-y`
+    // its `overflow-x` computes to `auto` — so the failure is a horizontal
+    // scrollbar under the list rather than anything that looks like a bug.
     el("span", {
-      class: cls("pop-item-hint"),
+      class: `${cls("pop-item-hint")} ${cls("token-value")}`,
       text: bound ? "Detach" : value,
     })
   );

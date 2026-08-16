@@ -675,12 +675,19 @@ function install(opts: PopoverOptions, handle: PopoverHandle): () => void {
  * work for the cursor and break everything else that reads the built menu back —
  * the same trap `frame-chrome.ts` documents for its own accordion, where a
  * `[data-preset]` sweep has to reach rows inside a shut group to keep their
- * current-device mark from going stale. Hidden rows measure zero for
- * `placePopover` either way.
+ * current-device mark from going stale. Shut rows measure zero *height* for
+ * `placePopover` either way — and, since the collapse became `inert` rather than
+ * `display: none`, they go on measuring their full *width*, which is the whole
+ * of what stopped the menu resizing on a toggle.
+ *
+ * The filter is structural rather than a trust in `inert`'s own semantics. A
+ * browser really does take an inert subtree out of the tab order; happy-dom does
+ * not implement inertness at all, and the keyboard cursor has to be right in
+ * both.
  */
 function items(content: HTMLElement): HTMLElement[] {
   return Array.from(content.querySelectorAll<HTMLElement>(ITEM)).filter(
-    (node) => !node.closest(`.${cls("pop-group-body")}.${cls("hidden")}`)
+    (node) => !node.closest(`.${cls("pop-group-body")}[inert]`)
   );
 }
 
@@ -836,13 +843,14 @@ function isMenuGroup(entry: MenuEntry): entry is MenuGroup {
  *
  * **Hidden, not detached.** A collapsed body keeps its rows in the tree so
  * anything that reads the built menu back still finds them; `items` filters them
- * out of the keyboard cursor instead. Both `hidden` and `aria-expanded` are
- * seeds only — `openGroup` owns them from the first click on.
+ * out of the keyboard cursor instead. Both `inert` and `aria-expanded` are seeds
+ * only — `openGroup` owns them from the first click on.
  */
 function buildGroup(
   entry: MenuGroup,
   buildRow: (item: MenuItem) => HTMLElement,
-  menu: HTMLElement
+  menu: HTMLElement,
+  reposition: () => void
 ): HTMLElement {
   const head = el(
     "button",
@@ -860,20 +868,39 @@ function buildGroup(
           menu,
           head.getAttribute("aria-expanded") === "true" ? null : entry.group
         );
+        // The list just changed shape, so re-measure it. This is the one case
+        // `install`'s "a popover's own scroll is not a reflow" guard is *not*
+        // about: that guard exists because `placePopover` clears `maxHeight` and
+        // re-reads `scrollHeight`, which snapped a wheel-scrolled menu back to
+        // the top on every tick. A disclosure toggle is a deliberate change to
+        // what the list contains, and the scroll position afterwards is not a
+        // position anybody chose. The *width* no longer moves — see
+        // `.pop-group-body[inert]` — so this is only about `max-height`.
+        reposition();
       },
       type: "button",
     },
     [
       icon("chev-right", "xs"),
-      ...(entry.icon ? [icon(entry.icon, "sm")] : []),
+      // "xs", not "sm". `.pop-group-head > .ic` declares `flex: 0 0 16px`, and a
+      // 20px glyph in a 16px basis overflowed its slot by four pixels — the
+      // declaration has been describing something that was not true.
+      ...(entry.icon ? [icon(entry.icon, "xs")] : []),
       el("span", { text: entry.label }),
     ]
   );
   return el("div", { class: cls("pop-group"), "data-group": entry.group }, [
     head,
+    // `inert`, not the `hidden` utility. `display: none !important` takes a
+    // collapsed group out of layout entirely, so it contributed nothing to the
+    // shrink-to-fit width of the menu around it — which is why the frame kebab
+    // was ~158px wide with its groups shut and ~250 with one open. A shut group
+    // that is still *laid out* makes the menu as wide as its widest row in any
+    // group, in every state, with no number anywhere. `inert` is what makes that
+    // safe: the rows are measured but unreachable.
     el(
       "div",
-      { class: `${cls("pop-group-body")} ${cls("hidden")}` },
+      { class: cls("pop-group-body"), inert: "" },
       entry.items.map(buildRow)
     ),
   ]);
@@ -899,7 +926,7 @@ function openGroup(menu: HTMLElement, id: string | null): void {
       ?.setAttribute("aria-expanded", String(on));
     group
       .querySelector(`.${cls("pop-group-body")}`)
-      ?.classList.toggle(cls("hidden"), !on);
+      ?.toggleAttribute("inert", !on);
   }
 }
 
@@ -970,6 +997,8 @@ export function createMenu(entries: MenuEntry[]): MenuHandle {
    */
   let handle: PopoverHandle | null = null;
   const menu = el("div", { class: cls("pop-menu"), role: "menu" });
+  /** Re-measure after a disclosure changes what the list contains. */
+  const reposition = (): void => handle?.reposition();
 
   const buildRow = (entry: MenuItem): HTMLElement => {
     const disabled = Boolean(entry.disabled);
@@ -993,8 +1022,12 @@ export function createMenu(entries: MenuEntry[]): MenuHandle {
       },
       [
         el("span", { class: cls("pop-item-main") }, [
-          ...(entry.icon ? [icon(entry.icon, "sm")] : []),
-          el("span", { text: entry.label }),
+          // "xs", so a verb row's label lands on the same 30px edge as a group
+          // head's and a device row's — 8px of padding, a 16px glyph, a 6px gap.
+          // At "sm" it was 36, which also made the row five pixels taller than
+          // every other row family in the same menu.
+          ...(entry.icon ? [icon(entry.icon, "xs")] : []),
+          el("span", { class: cls("pop-item-label"), text: entry.label }),
         ]),
       ]
     );
@@ -1013,7 +1046,7 @@ export function createMenu(entries: MenuEntry[]): MenuHandle {
       continue;
     }
     if (isMenuGroup(entry)) {
-      menu.append(buildGroup(entry, buildRow, menu));
+      menu.append(buildGroup(entry, buildRow, menu, reposition));
       continue;
     }
     if ("node" in entry) {
@@ -1031,6 +1064,11 @@ export function createMenu(entries: MenuEntry[]): MenuHandle {
   return {
     close: () => handle?.close(),
     open(anchor, prefer = "above", opts = {}) {
+      // A menu told to match its trigger has already been given a width, and
+      // `MENU_MAX_W` would leave the content narrower than the shell around it —
+      // a strip of empty panel down the right of every wide select. The cap is
+      // for menus whose width comes from their own rows.
+      menu.style.maxWidth = opts.matchAnchorWidth ? "none" : "";
       const opened = openPopover({
         anchor,
         content: menu,

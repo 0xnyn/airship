@@ -1,4 +1,5 @@
 import { PREFIX } from "../dom";
+import { MENU_MAX_W } from "./const";
 
 /** The pan/zoom surface, the frames on it, and their per-frame chrome. */
 export const css = `
@@ -157,27 +158,33 @@ html[data-${PREFIX}-drag] .${PREFIX}-frame-plane { cursor: inherit; }
    soon as its frame is near that edge. The offsets below are only the defaults
    for the first paint, before it has been measured.
 
-   \`min-width\` is a floor for the widest device row *anywhere in the list*, not
-   just in whichever pane is showing. Two things move the box's natural width
-   now: swapping panes, and expanding a different accordion group — with Desktop
-   open the longest row is "MacBook Pro 16"", with Phone open it is
-   "iPhone 16 & 17 Pro Max" beside "440 × 956" in mono. Without one floor that
-   fits them all, the box would resize on every toggle; and since \`placePopover\`
-   derives \`left\` from \`offsetWidth\`, a width jump is a horizontal jump too. A
-   menu that slides sideways when you open a section is worse than one wider than
-   its four verbs need, so the root pane being over-wide is the price. */
+   \`max-width\` is a cap, and there is deliberately no floor beside it. There used
+   to be a hand-measured \`min-width: 288px\` here, sized to the widest device row
+   *anywhere in the list* — with Desktop open the longest is "MacBook Pro 16"",
+   with Phone open it is "iPhone 16 & 17 Pro Max" beside "440 × 956" in mono —
+   because a collapsed group was \`display: none\` and contributed nothing to the
+   shrink-to-fit box, so the menu resized on every toggle; and since
+   \`placePopover\` derives \`left\` from \`offsetWidth\`, a width jump was a sideways
+   jump too. That floor bought stability at the price of an over-wide root pane,
+   and it had to be re-measured by hand whenever a device was added.
+
+   The collapse was the thing that was wrong. \`.fc-dgroup-body[inert]\` below is
+   shut but still laid out, so the widest row in *any* group sets the width in
+   every state and there is nothing left for a floor to prevent. What is left to
+   bound is the other direction — see \`MENU_MAX_W\`. */
 .${PREFIX}-fc-menu {
   position: absolute; left: 0; top: 0; z-index: 2;
-  pointer-events: auto; min-width: 288px; padding: 4px;
+  pointer-events: auto; padding: 4px;
+  max-width: min(${MENU_MAX_W}px, calc(100vw - 2 * var(--ap-space-base)));
   display: flex; flex-direction: column;
   background: var(--ap-surface-panel); border: 1px solid var(--ap-border-default);
   border-radius: var(--ap-radius-md); box-shadow: var(--ap-elevation-card);
   overflow-y: auto; overscroll-behavior: contain;
 }
 /* \`nowrap\` because \`.fc-menu\` is absolutely positioned with no width, so it is
-   shrink-to-fit: the floor above stops it narrowing below the widest row, and
-   this stops an under-sized floor from showing up as a wrapped device name
-   rather than as a few pixels of drift. */
+   shrink-to-fit: the widest row sets the box, and this is what stops a row that
+   does not fit under the cap above from answering with a second line rather than
+   an ellipsis — which is how "402 ×" ends up sitting over "874". */
 .${PREFIX}-fc-menu-item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 5px 8px; border: 0; border-radius: var(--ap-radius-xs);
@@ -200,6 +207,14 @@ html[data-${PREFIX}-drag] .${PREFIX}-frame-plane { cursor: inherit; }
 .${PREFIX}-fc-dgroup + .${PREFIX}-fc-dgroup {
   margin-top: 4px; padding-top: 4px;
   border-top: 1px solid var(--ap-border-default);
+}
+/* Collapsed, and still measured — the twin of \`.pop-group-body[inert]\`, and the
+   reason \`.fc-menu\` above no longer carries a hand-measured floor. The rows are
+   laid out at zero height, so they go on setting the menu's width whether their
+   group is open or not; \`inert\` keeps them out of the tab order and out of hit
+   testing while they do it, and \`syncGroups\` writes that attribute. */
+.${PREFIX}-fc-dgroup-body[inert] {
+  visibility: hidden; block-size: 0; overflow: hidden;
 }
 /* Sentence case and body type, not the uppercase mono of \`fc-menu-head\`: these
    are section headers in a list you are reading, not the menu's own title. */

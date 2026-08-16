@@ -451,19 +451,36 @@ describe("a menu with collapsible groups", () => {
     expect(openGroups(content)).toEqual([]);
   });
 
-  it("hides a shut group's rows but keeps them in the DOM", () => {
-    // Detaching them would put them out of reach of anything that reads the
-    // built menu back — the trap `frame-chrome.ts` documents for its own
-    // accordion, where a collapsed group's current-device mark went stale.
+  it("leaves a shut group's rows measured but unreachable", () => {
+    /*
+     * Detaching them would put them out of reach of anything that reads the
+     * built menu back — the trap `frame-chrome.ts` documents for its own
+     * accordion, where a collapsed group's current-device mark went stale.
+     *
+     * `inert` rather than the `hidden` utility, and that is the load-bearing
+     * half. `.hidden` is `display: none !important`, so a shut group measured
+     * zero width and the menu's shrink-to-fit box was one size with its groups
+     * closed and another with one open — which `placePopover` then read back as
+     * a different `offsetWidth` and turned into a sideways jump. An inert body
+     * is still laid out, so it goes on setting the width it always did.
+     */
     const content = grouped();
     head(content, "desktop")?.click();
 
+    expect(body(content, "phone")?.hasAttribute("inert")).toBe(true);
     expect(body(content, "phone")?.classList.contains(cls("hidden"))).toBe(
-      true
+      false
     );
     expect(
       content.querySelector(`[data-group="phone"] .${cls("pop-item")}`)
     ).not.toBeNull();
+  });
+
+  it("drops the inert mark from the group it opens", () => {
+    const content = grouped();
+    head(content, "desktop")?.click();
+
+    expect(body(content, "desktop")?.hasAttribute("inert")).toBe(false);
   });
 
   it("keeps the keyboard cursor out of a collapsed group", () => {

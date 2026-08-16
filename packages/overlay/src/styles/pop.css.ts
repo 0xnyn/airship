@@ -1,5 +1,5 @@
 import { PREFIX } from "../dom";
-import { TIP_MAX_W, Z_POP } from "./const";
+import { MENU_MAX_W, TIP_MAX_W, Z_POP } from "./const";
 
 /**
  * The popover layer: the host, the shared shell, and the menu shape.
@@ -150,12 +150,28 @@ export const css = `
   overflow: hidden;
 }
 
-/* The palette, at the modal's own size. Declared rather than left to the
-   fallback so the class \`openPalette\` passes has a rule to find: an applied
-   class with no rule anywhere is indistinguishable from a missing stylesheet,
-   and \`styles/index.test.ts\` now fails one. */
+/* The palette, wider than the modal it composes, and the sentence is why.
+
+   Declared rather than left to the fallback so the class \`openPalette\` passes
+   has a rule to find: an applied class with no rule anywhere is
+   indistinguishable from a missing stylesheet, and \`styles/index.test.ts\` now
+   fails one.
+
+   The width is measured rather than picked. Left to right: 2 × \`--ap-space-base\`
+   of list inset (32), a title column that tops out at \`PALETTE_TITLE_MAX\` for
+   the longest title shipped, two 16px gutters (32), a chord column at about 72 —
+   twelve characters of "Ctrl+Shift+Z" in 10px JetBrains Mono, which is 6px a
+   character — and the shell's own 2px of border. That is over 350 before a
+   single word of the sentence.
+
+   At \`.pop-modal\`'s 560 the sentence gets about 200px, some 33 characters, and
+   every doc in the catalog runs past it — a description column that always
+   elides is not a description column. 680 gives it about 320, some 53
+   characters, which clears most of the catalog and elides the longest honestly.
+   It also sits between 560 and \`.pop-shortcuts\`'s 880, so the three sheets read
+   as a scale rather than as three guesses. */
 .${PREFIX}-pop-palette {
-  width: min(560px, calc(100vw - 2 * var(--ap-space-xl)));
+  width: min(680px, calc(100vw - 2 * var(--ap-space-xl)));
 }
 
 /* The shortcuts sheet is a reference, not a search box, and wants a different
@@ -203,15 +219,48 @@ export const css = `
 /* \`overflow-y\` here is now redundant for a plain menu — the shell hits its cap
    first — but it is load-bearing for \`.token-list\`, which composes this class
    and takes its scrolling from it. Do not tidy it away. */
+/* A cap and a floor, and they answer opposite complaints.
+
+   150 is the floor, against a menu narrower than its own rows are readable.
+   What it could never fix is the direction this menu was actually failing in: a
+   collapsed \`.pop-group\` used to be \`display: none\`, so the shrink-to-fit box
+   was as wide as the four visible verbs — about 158 — and snapped to ~250 the
+   moment you opened a device group, which \`placePopover\` then read back as a
+   different \`offsetWidth\` and turned into a horizontal jump on the next scroll.
+   \`canvas.css.ts\` used to answer that with a hand-measured floor and a paragraph
+   accepting an over-wide root pane as the price; \`.pop-group-body[inert]\` below
+   answers it by not breaking the measurement in the first place, so there is no
+   price and no number to keep in step with the device list.
+
+   \`MENU_MAX_W\` is the remaining bound and it points the other way — see its
+   docstring. The viewport term is not decoration: \`placePopover\` clamps \`left\`,
+   not width, so a menu wider than the window would still run off the side of
+   it. */
 .${PREFIX}-pop-menu {
   display: flex; flex-direction: column;
-  padding: 4px; min-width: 150px; overflow-y: auto;
+  padding: 4px; min-width: 150px;
+  max-width: min(${MENU_MAX_W}px, calc(100vw - 2 * var(--ap-space-base)));
+  overflow-y: auto;
 }
+/* \`line-height\` is the row height, stated once.
+
+   Three row families sat at three heights: a verb row with a 20px glyph was 30,
+   a group head with a 16px chevron 26, and a device row with no glyph 25 —
+   because a text-only row is sized by \`line-height: normal\`, which at 12px Inter
+   is about 15. Pinning the text box to the *glyph* box makes all three
+   5 + 16 + 5, and it also stops \`.pop-item-hint\`'s 10px mono from setting a
+   shorter box than the label beside it.
+
+   \`nowrap\` for the reason \`.fc-menu-item\` gives, one file over: with a cap on
+   the menu above, a row that could wrap would answer a too-narrow box by growing
+   a second line rather than eliding — which is how "402 ×" ended up sitting over
+   "874". */
 .${PREFIX}-pop-item {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 5px 8px; border: 0; border-radius: var(--ap-radius-xs);
   background: transparent; cursor: pointer; text-align: left;
   font-family: var(--ap-font-sans); font-size: var(--ap-font-size-label);
+  line-height: 16px; white-space: nowrap;
   color: var(--ap-text-primary);
 }
 .${PREFIX}-pop-item:hover { background: var(--ap-surface-active); }
@@ -225,7 +274,17 @@ export const css = `
 .${PREFIX}-pop-item:focus-visible {
   outline: 1px solid var(--ap-border-focus); outline-offset: -1px;
 }
+/* The label gives way, and only the label. \`.pop-item-main\` already carries
+   \`min-width: 0\`; this is the item inside it that has somewhere to put the
+   overflow, and without it the cap on \`.pop-menu\` would have nothing to elide
+   and would simply be overrun. */
+.${PREFIX}-pop-item-label {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+/* Never shrinks, never wraps. It is a size or a chord — the two things in a menu
+   that are *wrong* rather than merely short when they break. */
 .${PREFIX}-pop-item-hint {
+  flex: 0 0 auto;
   font-family: var(--ap-font-mono); font-size: var(--ap-font-size-caption); opacity: .5;
 }
 .${PREFIX}-pop-sep { height: 1px; margin: 4px 2px; background: var(--ap-border-default); }
@@ -253,6 +312,7 @@ export const css = `
   padding: 5px 8px; border: 0; border-radius: var(--ap-radius-xs);
   background: transparent; cursor: pointer; text-align: left;
   font-family: var(--ap-font-sans); font-size: var(--ap-font-size-label);
+  line-height: 16px; white-space: nowrap;
   color: var(--ap-text-primary);
 }
 .${PREFIX}-pop-group-head:hover { background: var(--ap-surface-active); }
@@ -266,13 +326,43 @@ export const css = `
 .${PREFIX}-pop-group-head > .${PREFIX}-ic { flex: 0 0 16px; }
 .${PREFIX}-pop-group-head > .${PREFIX}-ic:first-child { opacity: .5; }
 .${PREFIX}-pop-group-head[aria-expanded="true"] > .${PREFIX}-ic:first-child { transform: rotate(90deg); }
+/* Collapsed, and still measured.
+
+   The two halves of that sentence are the whole fix. \`.hidden\` is
+   \`display: none !important\`, and a box that is not laid out contributes nothing
+   to the shrink-to-fit width of the flex column above it — so this menu was one
+   width with its groups shut and another with one open, and since
+   \`placePopover\` derives \`left\` from \`offsetWidth\`, the width change was a
+   sideways jump on the next scroll or resize as well. A shut group that is still
+   laid out contributes its widest row's width, so the menu is as wide as its
+   widest row *in any group* in every state, and there is no floor to maintain
+   and no number to get wrong.
+
+   \`block-size: 0\` collapses it on the axis it is being collapsed on — as a flex
+   item its \`flex-basis: auto\` resolves to this, so the height really is zero and
+   \`placePopover\`'s \`scrollHeight\` reads exactly what it read before.
+   \`overflow: hidden\` clips what no longer fits, and is scoped to the shut state
+   so an open group cannot clip a row's focus ring. \`visibility: hidden\` is the
+   paint half; \`inert\` — the attribute this selects on — is the interaction half,
+   and is what keeps a measured row out of the tab order, out of hit-testing and
+   out of the accessibility tree. \`items()\` filters on that same attribute rather
+   than trusting either, so the keyboard cursor is right even under happy-dom,
+   where nothing computes a style and nothing implements inertness. */
+.${PREFIX}-pop-group-body[inert] {
+  visibility: hidden; block-size: 0; overflow: hidden;
+}
 /* 8px padding + 16px glyph + 6px gap, so a group's name and every row under it
    share one left edge and the triangle hangs in a gutter of its own. Getting
    this wrong is what makes an accordion read as two unrelated lists rather than
-   a tree. */
+   a tree.
+
+   The row above agrees now: \`buildRow\` draws its glyph at "xs" and
+   \`.pop-item-main\` gaps at 6, so a verb, a group name and a device name all
+   start at 30. They used to start at 36, 30 and 30 — three families, two left
+   edges, in one menu. */
 .${PREFIX}-pop-group-body .${PREFIX}-pop-item { padding-left: 30px; }
 
-.${PREFIX}-pop-item-main { display: inline-flex; align-items: center; gap: var(--ap-space-xs); min-width: 0; }
+.${PREFIX}-pop-item-main { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .${PREFIX}-pop-item-main { --${PREFIX}-ic-tone: var(--ap-icon-secondary); }
 .${PREFIX}-pop-item-main .${PREFIX}-ic { flex: 0 0 auto; }
 .${PREFIX}-pop-item[aria-disabled="true"] { opacity: .4; cursor: default; }
