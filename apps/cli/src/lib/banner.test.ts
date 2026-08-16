@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -24,11 +25,28 @@ import { setColorEnabled } from "./terminal";
  * sonnet`, which opencode cannot resolve and drops on the floor, launched clean.
  * Nothing failed, because nothing was looking.
  *
- * `cwd` is this repo throughout, so the unrelated "not a git repository" warning
- * never fires and each case asserts on the one line it is about.
+ * Every case runs against a repository this file builds, rather than against
+ * `process.cwd()`. The git warning is unconditional now and `gitStatus` checks
+ * for a commit identity, and a CI checkout has none — `actions/checkout` sets
+ * no `user.name`/`user.email` — so asserting an empty stderr against the ambient
+ * repo passed on a developer's machine and failed on every runner. What each
+ * case is about is the flag warning, so the git half has to be a constant.
  */
 
-const REPO = process.cwd();
+/**
+ * A repository `gitStatus` reports no error for: work tree, HEAD, identity.
+ *
+ * Minted here rather than in `beforeAll`, and `const`, so that it is a freshly
+ * created temp directory from the first statement of this file onwards. The
+ * teardown below is a recursive force-delete of whatever this names, and a
+ * `let` assigned in a hook can be something else entirely if that hook throws
+ * before reaching the assignment.
+ */
+const REPO = mkdtempSync(join(tmpdir(), "airship-banner-repo-"));
+
+function git(cwd: string, ...args: string[]): void {
+  execFileSync("git", args, { cwd, stdio: "ignore" });
+}
 
 /** Everything written to stderr while `run` executes. */
 function stderrFrom(run: () => void): string {
@@ -46,6 +64,25 @@ function stderrFrom(run: () => void): string {
   }
   return out;
 }
+
+beforeAll(() => {
+  // `-b main` keeps `init.defaultBranch` advice off stderr, and the identity is
+  // set locally so it outranks whatever the machine running this has — or does
+  // not have, which is the case that broke.
+  git(REPO, "init", "-q", "-b", "main");
+  git(REPO, "config", "user.email", "test@example.com");
+  git(REPO, "config", "user.name", "Test");
+  git(REPO, "config", "commit.gpgsign", "false");
+  writeFileSync(join(REPO, "file.txt"), "one\n");
+  git(REPO, "add", "-A");
+  // Without HEAD, `gitStatus` reports "no commits yet" and every case below
+  // picks up a warning it is not about.
+  git(REPO, "commit", "-q", "-m", "initial");
+});
+
+afterAll(() => {
+  rmSync(REPO, { force: true, maxRetries: 3, recursive: true });
+});
 
 describe("warnBackendLimits", () => {
   beforeAll(() => {
@@ -227,6 +264,63 @@ describe("warnBackendLimits", () => {
       expect(
         stderrFrom(() => warnBackendLimits({ agent: "claude", cwd: REPO }))
       ).toBe("");
+    });
+
+    /*
+     * A work tree with a HEAD and no `user.email`/`user.name` — which is what
+     * every CI checkout is, since `actions/checkout` configures neither. It is
+     * a repository by every other measure, so it reads healthy right up to the
+     * commit that fails, and it is the case that turned this file red on the
+     * runner while passing on the machine that wrote it.
+     */
+    it("warns for a repository with no commit identity", () => {
+      const anon = mkdtempSync(join(tmpdir(), "airship-banner-anon-"));
+      // The identity is set only long enough to make the commit, then removed:
+      // `gitStatus` wants a HEAD before it looks at the identity at all.
+      git(anon, "init", "-q", "-b", "main");
+      git(anon, "config", "user.email", "test@example.com");
+      git(anon, "config", "user.name", "Test");
+      git(anon, "config", "commit.gpgsign", "false");
+      writeFileSync(join(anon, "file.txt"), "one\n");
+      git(anon, "add", "-A");
+      git(anon, "commit", "-q", "-m", "initial");
+      git(anon, "config", "--unset", "user.email");
+      git(anon, "config", "--unset", "user.name");
+
+      // The developer's own global config must not decide this — with one, the
+      // repo resolves an identity and the case passes vacuously.
+      // `GIT_CONFIG_GLOBAL=/dev/null` is not portable; an empty file is.
+      const empty = join(anon, ".gitconfig-empty");
+      writeFileSync(empty, "");
+      const priorGlobal = process.env.GIT_CONFIG_GLOBAL;
+      const priorSystem = process.env.GIT_CONFIG_SYSTEM;
+      process.env.GIT_CONFIG_GLOBAL = empty;
+      process.env.GIT_CONFIG_SYSTEM = empty;
+      try {
+        const out = stderrFrom(() =>
+          warnBackendLimits({ agent: "claude", cwd: anon })
+        );
+
+        expect(out).toContain("no commit identity");
+        expect(out).toContain(anon);
+        // The hint is the fix, and it is the whole reason this warns at launch
+        // rather than at the first click on Commit.
+        expect(out).toContain("git config --global user.email");
+      } finally {
+        // `delete`, not `= undefined`: assigning to `process.env` coerces, so
+        // that would leave the literal string "undefined" behind as a path.
+        if (priorGlobal === undefined) {
+          delete process.env.GIT_CONFIG_GLOBAL;
+        } else {
+          process.env.GIT_CONFIG_GLOBAL = priorGlobal;
+        }
+        if (priorSystem === undefined) {
+          delete process.env.GIT_CONFIG_SYSTEM;
+        } else {
+          process.env.GIT_CONFIG_SYSTEM = priorSystem;
+        }
+        rmSync(anon, { force: true, maxRetries: 3, recursive: true });
+      }
     });
   });
 });

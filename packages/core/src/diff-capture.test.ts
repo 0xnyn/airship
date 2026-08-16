@@ -37,6 +37,15 @@ beforeEach(() => {
   git("config", "user.email", "test@example.com");
   git("config", "user.name", "Test");
   git("config", "commit.gpgsign", "false");
+  // Pinned, so a runner or developer with `core.autocrlf=true` does not turn
+  // the non-EOL cases into a coin flip. `fileAtHead` reads through `cat-file
+  // --filters`, which applies the same conversion a checkout would — so under
+  // the Git-for-Windows default an LF blob comes back CRLF and every `before`
+  // asserted here differs by its line terminators. The CRLF cases below write
+  // their own bytes and never go through git, so they are unaffected; the
+  // `--filters` conversion itself is covered in @airship/git, against a
+  // `.gitattributes` that reproduces it on every platform.
+  git("config", "core.autocrlf", "false");
   write("committed.txt", "one\ntwo\nthree\n");
   write("dirty.txt", "original\n");
   git("add", "-A");
