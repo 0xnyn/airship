@@ -15,7 +15,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
-import { canonicalPath } from "@airship/git";
+import { canonicalPath, type HeadRead } from "@airship/git";
 import type { FileDiff } from "@airship/protocol";
 import { createPatch } from "diff";
 import { toPosixPath } from "./paths";
@@ -35,15 +35,18 @@ function readSafe(abs: string): string | null {
  * Line endings, flattened for comparison and diffing only.
  *
  * On Windows `core.autocrlf=true` is the Git-for-Windows default, so the
- * working tree is CRLF while every agent's edit tool writes LF — and the HEAD
- * blob `fileAtHead` returns for the Codex path is LF too. Comparing those
- * directly makes every line of every file differ by its terminator, so a
- * one-line edit renders as a whole-file rewrite with garbage `+N −M` counts and
- * review comments that anchor to the wrong lines.
+ * working tree is CRLF while every agent's edit tool writes LF. Comparing a
+ * file's pre-edit CRLF form against its post-edit LF form makes every line
+ * differ by its terminator, so a one-line edit renders as a whole-file rewrite
+ * with garbage `+N −M` counts and review comments that anchor to the wrong
+ * lines.
  *
  * Only the comparison and the patch are normalized. `FileDiff.before`/`after`
  * keep the bytes actually on disk, because `restoreFiles` writes `before` back
- * verbatim and undo has to round-trip exactly.
+ * verbatim and undo has to round-trip exactly. That holds on the git-baseline
+ * path too, but only because `fileAtHead` reads through `cat-file --filters`
+ * rather than `show`: the stored blob is LF whatever the working tree is, and
+ * writing that back over a CRLF file rewrote every line ending in it.
  *
  * The leading BOM goes the same way and for the same reason. Visual Studio and
  * several Windows editors write one; agent edit tools generally do not preserve
@@ -79,10 +82,19 @@ function canonical(cwd: string, path: string): string {
 }
 
 /** Reads a path's content as of git HEAD. Injected so core need not know how. */
-export type HeadReader = (absPath: string) => string | null;
+export type HeadReader = (absPath: string) => HeadRead;
 
 export class DiffCapture {
   private readonly before = new Map<string, string | null>();
+  /**
+   * Paths whose `before` side could not be read at all, as opposed to files
+   * that genuinely did not exist at HEAD. Kept beside `before` rather than
+   * folded into it: the map's `null` already means "did not exist", and undo
+   * deletes what did not exist. Two meanings on one value is what let a machine
+   * with no git on PATH turn every edit into a creation and every undo into a
+   * delete.
+   */
+  private readonly unavailable = new Set<string>();
   private readonly touched = new Set<string>();
   /** Keys are canonical, so the root they are made relative to must be too. */
   private readonly root: string;
@@ -136,7 +148,11 @@ export class DiffCapture {
   recordAfterTheFact(filePath: string): void {
     const abs = canonical(this.cwd, filePath);
     if (!this.before.has(abs)) {
-      this.before.set(abs, this.readHead?.(abs) ?? null);
+      const head = this.readHead?.(abs) ?? { kind: "unavailable" as const };
+      if (head.kind === "unavailable") {
+        this.unavailable.add(abs);
+      }
+      this.before.set(abs, head.kind === "content" ? head.text : null);
     }
     this.touched.add(abs);
   }
@@ -174,6 +190,7 @@ export class DiffCapture {
       const rel = toPosixPath(relative(this.root, abs));
       const patch = createPatch(rel, forDiff(before), forDiff(after));
       const { additions, deletions } = countChanges(patch);
+      const noBaseline = this.unavailable.has(abs);
       diffs.push({
         additions,
         after,
@@ -181,7 +198,10 @@ export class DiffCapture {
         deletions,
         file: rel,
         isDeleted: after === null,
-        isNew: before === null,
+        // A file we could not read a baseline for is not a file the agent
+        // created, and calling it one is what makes undo delete it.
+        isNew: before === null && !noBaseline,
+        ...(noBaseline ? { noBaseline: true } : {}),
         patch,
       });
     }

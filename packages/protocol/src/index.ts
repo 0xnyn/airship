@@ -422,6 +422,18 @@ export const FileDiffSchema = z.object({
   file: z.string(),
   isDeleted: z.boolean(),
   isNew: z.boolean(),
+  /**
+   * No `before` side could be captured — git could not answer, not "the file
+   * did not exist".
+   *
+   * Named rather than left implicit, because the two states used to share one
+   * `before: null` and undo read the wrong one: a baseline it could not read
+   * looked exactly like a file the edit had created, so it deleted tracked
+   * source files on any machine where git could not run. `restoreFiles` checks
+   * this before `isNew` and refuses. Optional, so bundles written before this
+   * field existed still parse.
+   */
+  noBaseline: z.boolean().optional(),
   patch: z.string(),
 });
 export type FileDiff = z.infer<typeof FileDiffSchema>;
@@ -654,10 +666,27 @@ export interface JobSnapshot {
 // WebSocket protocol: server → client
 // ---------------------------------------------------------------------------
 
+/**
+ * Whether git-backed actions can work at all, and why not when they cannot.
+ *
+ * Sent so the overlay can grey out Revert, Commit and Create pull request with
+ * the reason attached, instead of offering them and failing after the click.
+ */
+export interface GitHealth {
+  /** What to do about it. Shown under `reason` in the same tooltip. */
+  hint?: string;
+  ok: boolean;
+  /** Absent when `ok`. A sentence, already phrased for a user. */
+  reason?: string;
+}
+
 export type ServerEvent =
   /** `defaultAgent` is the daemon's `--agent` setting, so the composer's picker
    * can render the right backend on first paint instead of guessing. */
   | { type: "hello"; jobs: JobSnapshot[]; defaultAgent: AgentKind }
+  /** Pushed on connect and again after every turn, since a repo can gain its
+   * first commit — or lose its git — while the overlay is open. */
+  | { type: "git:health"; health: GitHealth }
   | { type: "job:created"; job: JobSnapshot }
   /** Coarse one-line status ("Reading foo.tsx"). Self-overwriting by design —
    * it drives the turn's live status pill, not the transcript body. */

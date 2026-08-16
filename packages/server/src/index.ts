@@ -21,9 +21,10 @@ import {
   createPr,
   currentBranch,
   defaultBranch,
+  type GitStatus,
   ghStatus,
+  gitStatus,
   hasRemote,
-  isGitRepo,
   pushBranch,
   restoreFiles,
 } from "@airship/git";
@@ -36,6 +37,7 @@ import {
   type CreateJobRequest,
   type Effort,
   type ElementContext,
+  type GitHealth,
   type JobDiffBundle,
   type JobStatus,
   type ModelCatalogue,
@@ -63,7 +65,8 @@ export type {
 } from "@airship/core";
 /** Re-exported so the CLI depends only on @airship/server. */
 export { checkAuth, listModels } from "@airship/core";
-export { isGitRepo } from "@airship/git";
+export type { GitFailure, GitStatus } from "@airship/git";
+export { gitStatus, isGitRepo, onGitFailure } from "@airship/git";
 export type { AgentKind, AirshipSurface, Effort } from "@airship/protocol";
 
 const WS_PATH = "/__airship/ws";
@@ -202,6 +205,19 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     }
   }
 
+  /**
+   * Can the overlay offer its git verbs at all?
+   *
+   * Uncached on purpose. It is a handful of `rev-parse` calls, it runs on
+   * connect and after a turn rather than per edit, and a repo can gain its
+   * first commit — or have its git uninstalled — while a tab stays open. A
+   * stale "yes" here is a click that fails for a reason the user was already
+   * told about and can no longer see.
+   */
+  function gitHealth(): GitHealth {
+    return healthOf(gitStatus(cwd));
+  }
+
   wss.on("connection", (ws: WebSocket) => {
     clients.add(ws);
     send(ws, {
@@ -209,6 +225,11 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       jobs: jobs.snapshots(),
       type: "hello",
     });
+    // Beside the handshake rather than deferred: the transcript can paint a
+    // finished turn's action menu immediately, and a menu that offers Commit
+    // for half a second before greying it out is worse than one that never
+    // offered it.
+    send(ws, { health: gitHealth(), type: "git:health" });
     // Push the token scan without being asked. The inspector needs it to render
     // its very first selection, and a request/response round trip would leave
     // the badges missing for the first element the user clicks. Deferred off the
@@ -417,19 +438,23 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       status,
       type: "job:status",
     });
+    // Before `job:done`, not after. That event is what paints the finished
+    // turn, and the turn menu captures the health it was rendered with — so
+    // sending it afterwards would leave the newest turn a beat behind.
+    broadcast({ health: gitHealth(), type: "git:health" });
     broadcast({ bundle, jobId: rec.jobId, type: "job:done" });
     broadcast({ entries: listHistory(cwd), type: "history" });
 
     if (opts.autoCommit && status === "done" && result.diffs.length) {
-      const sha = commitEdit(
+      const auto = commitEdit(
         cwd,
         result.diffs.map((d) => d.file),
         bundle.summary || displayPrompt
       );
       broadcast({
-        error: sha ? undefined : "auto-commit failed",
-        ok: Boolean(sha),
-        sha: sha ?? undefined,
+        error: auto.ok ? undefined : `auto-commit failed: ${auto.error}`,
+        ok: auto.ok,
+        sha: auto.sha,
         type: "commit:result",
       });
     }
@@ -468,12 +493,15 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     }
     // Content-restore from the before-state captured by the SDK PreToolUse
     // hooks — instant and reliable. (SDK `rewindEdit` is the alternative.)
-    const restored = restoreFiles(cwd, bundle.diffs);
-    const ok = restored.length === bundle.diffs.length;
+    const { restored, skipped } = restoreFiles(cwd, bundle.diffs);
+    const ok = skipped.length === 0;
     broadcast({
+      // The count alone was the whole message, which told the user a number and
+      // nothing they could act on. The first reason is the useful half; the
+      // rest are almost always the same one.
       error: ok
         ? undefined
-        : `restored ${restored.length}/${bundle.diffs.length} files`,
+        : `restored ${restored.length}/${bundle.diffs.length} files — ${skipped[0].file}: ${skipped[0].reason}`,
       jobId,
       ok,
       type: "undo:result",
@@ -496,24 +524,31 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       });
       return;
     }
-    const sha = commitEdit(
+    const { error, ok, sha } = commitEdit(
       cwd,
       bundle.diffs.map((d) => d.file),
       message || bundle.summary || bundle.prompt
     );
-    if (!(sha && push)) {
-      send(ws, {
-        error: sha ? undefined : "commit failed",
-        ok: Boolean(sha),
-        sha: sha ?? undefined,
-        type: "commit:result",
-      });
+    if (!(ok && push)) {
+      send(ws, { error, ok, sha, type: "commit:result" });
       return;
     }
     const branch = currentBranch(cwd);
     if (!branch) {
       send(ws, {
         error: "committed, but HEAD is detached — nothing to push",
+        ok: true,
+        pushed: false,
+        sha,
+        type: "commit:result",
+      });
+      return;
+    }
+    // Checked here as well as in `prPreflight`: pushing to a remote that does
+    // not exist otherwise spends the network timeout before saying so.
+    if (!hasRemote(cwd)) {
+      send(ws, {
+        error: "committed, but there is no `origin` remote to push to",
         ok: true,
         pushed: false,
         sha,
@@ -570,13 +605,13 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     const { head } = branched;
 
     const summary = bundle.summary || bundle.prompt;
-    const sha = commitEdit(
+    const committed = commitEdit(
       cwd,
       bundle.diffs.map((d) => d.file),
       summary
     );
-    if (!sha) {
-      fail("commit", "commit failed");
+    if (!committed.ok) {
+      fail("commit", committed.error ?? "commit failed");
       return;
     }
     const pushed = await pushBranch(cwd, head);
@@ -666,6 +701,29 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   };
 }
 
+/**
+ * Which git problems stop the overlay's git verbs, and which do not.
+ *
+ * The verbs are commit, push and open a pull request. Deliberately not gated on
+ * `hasCommits`: the first commit in a fresh repository is exactly the thing
+ * that works there, so greying Commit out for want of a HEAD would block the
+ * action that creates one. Having no HEAD costs the diff *baseline*, which is a
+ * per-turn fact carried on `FileDiff.noBaseline` and gates Revert instead.
+ *
+ * Exported for its own test. `gitStatus` short-circuits in the order these are
+ * read, so `error` always describes the field that actually failed here.
+ */
+export function healthOf(status: GitStatus): GitHealth {
+  if (status.installed && status.workTree) {
+    return { ok: true };
+  }
+  return {
+    hint: status.hint,
+    ok: false,
+    reason: status.error ?? "git is unavailable",
+  };
+}
+
 function preview(prompt: string): string {
   return prompt.length > 120 ? `${prompt.slice(0, 117)}…` : prompt;
 }
@@ -676,13 +734,19 @@ function prPreflight(cwd: string, bundle: JobDiffBundle | null): string | null {
   if (!bundle?.diffs.length) {
     return "nothing to open a pull request for";
   }
-  if (!isGitRepo(cwd)) {
-    return "not a git repository";
+  // `gitStatus` rather than `isGitRepo`, because this message is the one the
+  // user acts on: a git that is not installed, a bare repo and a directory that
+  // is not a repository all used to arrive here as "not a git repository".
+  const git: GitStatus = gitStatus(cwd);
+  if (!(git.workTree && git.hasCommits)) {
+    return git.error ?? "git is unavailable";
   }
   if (!hasRemote(cwd)) {
     return "no `origin` remote";
   }
-  const gh = ghStatus();
+  // Scoped to the repo: `gh auth status` resolves which host to check from the
+  // remote, so asking without a cwd can pass while the push still fails.
+  const gh = ghStatus(cwd);
   if (!gh.authed) {
     return gh.error ?? "gh is unavailable";
   }
@@ -707,8 +771,12 @@ function ensureFeatureBranch(
     return { head };
   }
   const name = requested || `airship/${jobId.slice(0, 8)}`;
-  if (!createBranch(cwd, name)) {
-    return { error: `could not create branch ${name}`, stage: "branch" };
+  const branched = createBranch(cwd, name);
+  if (!branched.ok) {
+    return {
+      error: `could not create branch ${name}: ${branched.error}`,
+      stage: "branch",
+    };
   }
   return { head: name };
 }

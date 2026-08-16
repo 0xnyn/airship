@@ -1,9 +1,15 @@
 /**
- * Covers the three ways the Codex path can arrive at a `before` side.
+ * Covers the ways the Codex path can arrive at a `before` side.
  *
- * Worth testing specifically because a wrong `before` fails quietly rather than
- * loudly: `restoreFiles` skips any diff whose `before` is not a string, so the
- * only symptom is undo reporting "restored 0/1 files" long after the fact.
+ * Worth testing specifically because a wrong `before` picks a different branch
+ * of `restoreFiles`, and one of them is destructive: a string is rewritten,
+ * `isNew` is *deleted*, and `noBaseline` is refused. The dangerous confusion is
+ * between the last two — a baseline that could not be read looks exactly like a
+ * file that never existed, and undo then deletes a tracked file instead of
+ * restoring it.
+ *
+ * This header used to claim `restoreFiles` "skips any diff whose `before` is
+ * not a string", which was only ever true of the non-`isNew` branch.
  */
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -90,6 +96,46 @@ describe("DiffCapture on the Codex path", () => {
     expect(diff.file).toBe("fresh.txt");
     expect(diff.before).toBeNull();
     expect(diff.isNew).toBe(true);
+    expect(diff.noBaseline).toBeFalsy();
+  });
+
+  it("keeps a primed baseline even when the head reader is unavailable", () => {
+    /*
+     * The two are independent, and `runner.ts` gates them separately for this
+     * reason. `git status` answers perfectly well in a repository with no
+     * commits, so priming still yields a real on-disk baseline there — and in a
+     * fresh repo that is every file, since nothing is tracked yet. Only reading
+     * a blob out of HEAD needs a HEAD.
+     *
+     * If this ever regressed to one gate, undo in a fresh repository would
+     * refuse every file instead of restoring it.
+     */
+    write("dirty.txt", "before the turn\n");
+    const dc = new DiffCapture(repo, () => ({ kind: "unavailable" }));
+    dc.prime([join(repo, "dirty.txt")]);
+
+    write("dirty.txt", "after the turn\n");
+    dc.recordAfterTheFact("dirty.txt");
+
+    const [diff] = dc.finalize();
+    expect(diff.before).toBe("before the turn\n");
+    expect(diff.noBaseline).toBeFalsy();
+    expect(diff.isNew).toBe(false);
+  });
+
+  it("marks a file whose baseline could not be read, rather than calling it new", () => {
+    // The distinction the whole `HeadRead` union exists for. With git
+    // unavailable every read comes back like this, and calling them all `isNew`
+    // is what made undo delete files it had never created.
+    const dc = new DiffCapture(repo, () => ({ kind: "unavailable" }));
+
+    write("committed.txt", "edited by the agent\n");
+    dc.recordAfterTheFact("committed.txt");
+
+    const [diff] = dc.finalize();
+    expect(diff.noBaseline).toBe(true);
+    expect(diff.isNew).toBe(false);
+    expect(diff.before).toBeNull();
   });
 
   it("leaves a primed file out of the diff unless something writes to it", () => {

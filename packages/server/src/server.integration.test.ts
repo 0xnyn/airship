@@ -174,6 +174,17 @@ describe("the editor server, over raw sockets", () => {
       expect(reply.startsWith("HTTP/1.1 101 ")).toBe(true);
       expect(reply).toContain('"type":"hello"');
     });
+
+    it("reports whether git works, beside the handshake", async () => {
+      // Beside `hello` rather than deferred: the transcript paints a finished
+      // turn's action menu immediately, and a menu that offers Commit for half a
+      // second before greying it out is worse than one that never offered it.
+      const reply = await exchange(
+        port,
+        upgradeRequest("/__airship/ws", { host: `localhost:${port}` })
+      );
+      expect(reply).toContain('"type":"git:health"');
+    });
   });
 
   describe("the Host gate", () => {
