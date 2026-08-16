@@ -276,7 +276,7 @@ export const FLAGS: readonly FlagSpec[] = [
   },
   {
     group: "GLOBAL",
-    help: "Print stack traces on failure.",
+    help: "Print stack traces, and every git command that failed.",
     name: "debug",
     type: "boolean",
   },

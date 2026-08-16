@@ -10,7 +10,7 @@
 import { existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
-import { type AgentKind, checkAuth, isGitRepo } from "@airship/server";
+import { type AgentKind, checkAuth, gitStatus } from "@airship/server";
 import { defineCommand } from "citty";
 import {
   AGENTS,
@@ -150,16 +150,70 @@ function checkConfig(configSource: string | undefined): Check {
   };
 }
 
-function checkGit(cwd: string): Check {
-  const repo = isGitRepo(cwd);
-  return {
-    hint: repo
-      ? undefined
-      : "codex and opencode need git for their diff baseline, and undo needs it.",
-    label: "git repo",
-    level: repo ? "ok" : "warn",
-    value: cwd,
+/**
+ * Two checks, because they fail for different reasons and have different fixes:
+ * whether git can run at all, and whether this directory is somewhere it can
+ * usefully run. They used to be one line that reported `isGitRepo` and nothing
+ * else, so a machine with no git on PATH was told it was not in a repository.
+ *
+ * The level follows the same rule `checkAgents` uses: only the backend actually
+ * being used can turn a missing dependency into a failure. Claude snapshots its
+ * own before-state through a pre-tool hook, so it edits and undoes without git
+ * at all; codex and opencode reconstruct their baseline from HEAD and cannot.
+ * `doctor` exits non-zero on any `fail` and is documented as scriptable, so a
+ * working Claude install must not be reported as broken.
+ */
+function checkGit(cwd: string, preferred: AgentKind | undefined): Check[] {
+  const status = gitStatus(cwd);
+  const needsGit = (preferred ?? "claude") !== "claude";
+  const blocked: Level = needsGit ? "fail" : "warn";
+
+  if (!status.installed) {
+    return [
+      {
+        hint: status.hint,
+        label: "git",
+        level: blocked,
+        value: "not installed",
+      },
+    ];
+  }
+  const version: Check = {
+    label: "git",
+    level: "ok",
+    value: status.version ?? "installed",
   };
+  if (!status.workTree) {
+    return [
+      version,
+      {
+        hint: status.hint,
+        label: "git repo",
+        level: blocked,
+        value: `${status.error ?? "unusable"} (${cwd})`,
+      },
+    ];
+  }
+  if (!status.hasCommits) {
+    return [
+      version,
+      {
+        hint: status.hint,
+        label: "git repo",
+        level: blocked,
+        value: "no commits yet",
+      },
+    ];
+  }
+  if (!status.identity) {
+    return [
+      version,
+      // Always a warning, whichever backend: it breaks committing, which is one
+      // opt-in button, and nothing else.
+      { hint: status.hint, label: "git repo", level: "warn", value: cwd },
+    ];
+  }
+  return [version, { label: "git repo", level: "ok", value: cwd }];
 }
 
 /**
@@ -222,7 +276,7 @@ export const doctor = defineCommand({
       checkNode(),
       { label: "airship", level: "ok", value: VERSION },
       checkConfig(configSource),
-      checkGit(cwd),
+      ...checkGit(cwd, agent),
       checkOverlay(),
       ...(await checkAgents(agent)),
       // The dev server last: it is the check most likely to be a transient

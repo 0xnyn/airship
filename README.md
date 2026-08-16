@@ -324,7 +324,7 @@ Quote it — `--codex-config k='"true"'` — to keep a string a string.
 | --- | --- |
 | `--json` | Machine-readable JSON on stdout, no colour and no banner. |
 | `-q, --quiet` | Suppress the launch banner. Warnings still print. |
-| `--debug` | Print stack traces on failure. |
+| `--debug` | Print stack traces, and every git command that failed. |
 | `-h, --help` | Show this help. |
 | `-v, --version` | Print the version. |
 
@@ -338,12 +338,22 @@ stops asking. Takes `--cwd` and the global flags. Needs a terminal.
 
 ### `airship doctor`
 
-Checks, in order: `node`, `airship`, `config`, `git repo`, `overlay bundle`, `agent claude`,
-`agent codex`, `agent opencode`, `dev server`. Each reports `ok`, `warn` or `fail` with a hint.
-Only your preferred agent (`--agent`, default `claude`) can fail the run; the other two warn.
+Checks, in order: `node`, `airship`, `config`, `git`, `git repo`, `overlay bundle`,
+`agent claude`, `agent codex`, `agent opencode`, `dev server`. Each reports `ok`, `warn` or
+`fail` with a hint. Only your preferred agent (`--agent`, default `claude`) can fail the run;
+the other two warn.
+
+`git` and `git repo` are separate because they fail for different reasons and have different
+fixes: whether git can run at all, and whether this directory is somewhere it can usefully run
+(a work tree, with at least one commit, and a configured `user.name` / `user.email`). They fail
+the run on `--agent codex` and `--agent opencode`, which reconstruct their diff baseline from
+`HEAD`, and warn on `claude`, which snapshots its own before-state and needs no git to edit or
+undo.
 
 Exits `1` if any check failed, so `airship doctor && airship` works. Takes `--cwd`, `--target`,
-`--agent` and the global flags.
+`--agent` and the global flags. `--json` prints the same checks as a machine-readable record,
+which is the most useful thing to send someone when a run is failing on a machine you cannot
+see.
 
 ### Exit codes
 
@@ -414,6 +424,11 @@ Four more are honoured: `AIRSHIP_EDITOR` (`vscode`, `cursor`, `windsurf` or `zed
 editor "open in editor" prefers, otherwise probed in that order), `AIRSHIP_AGENT_DEBUG` (stream
 the Claude backend's raw stderr to the terminal — separate from `--debug`, which logs airship
 itself), and `NO_COLOR` / `FORCE_COLOR`.
+
+`AIRSHIP_DEBUG=1` does what `--debug` does, which is worth knowing when the person who needs
+the trace is not the person who typed the command. Both print every failed git invocation to
+stderr with its argv, its exit status and the whole of its stderr — the detail behind the one
+line a toast has room for.
 
 ### `--cwd`
 
