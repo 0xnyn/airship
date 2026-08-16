@@ -171,6 +171,15 @@ function dockHead(label: string): HTMLElement {
 }
 
 export interface DockOptions {
+  /**
+   * Pin the dock's height, the way a bottom-edge drag does.
+   *
+   * Omitted, the dock keeps its `top`/`bottom` anchors and fills the stage —
+   * which is the product's default and what every story before this one showed.
+   * Passing a number applies `.dock-h`, so the story sees exactly what a user
+   * who has dragged the bottom edge sees.
+   */
+  height?: number;
   /** Header label. Defaults to "Design", matching the right dock. */
   label?: string;
   /**
@@ -182,6 +191,14 @@ export interface DockOptions {
    * after somebody changes the floor to 260.
    */
   narrow?: boolean;
+  /**
+   * Render the two resize splitters.
+   *
+   * Off by default: they are invisible until hovered and they sit on the dock's
+   * edges, so in a story about a *control* they are two dead strips over the
+   * thing being looked at. On for the story that is about them.
+   */
+  splitters?: boolean;
   /**
    * Override the dock width outright. The default is the product's own 360px.
    * Prefer `narrow` for the common case; this is for a story that wants some
@@ -209,14 +226,38 @@ export function dock(body: HTMLElement, opts: DockOptions = {}): HTMLElement {
   const node = el(
     "div",
     {
-      class: `${cls("dock")} ${cls("dock-right")}`,
+      class: `${cls("dock")} ${cls("dock-right")}${
+        opts.height === undefined ? "" : ` ${cls("dock-h")}`
+      }`,
       "data-story-dock": "",
     },
-    [dockHead(opts.label ?? "Design"), body]
+    [
+      dockHead(opts.label ?? "Design"),
+      body,
+      // Inert copies, not `AirshipApp.buildSplitter`'s: that registers a dnd-kit
+      // `Draggable` against the module-singleton manager, which a story has no
+      // business adding entities to and no teardown for. What is worth showing
+      // here is the strip and its hairline; the gesture belongs to the app.
+      ...(opts.splitters
+        ? [
+            el("div", {
+              class: `${cls("splitter")} ${cls("splitter-right")}`,
+              "data-tip": "Drag to resize, double-click to reset",
+            }),
+            el("div", {
+              class: `${cls("splitter")} ${cls("splitter-bottom")}`,
+              "data-tip": "Drag to resize, double-click to reset",
+            }),
+          ]
+        : []),
+    ]
   );
   const width = dockWidth(opts);
   if (width !== undefined) {
     node.style.setProperty(`--${PREFIX}-right-w`, `${width}px`);
+  }
+  if (opts.height !== undefined) {
+    node.style.setProperty(`--${PREFIX}-right-h`, `${opts.height}px`);
   }
   return node;
 }

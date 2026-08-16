@@ -79,7 +79,7 @@ import {
 } from "./popover-host";
 import { StructureSet } from "./structure-set";
 import { injectStyles } from "./styles";
-import { MIN_DOCK_W } from "./styles/const";
+import { MIN_DOCK_H, MIN_DOCK_W } from "./styles/const";
 import { InlineResolver, type Surface, type SurfaceResolver } from "./surface";
 import { mountToastHost, type ToastOptions, toast } from "./toast";
 import { setRuntimeTokens, setStaticTokens } from "./tokens/registry";
@@ -114,13 +114,21 @@ const NUDGE_AXIS: Readonly<Record<string, readonly [number, number]>> = {
 const LEFT_W = 340;
 const RIGHT_W = 360;
 /** Resize bounds: narrow enough to be useful, never more than half the viewport.
- *  `MIN_DOCK_W` lives in `styles/const.ts` — the stories need it too. */
+ *  `MIN_DOCK_W` and `MIN_DOCK_H` live in `styles/const.ts` — the stories and the
+ *  stylesheet need them too. */
 const MAX_DOCK_W = 720;
-const WIDTH_KEY = `${PREFIX}-dock-widths`;
+/**
+ * Both dock sizes, in one store.
+ *
+ * Renamed from `${PREFIX}-dock-widths`, which held a bare number per side and is
+ * still read once as a migration — see `restoreSizes`. Height joined width here
+ * rather than joining `DOCKS_KEY` for two reasons. It is written by the same
+ * gesture, so the write cadence argument below applies to it identically; and
+ * `restoreDocks` deliberately skips any entry that is not floating, so a docked
+ * height put there would be persisted and then never read back.
+ */
+const SIZE_KEY = `${PREFIX}-dock-size`;
 
-/** Floor for a floating panel's height. Below this a panel is a title bar with
- *  a sliver under it, which is worse than not being resizable at all. */
-const MIN_DOCK_H = 200;
 /** Fallback header height. A collapsed dock is `display: none` and every metric
  *  inside it measures 0, so clamping one needs a number to fall back on. */
 const HEAD_H = 40;
@@ -143,12 +151,32 @@ type Side = "left" | "right";
 type DockMode = "docked" | "floating";
 
 /** Where a dock is. `x`/`y`/`h` are ignored while docked; the edge anchors in
- *  `docks.css.ts` drive it there. */
+ *  `docks.css.ts` drive it there, and its docked height is `DockSize.h`. */
 interface DockPlacement {
   h: number;
   mode: DockMode;
   x: number;
   y: number;
+}
+
+/**
+ * How big a dock is on its edge.
+ *
+ * `h` of 0 means *unpinned*, not "zero tall": a docked panel is anchored `top`
+ * and `bottom` and fills its edge until a drag pins it, which is why the reset
+ * removes the pin rather than replacing it with a literal. A number for "the
+ * height of the window, less two insets" would be wrong the moment the window
+ * changed size, and would need re-deriving on every resize; `bottom` answers the
+ * same question for free and keeps answering it.
+ *
+ * A docked height and a *floating* height are deliberately two different
+ * numbers, held in two different stores. The useful height of a column on an
+ * edge and of a card over the page are not the same, and `floatHeight` has
+ * always derived one from the other at tear-off rather than carrying it across.
+ */
+interface DockSize {
+  h: number;
+  w: number;
 }
 
 /**
@@ -504,10 +532,10 @@ export class AirshipApp {
   private pendingSeen = 0;
   private rightOpen = false;
 
-  /** Live dock widths, persisted across reloads and reset from the splitters. */
-  private readonly width: Record<Side, number> = {
-    left: LEFT_W,
-    right: RIGHT_W,
+  /** Live dock sizes, persisted across reloads and reset from the splitters. */
+  private readonly size: Record<Side, DockSize> = {
+    left: { h: 0, w: LEFT_W },
+    right: { h: 0, w: RIGHT_W },
   };
   /** The dock a splitter drag is currently resizing, plus its start geometry.
    * `startX` matters only while floating — see `watchSplitters`. */
@@ -517,6 +545,16 @@ export class AirshipApp {
     startX: number;
   } | null = null;
   private readonly splitterDelta = new DragDelta();
+  /** The dock a bottom-edge drag is resizing, the painted height it started
+   * from, and the stored pair a cancel has to put back. Separate from `resizing`
+   * so a cancel restores the axis it belongs to. */
+  private resizingH: {
+    side: Side;
+    startH: number;
+    wasDocked: number;
+    wasFloat: number;
+  } | null = null;
+  private readonly heightDelta = new DragDelta();
 
   /** Where each dock is: pinned to its edge, or floating and where. */
   private readonly placement: Record<Side, DockPlacement> = {
@@ -937,7 +975,7 @@ export class AirshipApp {
   mount(): void {
     this.stage.bindSelection?.(() => this.selected);
     this.root = el("div", { id: `${PREFIX}-root` });
-    this.restoreWidths();
+    this.restoreSizes();
     this.restoreDocks();
     // Before the docks are built: `buildAgentButton` paints the tooltip from
     // this state, and a restore afterwards would leave the first frame showing
@@ -978,6 +1016,7 @@ export class AirshipApp {
     this.clampPlacements();
     this.applyWidths();
     this.watchSplitters();
+    this.watchHeightSplitters();
     this.watchDockDrag();
     window.addEventListener("resize", this.onViewportResize);
     this.stage.onLayoutChange(() => {
@@ -1152,13 +1191,13 @@ export class AirshipApp {
   /**
    * A splitter on the dock's inner edge. dnd-kit drives the gesture so it picks
    * up the same activation threshold and Escape-to-cancel as every other drag;
-   * double-clicking snaps the dock back to its default width.
+   * double-clicking snaps the dock back to its default size.
    */
   private buildSplitter(side: Side): HTMLElement {
     const handle = el("div", {
       class: `${cls("splitter")} ${cls(`splitter-${side}`)}`,
       "data-tip": "Drag to resize, double-click to reset",
-      onDblclick: () => this.resetWidth(side),
+      onDblclick: () => this.resetSize(side),
     });
     this.dockScope.add(
       new Draggable(
@@ -1176,6 +1215,145 @@ export class AirshipApp {
     return handle;
   }
 
+  /**
+   * A splitter on the dock's bottom edge, for its height.
+   *
+   * The same gesture on the other axis, and deliberately the same shape: one
+   * `Draggable` with no feedback, one monitor triple, one clamp. What it writes
+   * differs by mode — a docked panel's height is `size[side].h` and a floating
+   * one's is `placement[side].h` — because those are two different numbers with
+   * two different defaults, and `applyPlacement` picks between them.
+   *
+   * There is no `trackFloatingResize` twin. That exists because the right dock
+   * floats from a `left` anchor, so widening it from the *inner* edge would slide
+   * the grip out from under the cursor; a bottom edge leaves the top where it is
+   * in both modes, so neither dock needs compensating.
+   */
+  private buildHeightSplitter(side: Side): HTMLElement {
+    const handle = el("div", {
+      class: `${cls("splitter")} ${cls("splitter-bottom")}`,
+      "data-tip": "Drag to resize, double-click to reset",
+      onDblclick: () => this.resetSize(side),
+    });
+    this.dockScope.add(
+      new Draggable(
+        {
+          element: handle,
+          id: `${DND.dockHeight}:${side}`,
+          // As above: the handle must not travel, and only `y` is read.
+          plugins: FEEDBACK.none,
+          type: DND.dockHeight,
+        },
+        manager
+      )
+    );
+    return handle;
+  }
+
+  /**
+   * The height a bottom-edge drag starts from, by mode.
+   *
+   * Both branches answer with what the panel is *painted* at rather than with
+   * what is stored, and both need to for the same reason: a drag is a gesture
+   * against what you can see, so a stored number the paint does not match makes
+   * the grip inert until the delta has covered the difference.
+   *
+   * Floating is the case that bites. `applyPlacement` paints
+   * `min(h, room below y)` and deliberately leaves `h` alone — carrying a panel
+   * down the screen must not shrink it permanently — so a panel torn off at full
+   * height and dragged to the middle has `h` of 860 while showing 380. Starting
+   * from 860 would mean 480px of travel before the clamp let go.
+   *
+   * Docked, the stored 0 is the *unpinned* sentinel, so there is nothing to
+   * start from at all and the measured box is the only honest answer.
+   */
+  private dockHeight(side: Side): number {
+    const p = this.placement[side];
+    if (p.mode === "floating") {
+      return Math.min(
+        p.h,
+        Math.max(MIN_DOCK_H, window.innerHeight - p.y - this.inset)
+      );
+    }
+    return this.size[side].h || this.dockEl(side).offsetHeight;
+  }
+
+  private setDockHeight(side: Side, h: number): void {
+    const clamped = clampHeight(
+      h,
+      this.placement[side].mode === "floating"
+        ? this.placement[side].y
+        : this.inset,
+      this.inset
+    );
+    if (this.placement[side].mode === "floating") {
+      this.placement[side].h = clamped;
+    } else {
+      this.size[side].h = clamped;
+    }
+    this.applyPlacement(side);
+  }
+
+  private watchHeightSplitters(): void {
+    // Captured for the reason `watchSplitters` gives below, and separate from it
+    // so a cancelled drag restores the axis it belongs to rather than the other.
+    this.disposers.push(
+      manager.monitor.addEventListener("dragstart", () => {
+        const id = String(manager.dragOperation.source?.id ?? "");
+        if (!id.startsWith(DND.dockHeight)) {
+          return;
+        }
+        const side: Side = id.endsWith("left") ? "left" : "right";
+        this.resizingH = {
+          side,
+          startH: this.dockHeight(side),
+          // The *stored* pair, kept alongside the painted `startH` so Escape can
+          // put back exactly what was there. `startH` is a measurement and often
+          // a stand-in — for an unpinned docked panel it is `offsetHeight`, where
+          // the stored value is the 0 sentinel — so restoring from it would end a
+          // cancelled drag by pinning a panel that was filling its edge, and
+          // `saveSizes` below would write that pin to disk. A cancel has to be a
+          // no-op, and only the raw numbers can make it one.
+          wasDocked: this.size[side].h,
+          wasFloat: this.placement[side].h,
+        };
+        this.heightDelta.start();
+        this.controller.guard.setDragging(true, "row-resize");
+      }),
+      manager.monitor.addEventListener("dragmove", (e) => {
+        const rz = this.resizingH;
+        if (!rz) {
+          return;
+        }
+        // No sign flip: both docks are anchored at the top and grow downwards.
+        this.setDockHeight(rz.side, rz.startH + this.heightDelta.update(e).y);
+      }),
+      manager.monitor.addEventListener("dragend", (e) => {
+        const rz = this.resizingH;
+        if (!rz) {
+          return;
+        }
+        if (e.canceled) {
+          // Written straight back rather than through `setDockHeight`, which
+          // clamps — and a clamp is exactly what must not happen here, because
+          // the 0 sentinel would come back as `MIN_DOCK_H`.
+          this.size[rz.side].h = rz.wasDocked;
+          this.placement[rz.side].h = rz.wasFloat;
+          this.applyPlacement(rz.side);
+        }
+        this.resizingH = null;
+        this.controller.guard.setDragging(false);
+        this.saveSizes();
+        this.saveDocks();
+        // The composer's cap is a fraction of the left dock's height, so a
+        // height drag is exactly the gesture that has to re-run it.
+        this.autoGrow();
+        // The outline lives in viewport coords; realign after layout settles.
+        requestAnimationFrame(() => this.controller.drawOutline());
+      })
+    );
+  }
+
   private watchSplitters(): void {
     // Captured, like every other monitor listener in the repo. `manager` is a
     // module singleton, so `dockScope.clear()` in `destroy` takes the draggable
@@ -1190,7 +1368,7 @@ export class AirshipApp {
         const side: Side = id.endsWith("left") ? "left" : "right";
         this.resizing = {
           side,
-          startW: this.width[side],
+          startW: this.size[side].w,
           startX: this.placement[side].x,
         };
         this.splitterDelta.start();
@@ -1204,7 +1382,7 @@ export class AirshipApp {
         // The left dock grows rightwards, the right dock grows leftwards.
         const dx =
           this.splitterDelta.update(e).x * (rz.side === "left" ? 1 : -1);
-        this.width[rz.side] = clampWidth(rz.startW + dx);
+        this.size[rz.side].w = clampWidth(rz.startW + dx);
         this.trackFloatingResize(rz);
         this.applyWidths();
       }),
@@ -1214,13 +1392,13 @@ export class AirshipApp {
           return;
         }
         if (e.canceled) {
-          this.width[rz.side] = rz.startW;
+          this.size[rz.side].w = rz.startW;
           this.placement[rz.side].x = rz.startX;
           this.applyWidths();
         }
         this.resizing = null;
         this.controller.guard.setDragging(false);
-        this.saveWidths();
+        this.saveSizes();
         this.saveDocks();
         this.autoGrow();
         // The outline lives in viewport coords; realign after the layout settles.
@@ -1252,7 +1430,7 @@ export class AirshipApp {
       return;
     }
     const right = rz.startX + rz.startW;
-    p.x = this.clampFloat("right", right - this.width.right, p.y).x;
+    p.x = this.clampFloat("right", right - this.size.right.w, p.y).x;
   }
 
   // -- Dock dragging ---------------------------------------------------------
@@ -1371,10 +1549,30 @@ export class AirshipApp {
     );
   }
 
-  private resetWidth(side: Side): void {
-    this.width[side] = side === "left" ? LEFT_W : RIGHT_W;
+  /**
+   * Put a panel back to its default size, on both axes.
+   *
+   * Width goes back to a literal because a panel's default width *is* one — 340
+   * and 360 are choices about how much room a chat and an inspector need, and
+   * they do not follow from anything about the window.
+   *
+   * Height does not, and that is why the docked case unpins rather than
+   * resetting. A docked column's right height is "the edge", which is a fact
+   * about the window: a literal would be stale the moment it changed size and
+   * would need re-deriving on every resize, where dropping the pin hands the
+   * question back to the `bottom` anchor that answers it for free. A floating
+   * panel has no edge to fill, so it does get a number — the same one
+   * `floatHeight` derives for a panel torn off closed.
+   */
+  private resetSize(side: Side): void {
+    this.size[side].w = side === "left" ? LEFT_W : RIGHT_W;
+    this.size[side].h = 0;
+    if (this.placement[side].mode === "floating") {
+      this.placement[side].h = clampHeight(window.innerHeight - 2 * this.inset);
+      this.saveDocks();
+    }
     this.applyWidths();
-    this.saveWidths();
+    this.saveSizes();
     this.autoGrow();
     requestAnimationFrame(() => this.controller.drawOutline());
   }
@@ -1405,7 +1603,7 @@ export class AirshipApp {
     for (const side of ["left", "right"] as const) {
       root.style.setProperty(
         `--${PREFIX}-${side}-w`,
-        `${clampWidth(this.width[side])}px`
+        `${clampWidth(this.size[side].w)}px`
       );
       this.applyPlacement(side);
     }
@@ -1417,7 +1615,7 @@ export class AirshipApp {
     // every fit and every centring quietly off-centre to the left.
     const covers = (side: Side): number =>
       this.isVisible(side) && this.placement[side].mode === "docked"
-        ? clampWidth(this.width[side]) + gutter
+        ? clampWidth(this.size[side].w) + gutter
         : 0;
     this.stage.setSafeInset?.({
       left: covers("left"),
@@ -1426,26 +1624,52 @@ export class AirshipApp {
     this.stage.relayout?.();
   }
 
-  private restoreWidths(): void {
+  /**
+   * Both sizes, and the old width-only store read once on the way past.
+   *
+   * The previous key held a bare number per side. Migrating rather than dropping
+   * it costs six lines and is the difference between an upgrade nobody notices
+   * and every existing install silently losing the panel widths it was set up
+   * with. The old key is left in place rather than removed — a read that finds
+   * nothing is the same as a read that finds a stale number nothing looks at,
+   * and deleting somebody's data to tidy up is a bad trade.
+   */
+  private restoreSizes(): void {
     try {
-      const raw = localStorage.getItem(WIDTH_KEY);
+      const raw =
+        localStorage.getItem(SIZE_KEY) ??
+        localStorage.getItem(`${PREFIX}-dock-widths`);
       const saved = raw
-        ? (JSON.parse(raw) as Partial<Record<Side, number>>)
+        ? (JSON.parse(raw) as Partial<Record<Side, number | Partial<DockSize>>>)
         : null;
-      if (saved?.left) {
-        this.width.left = clampWidth(saved.left);
-      }
-      if (saved?.right) {
-        this.width.right = clampWidth(saved.right);
+      for (const side of ["left", "right"] as const) {
+        const s = saved?.[side];
+        if (typeof s === "number") {
+          this.size[side].w = clampWidth(s);
+          continue;
+        }
+        if (s?.w) {
+          this.size[side].w = clampWidth(s.w);
+        }
+        // Unclamped, and the sentinel preserved. Two separate points.
+        //
+        // A bare `clampHeight(Number(s.h) || 0)` would floor the 0 to
+        // `MIN_DOCK_H`, silently pinning every docked panel to a fifth of the
+        // window on the first reload. And clamping a *real* stored height here
+        // would make a smaller window permanent — the same one-way trip
+        // `clampPlacements` refuses to take with the floating height, for the
+        // same reason. `applyPlacement` clamps what is painted; the store keeps
+        // what the user asked for.
+        this.size[side].h = Number(s?.h) || 0;
       }
     } catch {
       // A malformed or blocked store just means the defaults stand.
     }
   }
 
-  private saveWidths(): void {
+  private saveSizes(): void {
     try {
-      localStorage.setItem(WIDTH_KEY, JSON.stringify(this.width));
+      localStorage.setItem(SIZE_KEY, JSON.stringify(this.size));
     } catch {
       // Private mode / quota — resizing still works for this session.
     }
@@ -1489,10 +1713,17 @@ export class AirshipApp {
    * one-way trip, shrinking the panel a little on every downward drag and never
    * giving it back when you carry it up again. So `h` keeps what the user asked
    * for and only what is *painted* is fitted to the room below `y`.
+   *
+   * Docked, `--*-h` comes from `size[side].h` instead, and only `.dock-h` — set
+   * when that is non-zero — makes the stylesheet read it. A docked panel with no
+   * pinned height keeps its `bottom` anchor and fills its edge, which is a fact
+   * about the window that CSS can maintain for free and JS would have to
+   * recompute on every resize.
    */
   private applyPlacement(side: Side): void {
     const p = this.placement[side];
     const floating = p.mode === "floating";
+    const pinned = this.size[side].h;
     const room = Math.max(MIN_DOCK_H, window.innerHeight - p.y - this.inset);
     const root = document.documentElement;
     root.style.setProperty(`--${PREFIX}-${side}-x`, `${Math.round(p.x)}px`);
@@ -1501,13 +1732,30 @@ export class AirshipApp {
     // an unclamped number here would put the two edges out of step.
     root.style.setProperty(
       `--${PREFIX}-${side}-r`,
-      `${Math.round(window.innerWidth - p.x - clampWidth(this.width[side]))}px`
+      `${Math.round(window.innerWidth - p.x - clampWidth(this.size[side].w))}px`
     );
-    root.style.setProperty(
-      `--${PREFIX}-${side}-h`,
-      `${Math.round(Math.min(p.h, room))}px`
-    );
+    // Removed rather than set to something arbitrary when there is no height to
+    // publish, because of how the two consumers fail. `.dock-h`'s `var()` has no
+    // fallback, so an absent property makes `height` invalid at computed-value
+    // time and the declaration is dropped — leaving the `top`/`bottom` anchors in
+    // charge, which is exactly what an unpinned panel wants. Writing a clamped 0
+    // instead would publish `MIN_DOCK_H`, so the day that class is applied when
+    // it should not be, the panel snaps to 200px rather than looking untouched.
+    const painted = floating
+      ? Math.min(p.h, room)
+      : pinned && clampHeight(pinned, this.inset, this.inset);
+    if (painted) {
+      root.style.setProperty(
+        `--${PREFIX}-${side}-h`,
+        `${Math.round(painted)}px`
+      );
+    } else {
+      root.style.removeProperty(`--${PREFIX}-${side}-h`);
+    }
     this.dockEl(side).classList.toggle(cls("dock-float"), floating);
+    // Only a *docked* panel needs telling to read the height — a floating one
+    // has no `bottom` anchor to drop, and always reads it.
+    this.dockEl(side).classList.toggle(cls("dock-h"), !floating && pinned > 0);
     this.pillEl(side).classList.toggle(cls("pill-float"), floating);
   }
 
@@ -1542,7 +1790,7 @@ export class AirshipApp {
     y: number
   ): { x: number; y: number } {
     const w = this.isOpen(side)
-      ? clampWidth(this.width[side])
+      ? clampWidth(this.size[side].w)
       : this.pillEl(side).offsetWidth || MIN_DOCK_W;
     // `offsetHeight` reads 0 on a collapsed dock — it is `display: none` — which
     // is why the header is held in `this.heads` and why there is a floor.
@@ -1583,25 +1831,29 @@ export class AirshipApp {
    */
   private readonly onViewportResize = (): void => {
     for (const side of ["left", "right"] as const) {
-      this.width[side] = clampWidth(this.width[side]);
+      this.size[side].w = clampWidth(this.size[side].w);
     }
     this.clampPlacements();
     this.applyWidths();
     this.autoGrow();
     this.saveDocks();
-    this.saveWidths();
+    this.saveSizes();
   };
 
   /**
-   * Placement gets its own store key rather than joining `WIDTH_KEY`.
+   * Placement gets its own store key rather than joining `SIZE_KEY`.
    *
-   * Not only because the payload shape differs — `restoreWidths` would read an
-   * object where it expects a number — but because of write cadence. `saveWidths`
-   * fires from the splitter's drop and from `resetWidth`, whose entire job is to
-   * put a width back; folding placement into the same blob would put the float
-   * state one careless `JSON.stringify(this.width)` away from being erased by a
-   * double-click on a splitter. Two keys make that impossible, and an existing
-   * install keeps its widths across the upgrade with no migration to write.
+   * Because of write cadence. `saveSizes` fires from the splitter's drop and
+   * from `resetSize`, whose entire job is to put a size back; folding placement
+   * into the same blob would put the float state one careless
+   * `JSON.stringify(this.size)` away from being erased by a double-click on a
+   * splitter. Two keys make that impossible.
+   *
+   * It is also why the *docked* height went to `SIZE_KEY` rather than joining
+   * `h` here. The loop below `continue`s past anything that is not floating, so
+   * a docked height stored in this blob would be written on every drop and never
+   * read back — which is a worse failure than not persisting it at all, because
+   * it looks like it works until you reload.
    */
   private restoreDocks(): void {
     try {
@@ -1734,7 +1986,6 @@ export class AirshipApp {
     this.bar = el("div", { class: cls("bar") }, [
       ...this.editOnlyBar,
       ...this.viewOnlyBar,
-      // Outside both mode lists on purpose: the shortcuts sheet documents both
       this.buildSurfaceToggle(),
       el("div", { class: cls("bar-sep") }),
       this.buildEditToggle(),
@@ -2456,8 +2707,8 @@ export class AirshipApp {
           this.buildAgentButton(),
           this.buildNewChatButton(),
           this.iconButton("history", "Past chats", () => this.toggleHistory()),
-          this.iconButton("rotate-ccw", "Reset width", () =>
-            this.resetWidth("left")
+          this.iconButton("rotate-ccw", "Reset size", () =>
+            this.resetSize("left")
           ),
           this.panelToggle("left", "chat", false),
         ]),
@@ -2517,6 +2768,7 @@ export class AirshipApp {
         this.chatBody,
         this.framesBody,
         this.buildSplitter("left"),
+        this.buildHeightSplitter("left"),
       ]
     );
     this.leftBrand = el("span", {
@@ -2569,8 +2821,8 @@ export class AirshipApp {
           el("span", { class: cls("brand-name"), text: "Frames" }),
         ]),
         el("div", { class: cls("head-actions") }, [
-          this.iconButton("rotate-ccw", "Reset width", () =>
-            this.resetWidth("left")
+          this.iconButton("rotate-ccw", "Reset size", () =>
+            this.resetSize("left")
           ),
           this.panelToggle("left", "frames", false),
         ]),
@@ -2752,8 +3004,8 @@ export class AirshipApp {
           el("span", { class: cls("brand-name"), text: "Design" }),
         ]),
         el("div", { class: cls("head-actions") }, [
-          this.iconButton("rotate-ccw", "Reset width", () =>
-            this.resetWidth("right")
+          this.iconButton("rotate-ccw", "Reset size", () =>
+            this.resetSize("right")
           ),
           this.panelToggle("right", "design", false),
         ]),
@@ -2762,7 +3014,12 @@ export class AirshipApp {
     this.rightDock = el(
       "div",
       { class: `${cls("dock")} ${cls("dock-right")} ${cls("hidden")}` },
-      [head, this.panel.element, this.buildSplitter("right")]
+      [
+        head,
+        this.panel.element,
+        this.buildSplitter("right"),
+        this.buildHeightSplitter("right"),
+      ]
     );
     this.rightPill = this.buildPill("right", "design", [
       el("div", { class: cls("brand") }, [
@@ -4428,9 +4685,32 @@ function floatHeight(
   return clampHeight(open ? measured : window.innerHeight - 2 * inset);
 }
 
-/** Keep a floating panel taller than a header and never taller than the window. */
-function clampHeight(h: number): number {
-  return clamp(h, MIN_DOCK_H, window.innerHeight);
+/**
+ * Keep a panel taller than a header and inside the room below its top edge.
+ *
+ * Exported so the rule can be asserted directly, the way `dockVisible` below is
+ * and for the reason it gives: standing up an `AirshipApp` to check a clamp is a
+ * test of the mount path, not of the clamp.
+ *
+ * There is no `MAX_DOCK_H` twin to `MAX_DOCK_W`, and that asymmetry is
+ * deliberate rather than an omission. Half the viewport is a sensible ceiling
+ * for a side column's *width* and a nonsense one for its height — a docked panel
+ * wants the whole edge, and the only real ceiling is the room it has.
+ *
+ * Both insets default to the constant and both are parameters, so a caller that
+ * has the *measured* one — `this.inset`, read off `--ap-space-md` at mount —
+ * can pass it and keep the drag clamp and the paint clamp on the same number.
+ * They agree today because the token is 20; a theme that moved it would put them
+ * out of step, which is the sort of thing that shows up as a panel that will not
+ * quite reach the bottom of the window.
+ */
+export function clampHeight(
+  h: number,
+  top = DOCK_INSET,
+  bottom = DOCK_INSET
+): number {
+  const room = Math.max(MIN_DOCK_H, window.innerHeight - top - bottom);
+  return clamp(h, MIN_DOCK_H, room);
 }
 
 /**

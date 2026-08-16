@@ -929,6 +929,30 @@ export const GESTURES = [
     surface: "both",
     title: "Re-dock a panel",
   },
+  // Both of these shipped undocumented. The splitter is a 7px strip that shows
+  // a hairline on hover and nothing otherwise, so a reader who does not already
+  // know it is there has no way to find out — which is the exact case a gesture
+  // table exists for.
+  {
+    device: "any",
+    doc: "Drag the inner edge for width, the bottom edge for height.",
+    id: "gesture.dockResize",
+    impl: "app.ts#watchSplitters",
+    input: "Drag a panel edge",
+    mode: "any",
+    surface: "both",
+    title: "Resize a panel",
+  },
+  {
+    device: "any",
+    doc: "Width goes back to its default; a docked panel goes back to filling its edge.",
+    id: "gesture.dockReset",
+    impl: "app.ts#buildSplitter",
+    input: "Double-click a panel edge",
+    mode: "any",
+    surface: "both",
+    title: "Reset a panel's size",
+  },
   {
     device: "mouse",
     doc: "A vertical wheel scrolls the strip sideways, because a mouse has no sideways.",
