@@ -773,6 +773,15 @@ ${ROOT} .${PREFIX}-select[aria-expanded="true"] .${PREFIX}-ic { --${PREFIX}-ic-t
   min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
+/* The value, which is the one "hint" in the product that is arbitrary text.
+   Overrides \`.pop-item-hint\`'s \`flex: 0 0 auto\` — see the note at the call site
+   in \`token-field.ts\`. Shrinks *after* the name, because the name has the whole
+   \`1fr\`-ish flex basis to give up first, and elides rather than overrunning the
+   menu's width cap into a horizontal scrollbar. */
+.${PREFIX}-token-value {
+  flex: 0 1 auto; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
 /* A token the element's cascade does not define. Dimmed rather than dropped:
    it may live under a theme class or a media query that is not matching, and it
    still applies correctly — the preview carries the token's own value as the

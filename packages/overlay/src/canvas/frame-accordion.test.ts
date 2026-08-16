@@ -167,14 +167,24 @@ describe("the device accordion", () => {
     expect(openGroups()).toEqual([]);
   });
 
-  it("hides the rows of a collapsed group but keeps them addressable", () => {
+  it("leaves a collapsed group's rows measured but unreachable", () => {
+    /*
+     * `inert` rather than the `hidden` utility, which is `display: none
+     * !important`. A body taken out of layout contributes nothing to the
+     * shrink-to-fit width of the menu around it, so the box was one size with
+     * Phone open and another with Desktop — and `.fc-menu` carried a
+     * hand-measured `min-width: 288px` and a paragraph apologising for it to
+     * paper over exactly that. An inert body is still laid out, so the widest
+     * row in any group sets the width in every state and the floor is gone.
+     */
     frames.add({ presetId: "iphone-16" });
     openDevicePane();
     const body = row("iphone-16").parentElement;
-    expect(body?.classList.contains(cls("hidden"))).toBe(false);
+    expect(body?.hasAttribute("inert")).toBe(false);
 
     click(head("desktop"));
-    expect(body?.classList.contains(cls("hidden"))).toBe(true);
+    expect(body?.hasAttribute("inert")).toBe(true);
+    expect(body?.classList.contains(cls("hidden"))).toBe(false);
     // Still in the DOM — which is what lets `syncMenuState` re-derive its mark.
     expect(row("iphone-16").isConnected).toBe(true);
   });

@@ -1,9 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
+import { deviceGroups } from "./canvas/device-menu";
 import { cls, el } from "./dom";
 import { emptyState } from "./empty";
-import { createMenu } from "./popover-host";
+import { createMenu, type MenuHandle } from "./popover-host";
 import { dock, plainStage } from "./stories/chrome";
 import { noop } from "./stories/fixtures";
+import { onStoryTeardown } from "./stories/lifecycle";
 import { mountToastHost, type ToastTone, toast } from "./toast";
 
 /*
@@ -20,6 +22,38 @@ const meta: Meta = {
 };
 
 export default meta;
+
+/**
+ * Wait for a node a story's own `requestAnimationFrame` is about to mount.
+ *
+ * A popover cannot be opened from `render`: `openPopover` places against a
+ * measured rect and a detached anchor measures as all zeros, so every story here
+ * opens on the next frame. `play` runs before that frame lands, so a `play` that
+ * asserted on the menu directly would be asserting on nothing.
+ *
+ * Recursive rather than a polling loop, which is not a style choice: an `await`
+ * inside a `for` is what `noAwaitInLoops` exists to catch, and the honest shape
+ * for "resolve when this appears" is one promise rather than sixty.
+ */
+function waitFor<T extends Element>(
+  root: Document,
+  selector: string,
+  frames = 60
+): Promise<T | null> {
+  return new Promise((resolve) => {
+    let left = frames;
+    const look = (): void => {
+      const found = root.querySelector<T>(selector);
+      if (found || left <= 0) {
+        resolve(found);
+        return;
+      }
+      left -= 1;
+      requestAnimationFrame(look);
+    };
+    look();
+  });
+}
 
 /**
  * The one empty state, at both sizes.
@@ -141,6 +175,119 @@ export const Menu: StoryObj = {
     return plainStage([el("div", { style: "width: 220px;" }, [anchor])], {
       try: "arrow through it — `data-pop-on` is the selected value and `data-pop-active` is the keyboard cursor, deliberately two different marks",
       what: "A popover menu with headers, a separator, a checked item and a disabled one.",
+    });
+  },
+};
+
+/**
+ * A grouped menu, and the two measurements that used to be wrong in it.
+ *
+ * The frame list's `⋯` menu is this shape: a block of verbs, then the twenty-two
+ * device presets as three single-open groups. It shipped with two faults that no
+ * unit test can see, because happy-dom does no layout — which is exactly why
+ * this story exists and why its `play` is an assertion rather than a look.
+ *
+ * **It changed width when you opened a group.** A collapsed body was
+ * `display: none`, so it contributed nothing to the shrink-to-fit box: about
+ * 158px with everything shut, about 250 with one group open. `seedOpenGroup`
+ * opens one at build time, so the menu painted wide and snapped narrow on the
+ * first collapse — and since `placePopover` derives `left` from `offsetWidth`, a
+ * width jump was a sideways jump too. `canvas.css.ts` answered the same problem
+ * on its own device menu with a hand-measured `min-width` and a paragraph
+ * apologising for it; the collapse was the thing that was wrong, and an `inert`
+ * body that is still laid out needs no floor at all.
+ *
+ * **Its rows sat at three heights and two left edges.** A verb row carried a
+ * 20px glyph and landed its label at 36px, a group head a 16px chevron at 30,
+ * and a device row nothing at all — 30, 26 and 25 pixels tall respectively,
+ * because a text-only row is sized by `line-height: normal`.
+ */
+export const GroupedMenu: StoryObj = {
+  play: async ({ canvasElement }) => {
+    const menu = await waitFor<HTMLElement>(
+      canvasElement.ownerDocument,
+      `.${cls("pop-menu")}`
+    );
+    if (!menu) {
+      throw new Error("The grouped menu did not open.");
+    }
+    await document.fonts.ready;
+
+    /*
+     * Every state, not just the two ends. The failure was per-group — the widest
+     * row differs between Phone ("iPhone 16 & 17 Pro Max" beside "440 × 956")
+     * and Desktop ("MacBook Pro 16"") — so a check that only opened one group
+     * would have passed on the broken build.
+     */
+    const heads = [
+      ...menu.querySelectorAll<HTMLElement>(`.${cls("pop-group-head")}`),
+    ];
+    const widths = new Set([menu.offsetWidth]);
+    for (const head of heads) {
+      head.click();
+      widths.add(menu.offsetWidth);
+      head.click();
+      widths.add(menu.offsetWidth);
+    }
+    if (widths.size !== 1) {
+      throw new Error(
+        `The menu resized as its groups were toggled: ${[...widths].join(", ")}px. ` +
+          "A collapsed `.pop-group-body` must stay in layout — see `[inert]` in pop.css.ts."
+      );
+    }
+
+    // One left edge for all three row families, with a group open so device
+    // rows are being measured too. `:not(.ic)` because `icon()` returns a span
+    // of its own, so the head's chevron is also a direct span child — without
+    // it this measures the gutter the triangle hangs in rather than the label.
+    heads[0]?.click();
+    const lefts = new Set(
+      [
+        ...menu.querySelectorAll<HTMLElement>(
+          `.${cls("pop-item-label")}, .${cls("pop-group-head")} > span:not(.${cls("ic")})`
+        ),
+      ].map((node) => Math.round(node.getBoundingClientRect().left))
+    );
+    if (lefts.size !== 1) {
+      throw new Error(
+        `Labels start at ${lefts.size} different edges: ${[...lefts].join(", ")}px. ` +
+          "A verb, a group name and a device name all sit at 8px padding + a 16px glyph + a 6px gap."
+      );
+    }
+  },
+  render: () => {
+    const anchor = el("button", {
+      class: cls("select"),
+      text: "Frame options",
+      type: "button",
+    });
+    const menu: MenuHandle = createMenu([
+      {
+        command: "frame.bringForward",
+        icon: "chev-up",
+        label: "Bring forward",
+        run: noop,
+      },
+      {
+        command: "frame.sendBackward",
+        icon: "chev-down",
+        label: "Send backward",
+        run: noop,
+      },
+      { separator: true },
+      { icon: "rotation", label: "Rotate", run: noop },
+      { icon: "rotate-ccw", label: "Reload", run: noop },
+      { icon: "doc-plus", label: "Duplicate", run: noop },
+      { icon: "trash", label: "Delete", run: noop },
+      { separator: true },
+      ...deviceGroups(noop),
+    ]);
+    // After the anchor is in the document, for the reason `Menu` above gives.
+    requestAnimationFrame(() => menu.open(anchor));
+    onStoryTeardown(() => menu.close());
+    return plainStage([el("div", { style: "width: 220px;" }, [anchor])], {
+      try: "open and shut each device group — the box must not change width, and every label must start on the same edge",
+      what: "The frame list's row menu: verbs, then the device presets as single-open groups.",
     });
   },
 };

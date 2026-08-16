@@ -98,6 +98,68 @@ export const TIP_MAX_W = 260;
 export const LABEL_RAIL_W = 68;
 
 /**
+ * The command palette's title column, and the ceiling it may grow to.
+ *
+ * Two numbers for one column, for the reason `LABEL_RAIL_W` and
+ * `LABEL_MAX_CHARS` below are two numbers for one rail: the width is what the
+ * layout uses and the character count is the budget prose cannot hold.
+ *
+ * The column is *measured*, not declared — `.palette-list` sizes it with
+ * `fit-content()`, so it is as wide as the longest title actually on screen and
+ * a query filtered down to two rows does not reserve room for twenty-six
+ * characters. `PALETTE_TITLE_MAX` is only the ceiling that stops one long title
+ * from eating the sentence beside it. `PALETTE_TITLE_W` is the same column for
+ * an engine without `subgrid`, where nothing can measure across rows and a
+ * literal is the honest fallback rather than a shrug.
+ *
+ * 176 is arrived at rather than picked: the longest title the catalog ships is
+ * "Drop the change you are on" at 26 characters, and at `--ap-font-size-title`
+ * (13px Inter) a mixed-case character averages ~6.6px — 172, rounded onto the
+ * 8px grid. `keys/catalog.test.ts` asserts against `PALETTE_TITLE_MAX_CHARS`,
+ * because the derivation is only true while that sentence is still the longest.
+ */
+export const PALETTE_TITLE_W = 176;
+export const PALETTE_TITLE_MAX = 220;
+export const PALETTE_TITLE_MAX_CHARS = 26;
+
+/**
+ * The widest a menu may get, in CSS px.
+ *
+ * A cap, and deliberately not a floor. `.fc-menu` in `canvas.css.ts` used to
+ * answer the same problem with `min-width: 288px` and a paragraph apologising
+ * for it — "the root pane being over-wide is the price" — because a collapsed
+ * `display: none` group measures zero and the box therefore resized every time
+ * you opened one. The collapse was what was wrong: a group that is shut but
+ * still *laid out* contributes its width, so a menu is already as wide as its
+ * widest row in any group and there is nothing left for a floor to prevent. See
+ * `.pop-group-body[inert]` in `pop.css.ts`.
+ *
+ * What is left to bound is the other direction. Menu labels are not all
+ * authored here — a token name, a font family, a comment range — and one long
+ * one would widen a menu of six verbs into a panel. 320 is measured against the
+ * widest row the product actually ships: a device row is 30px of group indent,
+ * "iPhone 16 & 17 Pro Max" (~132px at `--ap-font-size-label`), a 12px gutter,
+ * "440 × 956" (nine mono characters at `--ap-font-size-caption`, 54px) and 8px
+ * of padding — 236, plus `.pop-menu`'s own 8 and the shell's 2, about 246. 320
+ * leaves ten more characters for a device that ships next year and still reads
+ * as a menu rather than a panel.
+ */
+export const MENU_MAX_W = 320;
+
+/**
+ * The shortest a panel may be dragged, in CSS px.
+ *
+ * Here rather than in `app.ts` for the reason `MIN_DOCK_W` is: the stylesheet's
+ * docked-height fallback, the drag clamp and the dock stories all have to agree
+ * on it, and a number that has to be quoted to be explained belongs where it can
+ * be imported.
+ *
+ * Below this a panel is a title bar with a sliver under it, which is worse than
+ * not being resizable at all.
+ */
+export const MIN_DOCK_H = 200;
+
+/**
  * The most characters a rail label may run to.
  *
  * Derived the way `TIP_MAX_W` derives its own: at `--ap-font-size-label` (12px
