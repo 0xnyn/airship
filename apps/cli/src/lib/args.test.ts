@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   assertKnownFlags,
   collectRepeated,
+  FLAGS,
   requireAmount,
   requireEnum,
   requireHost,
@@ -245,5 +246,16 @@ describe("closest", () => {
     // Two edits on a three-letter word is most of the word, so no suggestion.
     expect(closest("abc", ["port"])).toBeUndefined();
     expect(closest("opencode-ur", ["opencode-url"])).toBe("opencode-url");
+  });
+});
+
+// scripts/airship-run.mjs — the ./airship dev wrapper — consumes these two and
+// strips them before argv reaches this CLI. If either ever became a real flag,
+// the wrapper would silently eat it and the repo's binary would diverge from
+// the published one for anyone using ./airship. Rename the wrapper's flag
+// instead; do not delete this test.
+describe("flags reserved by the dev wrapper", () => {
+  it.each(["skip-build", "force-build"])("does not define --%s", (name) => {
+    expect(FLAGS.map((flag) => flag.name)).not.toContain(name);
   });
 });

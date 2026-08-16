@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# The workspace's own airship, in shorthand.
+#
+# A pure passthrough to the CLI built from this tree — `./airship <anything>`
+# behaves exactly like the published `airship` binary, so everything in
+# `airship --help` works verbatim and a bare `./airship` gives you the real
+# wizard. The one thing it adds is freshness: the workspace packages are inlined
+# into the CLI bundle, so it rebuilds when they change.
+#
+#   ./airship --target 3000 --cwd ../my-app
+#   ./airship doctor
+#   ./airship --skip-build ...      # trust dist as-is (also AIRSHIP_SKIP_BUILD=1)
+#   ./airship --force-build ...     # rebuild regardless (also AIRSHIP_FORCE_BUILD=1)
+#
+# All the logic lives in scripts/airship-run.mjs — in Node rather than here so
+# that airship.cmd gives Windows the same behaviour instead of a degraded
+# passthrough. See CONTRIBUTING.md § Running the dev CLI.
+set -euo pipefail
+
+# Resolve through symlinks, so `ln -s /path/to/repo/airship ~/bin/airship` works.
+src="${BASH_SOURCE[0]}"
+while [ -L "$src" ]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  src="$(readlink "$src")"
+  [[ $src != /* ]] && src="$dir/$src"
+done
+here="$(cd -P "$(dirname "$src")" && pwd)"
+
+# exec, so no shell sits between your terminal and the CLI: signal delivery and
+# exit codes stay exact, which matters for a long-lived server you Ctrl-C.
+exec node "$here/scripts/airship-run.mjs" "$@"

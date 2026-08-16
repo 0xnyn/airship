@@ -2,3 +2,8 @@
 # otherwise write CRLF, which breaks the front-matter regexes in the
 # editor-tokens/editor-icons/site-tokens gen scripts).
 * text=auto eol=lf
+
+# ...except the one file cmd.exe reads. Batch parsing is only reliable with
+# CRLF, and this is the Windows door onto the dev CLI. Its sibling `airship`
+# must stay LF for the opposite reason: bash chokes on a CRLF shebang.
+airship.cmd text eol=crlf
