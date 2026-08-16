@@ -31,8 +31,6 @@ TARGET ?= 5173
 # URLs the dev server reports (/src/app.tsx) against this.
 APP := apps/web
 
-CLI := apps/cli/dist/index.js
-
 # Generated, and committed on purpose — the route tree is checked in so a clean
 # checkout typechecks without a build first (see .gitignore). Committed
 # generated files drift, so preflight regenerates and diffs them.
@@ -248,31 +246,37 @@ storybook\:build: ## Build the static story catalogue into storybook-static/
 
 ##@ CLI (drive airship against APP)
 
+# These are presets, not the CLI. Every one of them is `./airship` with the
+# flags this repo usually wants — so for anything the presets do not model
+# (--effort, --max-budget, a second --allowed-hosts) skip make and run
+# `./airship` directly. It is a pure passthrough, and it owns the build check:
+# the workspace packages are INLINED into the CLI bundle, so it rebuilds when
+# they change. That check used to live here as a `$(CLI):` file rule, which only
+# fired when dist was missing and so ran a stale bundle after every packages/
+# edit. See CONTRIBUTING.md § Running the dev CLI.
+
 .PHONY: run run\:safe run\:codex run\:opencode run\:inline run\:solo doctor demo
 
-run: $(CLI) ## Point airship at apps/web (its dev server must be up)
-	@node $(CLI) --target $(TARGET) --cwd $(APP)
+run: ## Point airship at apps/web (its dev server must be up)
+	@./airship --target $(TARGET) --cwd $(APP)
 
-run\:safe: $(CLI) ## Same as run, with the agent confined to the project
-	@node $(CLI) --target $(TARGET) --cwd $(APP) --safe
+run\:safe: ## Same as run, with the agent confined to the project
+	@./airship --target $(TARGET) --cwd $(APP) --safe
 
-run\:codex: $(CLI) ## Same as run, on Codex instead of Claude
-	@node $(CLI) --target $(TARGET) --cwd $(APP) --agent codex
+run\:codex: ## Same as run, on Codex instead of Claude
+	@./airship --target $(TARGET) --cwd $(APP) --agent codex
 
-run\:opencode: $(CLI) ## Same as run, on OpenCode (needs `opencode` on PATH)
-	@node $(CLI) --target $(TARGET) --cwd $(APP) --agent opencode
+run\:opencode: ## Same as run, on OpenCode (needs `opencode` on PATH)
+	@./airship --target $(TARGET) --cwd $(APP) --agent opencode
 
-run\:inline: $(CLI) ## Same as run, on the inline surface instead of the canvas
-	@node $(CLI) --target $(TARGET) --cwd $(APP) --mode inline
+run\:inline: ## Same as run, on the inline surface instead of the canvas
+	@./airship --target $(TARGET) --cwd $(APP) --mode inline
 
-run\:solo: $(CLI) ## Run apps/web's dev server and airship together, one terminal
-	@node $(CLI) --cwd $(APP) --exec "pnpm turbo run dev --filter=@airship/web"
+run\:solo: ## Run apps/web's dev server and airship together, one terminal
+	@./airship --cwd $(APP) --exec "pnpm turbo run dev --filter=@airship/web"
 
-doctor: $(CLI) ## Check the environment and report what is wrong
-	@node $(CLI) doctor --cwd $(APP)
-
-$(CLI):
-	@pnpm build
+doctor: ## Check the environment and report what is wrong
+	@./airship doctor --cwd $(APP)
 
 demo: ## One-shot: install + build, then print the two-terminal recipe
 	@$(MAKE) install build

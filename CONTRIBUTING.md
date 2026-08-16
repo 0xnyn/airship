@@ -30,6 +30,11 @@ Open <http://localhost:5174> and you are looking at Airship, with Airship's own 
 inside it. Pick the hero's button, ask for a change, and the diff lands in `apps/web/src/`.
 `make run:solo` does both in one terminal via `--exec`.
 
+`make run` is a preset. For anything it does not model — a different port, another project,
+`--effort`, `--max-budget` — use `./airship`, which is this checkout's CLI with every flag
+available. See [Running the dev CLI](#running-the-dev-cli); read it before your first change
+under `packages/`, because the bundle it builds is staler than you would expect.
+
 ### On Windows
 
 Everything builds, tests and runs on Windows — `checks.yml` gates every PR on a
@@ -38,15 +43,16 @@ Everything builds, tests and runs on Windows — `checks.yml` gates every PR on 
 `make` is the one thing that does not carry over: the Makefile declares
 `SHELL := /bin/bash` and a handful of targets genuinely need it (`help` is an `awk`
 program, `preflight` a shell conditional, `release` a bash script). It is a thin
-wrapper either way — every recipe is one `pnpm` or `node` call — so use those directly:
+wrapper either way — every recipe is one `pnpm`, `node` or `airship` call — so use those
+directly:
 
 | Instead of      | Run                                                        |
 | --------------- | ---------------------------------------------------------- |
 | `make demo`     | `pnpm install && pnpm build`                                 |
 | `make web:dev`  | `pnpm dev:web`                                               |
-| `make run`      | `node apps/cli/dist/index.js --target 5173 --cwd apps/web`   |
-| `make run:solo` | `node apps/cli/dist/index.js --cwd apps/web --exec "pnpm dev:web"` |
-| `make doctor`   | `node apps/cli/dist/index.js doctor --cwd apps/web`          |
+| `make run`      | `airship.cmd --target 5173 --cwd apps/web`                    |
+| `make run:solo` | `airship.cmd --cwd apps/web --exec "pnpm dev:web"`            |
+| `make doctor`   | `airship.cmd doctor --cwd apps/web`                          |
 | `make check`    | `pnpm lint && pnpm typecheck && pnpm test`                    |
 | `make readme`   | `node scripts/sync-readme.mjs`                               |
 | `make controls` | `node --experimental-strip-types scripts/gen-controls.mjs`, then `make readme` |
@@ -55,6 +61,14 @@ wrapper either way — every recipe is one `pnpm` or `node` call — so use thos
 
 `pnpm dev:web` rather than a bare `vite dev`: the site cannot start until
 `@airship/site-tokens` has emitted `dist/tokens.css`, and only turbo knows that.
+
+`airship.cmd` is the Windows half of `./airship`, with the same behaviour including the rebuild
+check — the logic lives in `scripts/airship-run.mjs` precisely so both platforms share it. From
+Git Bash, prefer `./airship` directly. Three Windows-only notes: PowerShell needs
+`.\airship.cmd`, and its 5.x releases mangle quotes when passing arguments to native commands,
+so `--exec "…"` is a Git Bash job; and Ctrl-C in `cmd.exe` prints `Terminate batch job (Y/N)?`
+*after* the CLI has already shut down cleanly, which is a batch-file fact rather than an
+airship one.
 
 Two things worth setting up once:
 
@@ -96,6 +110,7 @@ pnpm test        # vitest
 pnpm lint        # biome (ultracite preset)
 pnpm commit      # guided Conventional Commit (czg)
 make storybook   # the overlay's own chrome, browsable — see below
+./airship        # this checkout's CLI, rebuilt when it is behind — see below
 ```
 
 `make check` runs lint + typecheck + test. `make preflight` runs that plus the route-tree
@@ -105,15 +120,90 @@ drift check, which is exactly what CI gates a PR on — run it before opening on
 Toolchain: **pnpm** workspaces + **Turborepo**, **Biome** via **Ultracite**, **Husky** +
 **commitlint** for Conventional Commits, **tsup** builds.
 
-### Two turbo edges worth knowing
+### Running the dev CLI
 
-Both are the same edge for the same reason: a package's `dist` has to exist before something
-else can start against it.
+`./airship` runs the CLI built from this checkout. It is a **pure passthrough** — every
+argument reaches the CLI untouched and the working directory is never changed — so anything in
+`airship --help` works verbatim, `--cwd` and the upward `airship.config.json` search resolve
+against wherever you typed it, and a bare `./airship` gives you the same interactive wizard a
+real user gets. It works from outside the repo too: `cd ~/my-app && /path/to/airship/airship
+--target 3000` drives your own project with this checkout's build.
+
+```bash
+./airship                     # the wizard, against $PWD
+./airship --target 3000       # a dev server on another port
+./airship doctor              # any subcommand
+./airship --skip-build ...    # trust dist as-is (AIRSHIP_SKIP_BUILD=1)
+./airship --force-build ...   # rebuild even when it looks fresh (AIRSHIP_FORCE_BUILD=1)
+```
+
+`--skip-build` and `--force-build` are consumed by the wrapper and never forwarded, so they are
+not in `airship --help`. Everything after a `--` is the CLI's, including tokens that look like
+those two. A test in `apps/cli/src/lib/args.test.ts` keeps the CLI from ever claiming those
+names, because the wrapper would silently swallow them.
+
+**Why this exists, and why it is not optional.** `apps/cli/tsup.config.ts` sets
+`noExternal: [/^@airship\//]`, which **inlines every workspace package** into
+`apps/cli/dist/index.js`. That is deliberate: none of the `@airship/*` packages is published,
+so the tarball must declare no dependency on them, which is also why they sit in
+`devDependencies` rather than `dependencies`.
+
+The consequence catches everyone once. Edit `packages/core/src/runner.ts`, run the CLI, and you
+are running the *old* code — no error, no warning, your change simply does not happen. The same
+goes for `server`, `overlay`, `protocol`, `source`, `git`, and for the two generated packages
+whose real inputs are not even TypeScript: `@airship/editor-icons` builds from 507 SVGs under
+`assets/`, and `@airship/editor-tokens` from a markdown file.
+
+The Makefile could not catch this. Its guard was `$(CLI): ; @pnpm build` — a *file*
+prerequisite, so make ran it only when `dist/index.js` was **absent**. A stale bundle exists,
+so `make run` launched it happily. `./airship` replaces that check, and the `run:*` targets now
+go through the wrapper, so they get it too.
+
+There is also no watch loop to fall back on. `apps/cli`'s `dev` script is a bare `tsup --watch`,
+which never runs `scripts/vendor-assets.mjs` and — because the config has `clean: true` —
+*deletes* `dist/vendor/` on every rebuild. And `pnpm dev:pkgs` rebuilding `packages/*/dist` does
+nothing for a bundle that already inlined them. On-demand rebuild is the loop.
+
+**How the check works.** Before launching, the wrapper compares `apps/cli/dist/index.js`
+against `apps/cli/` and every `packages/*/` — the package roots, not just their `src/`, because
+`turbo run build --filter=@airshiplabs/cli --dry=json` shows the real input set reaching
+`package.json`, `tsconfig.json`, `tsup.config.ts`, `scripts/` and those `assets/` trees. Build
+output and machinery (`dist`, `node_modules`, dotted directories) are skipped. If anything is
+newer it runs `turbo run build --filter=@airshiplabs/cli` — the CLI's slice of the graph, so
+`apps/web` is never touched — and otherwise launches straight through, for about 90 ms of
+overhead.
+
+Two details worth knowing when it surprises you:
+
+- **It over-triggers rather than under-triggers, on purpose.** Turbo remains the authority on
+  what actually needs rebuilding; the mtime scan is only a cheap doorman deciding whether to
+  ask it. A false positive costs one cached turbo run. A false negative runs stale code, which
+  is the bug being fixed. So editing `packages/site-tokens` — which only `apps/web` uses — will
+  rebuild the CLI, and that is fine.
+- **A successful build stamps `dist/index.js`.** Turbo hashes file *contents*, so on a cache
+  hit it replays logs and leaves `dist/` untouched — meaning a plain mtime comparison would
+  never converge and would rebuild on every single invocation forever. Anything that moves
+  timestamps without changing bytes (`git checkout` and back, `git stash pop`, an
+  `ultracite fix` pass) hits exactly that path.
+
+Finally: run `./airship`, not `airship`. If you have `@airshiplabs/cli` installed globally, the
+bare name runs the *published* binary from inside this repo, and `--version` will often not
+tell them apart.
+
+### Three turbo edges worth knowing
+
+All three are the same edge for the same reason: a package's `dist` has to exist before
+something else can start against it.
 
 - **`@airship/web#dev` depends on `@airship/site-tokens#build`**, because Vite has no
   `dist/tokens.css` to import until that package's postbuild has emitted it. Start the site
   through turbo (`make web:dev`, `pnpm dev:web`) rather than with a bare `vite dev`.
 - **Storybook must start through turbo** for the same reason — see below.
+- **`@airshiplabs/cli#build` depends on `@airship/overlay#build` and
+  `@airship/editor-tokens#build`**, on top of the usual `^build`. Those two are not imported,
+  they are *served*: `packages/server/src/proxy.ts` resolves the overlay IIFEs and the editor
+  fonts at runtime, so no bundler can inline them and their `dist` has to be on disk. It is
+  also why `./airship` rebuilds through turbo rather than calling `tsup` itself.
 
 ### Hooks
 

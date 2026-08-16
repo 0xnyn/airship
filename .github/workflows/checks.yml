@@ -65,6 +65,25 @@ jobs:
       - name: Build (every package)
         run: pnpm build
 
+      # The ./airship wrapper is the documented way to run the dev CLI, and it
+      # is the only thing here with a per-platform implementation — a bash shim
+      # and a .cmd one. Nothing else exercises either, so a broken path or a
+      # CRLF shebang would reach contributors instead of CI.
+      #
+      # --skip-build keeps this a pure shim test — path resolution, argv
+      # passthrough, exit code — with no build time, since the step above
+      # already produced dist/.
+      - name: Dev CLI wrapper (posix)
+        if: matrix.os != 'windows-latest'
+        run: ./airship --skip-build --version
+
+      # shell: cmd because the runner's default on Windows is pwsh, and cmd.exe
+      # is what airship.cmd exists for.
+      - name: Dev CLI wrapper (windows)
+        if: matrix.os == 'windows-latest'
+        shell: cmd
+        run: airship.cmd --skip-build --version
+
       # apps/cli/README.md is generated from the root README.md, and it is what
       # npmjs.com renders for @airshiplabs/cli. Committed rather than built on
       # demand so a clean checkout can publish without running the generator.
