@@ -20,7 +20,10 @@ import { denyResponse } from "./access";
 import { type RunningServer, startServer } from "./index";
 
 const WS_KEY = "dGhlIHNhbXBsZSBub25jZQ==";
+/** How long a refused socket is watched to prove nothing follows the refusal. */
 const HOLD_OPEN_MS = 600;
+/** Ceiling on waiting for a reply that should arrive; only hit when broken. */
+const REPLY_CEILING_MS = 10_000;
 
 /** The first non-loopback IPv4 on this machine, when it has one. */
 const lanAddress = Object.values(os.networkInterfaces())
@@ -58,24 +61,56 @@ async function startUpstream(): Promise<Upstream> {
 }
 
 /**
- * Write one raw request, collect every byte until the peer closes. A
- * completed upgrade never closes on its own, so the socket is destroyed
- * after a beat and whatever arrived — status line, headers, the first
- * WebSocket frames — is what gets asserted on.
+ * Write one raw request, collect every byte until the peer closes. A completed
+ * upgrade never closes on its own, so something has to end the read.
+ *
+ * `until` is what ends it for a test asserting that something *arrives*: the
+ * read stops the moment the awaited bytes are in, so the assertion never races
+ * a wall clock. Without it the read runs the full `HOLD_OPEN_MS`, which is what
+ * a test asserting that something *never* arrives needs — there, the silence is
+ * the assertion, and returning early would make it vacuous.
+ *
+ * The two are separate constants because they are paid at opposite times. The
+ * quiet window is paid on every negative case; the ceiling is only ever reached
+ * when the server is genuinely broken, so it can be generous. It has to be:
+ * `hello` is written beside `git:health`, which spawns git against a cwd that
+ * is not a repository, and two process spawns on a cold Windows runner do not
+ * fit in a few hundred milliseconds. A fixed 600ms hold made every positive
+ * case here a coin flip on that runner, and `admits a same-origin page` is the
+ * one that lost it.
  */
-function exchange(port: number, request: string): Promise<string> {
+function exchange(
+  port: number,
+  request: string,
+  until?: (data: string) => boolean
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const socket = net.connect({ host: "127.0.0.1", port }, () => {
       socket.write(request);
     });
     let data = "";
+    const timer = setTimeout(
+      () => socket.destroy(),
+      until ? REPLY_CEILING_MS : HOLD_OPEN_MS
+    );
+    timer.unref();
     socket.on("data", (chunk: Buffer) => {
       data += chunk.toString("latin1");
+      if (until?.(data)) {
+        socket.destroy();
+      }
     });
     socket.on("error", reject);
-    socket.on("close", () => resolve(data));
-    setTimeout(() => socket.destroy(), HOLD_OPEN_MS).unref();
+    socket.on("close", () => {
+      clearTimeout(timer);
+      resolve(data);
+    });
   });
+}
+
+/** The upgrade completed and the server said its piece. */
+function said(...markers: string[]) {
+  return (data: string) => markers.every((marker) => data.includes(marker));
 }
 
 function upgradeRequest(
@@ -157,7 +192,8 @@ describe("the editor server, over raw sockets", () => {
     it("admits a client with no Origin at all, and says hello", async () => {
       const reply = await exchange(
         port,
-        upgradeRequest("/__airship/ws", { host: `localhost:${port}` })
+        upgradeRequest("/__airship/ws", { host: `localhost:${port}` }),
+        said('"type":"hello"')
       );
       expect(reply.startsWith("HTTP/1.1 101 ")).toBe(true);
       expect(reply).toContain('"type":"hello"');
@@ -169,7 +205,8 @@ describe("the editor server, over raw sockets", () => {
         upgradeRequest("/__airship/ws", {
           host: `localhost:${port}`,
           origin: `http://localhost:${port}`,
-        })
+        }),
+        said('"type":"hello"')
       );
       expect(reply.startsWith("HTTP/1.1 101 ")).toBe(true);
       expect(reply).toContain('"type":"hello"');
@@ -181,7 +218,8 @@ describe("the editor server, over raw sockets", () => {
       // second before greying it out is worse than one that never offered it.
       const reply = await exchange(
         port,
-        upgradeRequest("/__airship/ws", { host: `localhost:${port}` })
+        upgradeRequest("/__airship/ws", { host: `localhost:${port}` }),
+        said('"type":"git:health"')
       );
       expect(reply).toContain('"type":"git:health"');
     });
@@ -209,7 +247,8 @@ describe("the editor server, over raw sockets", () => {
     it("serves an IP-literal Host — literals cannot be rebound", async () => {
       const reply = await exchange(
         port,
-        `GET / HTTP/1.1\r\nhost: 127.0.0.1:${port}\r\n\r\n`
+        `GET / HTTP/1.1\r\nhost: 127.0.0.1:${port}\r\n\r\n`,
+        said("HTTP/1.1 200 ")
       );
       expect(reply.startsWith("HTTP/1.1 200 ")).toBe(true);
     });
@@ -222,9 +261,12 @@ describe("the editor server, over raw sockets", () => {
         upgradeRequest("/", {
           host: `localhost:${port}`,
           "sec-websocket-protocol": "vite-hmr",
-        })
+        }),
+        said("HTTP/1.1 101 ")
       );
       expect(reply.startsWith("HTTP/1.1 101 ")).toBe(true);
+      // Recorded upstream when it received the upgrade, which is strictly
+      // before the 101 waited on above was relayed back.
       expect(upstream.upgrades).toContain("vite-hmr");
     });
 
@@ -265,7 +307,8 @@ describe("the editor server, over raw sockets", () => {
         const widePort = Number(new URL(wide.url).port);
         const reply = await exchange(
           widePort,
-          `GET / HTTP/1.1\r\nhost: localhost:${widePort}\r\n\r\n`
+          `GET / HTTP/1.1\r\nhost: localhost:${widePort}\r\n\r\n`,
+          said("HTTP/1.1 200 ")
         );
         expect(reply.startsWith("HTTP/1.1 200 ")).toBe(true);
       } finally {
