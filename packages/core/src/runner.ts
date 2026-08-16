@@ -6,7 +6,7 @@
  * result. Provider-specific work lives behind `AgentAdapter` in `./providers`.
  */
 
-import { dirtyFiles, fileAtHead, isGitRepo } from "@airship/git";
+import { dirtyFiles, fileAtHead, gitStatus } from "@airship/git";
 import type {
   AgentKind,
   AttrEditTarget,
@@ -117,14 +117,40 @@ export async function runEdit(
   // and the pre-turn dirty set is primed as a baseline. Both halves belong
   // together and neither is provider-specific, so they live here rather than
   // being copied into every adapter that needs them.
+  //
+  // The per-run check is what makes the common failure legible: when git cannot
+  // run at all, every file would otherwise fail its own read for a reason
+  // nobody sees. Saying "unavailable" once, up front, marks every diff in the
+  // turn `noBaseline` so undo refuses cleanly instead of deleting them. The
+  // per-file answer still matters for the cases that genuinely differ — a path
+  // outside the work tree, a blob that is not text.
+  const git = adapter.needsGitBaseline ? gitStatus(input.cwd) : undefined;
+  /*
+   * Two gates, not one. `git status` answers perfectly well in a repository
+   * with no commits, so priming still gets a real on-disk baseline there, and
+   * in a fresh repo that is every file it holds. Only reading a blob out of
+   * HEAD needs a HEAD to read from.
+   *
+   * What the no-HEAD case still costs: a file the agent *creates* mid-turn was
+   * not in the pre-turn dirty set and has no HEAD to be absent from, so it is
+   * recorded as `unavailable` and undo declines to remove it. That is the
+   * conservative answer and also the correct one — `status -uall` omits
+   * gitignored files, so "absent from the primed set" does not actually prove
+   * the file is new, and guessing wrong here deletes something the user had.
+   */
+  const canPrime = Boolean(git?.workTree);
+  const canReadHead = Boolean(git?.workTree && git.hasCommits);
   const diffCapture = new DiffCapture(
     input.cwd,
-    adapter.needsGitBaseline ? (abs) => fileAtHead(input.cwd, abs) : undefined
+    adapter.needsGitBaseline
+      ? (abs) =>
+          canReadHead
+            ? fileAtHead(input.cwd, abs)
+            : { kind: "unavailable" as const }
+      : undefined
   );
   if (adapter.needsGitBaseline) {
-    diffCapture.prime(
-      isGitRepo(input.cwd) ? dirtyFiles(input.cwd) : new Set<string>()
-    );
+    diffCapture.prime(canPrime ? dirtyFiles(input.cwd) : new Set<string>());
   }
 
   // One recorder owns both the persisted array and the live sink, so the
