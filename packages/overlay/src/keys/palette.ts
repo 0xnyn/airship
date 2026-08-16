@@ -25,11 +25,30 @@
  * field has focus the whole time, so the registry skips every binding without
  * `allowWhileTyping`; these four carry it, and `within` keeps them from leaking
  * to a page where ↓ means something else.
+ *
+ * ## A row is not a menu row
+ *
+ * It used to be built as one — `.pop-item` plus `.pop-item-main` plus
+ * `.pop-item-hint` — and inherited three faults from a shape it is not.
+ * `.pop-item` is `justify-content: space-between`, so with an empty placeholder
+ * at each end the body floated in the middle and every row's title started at a
+ * different x, moved by the widths of the icon and the chord beside it.
+ * `.pop-item-main` is an `inline-flex` *row*, so the title and its sentence
+ * printed side by side rather than as the two lines this was written as. And
+ * `.pop-item:hover` at (0,2,0) out-ranked `.palette-row-on` at (0,1,0) — so in a
+ * surface whose entire navigation is the arrow keys, the pointer won every
+ * argument about which row was current.
+ *
+ * The palette owns its own row now, and the columns come from the *list* — see
+ * `help.css.ts`. The pointer still moves the cursor; it does it through
+ * `pointerover` → `setActive`, which is one highlight moved by two inputs rather
+ * than two highlights fighting over one row.
  */
 import { cls, el } from "../dom";
 import { icon } from "../icons";
 import { openPopover, type PopoverHandle } from "../popover-host";
 import type { Command, CommandGroup } from "./catalog";
+import { chordChips } from "./chips";
 import { keys, type LiveCommand } from "./registry";
 
 /** Only one can be open, and ⌘K while it is up should close it. */
@@ -172,23 +191,24 @@ export function openPalette(): void {
         seen = spec.group;
         list.append(el("div", { class: cls("pop-head"), text: spec.group }));
       }
-      const [chord] = keys.chords(spec.id);
+      // The first chord only. A palette row is a thing to *run*, so it wants the
+      // one key you would teach someone; the sheet is the reference that shows
+      // every chord a command answers to.
+      const [chord] = keys.chordParts(spec.id);
       const row = el(
         "div",
         {
-          class: `${cls("pop-item")} ${cls("palette-row")}`,
+          class: cls("palette-row"),
           id: `${cls("palette-row")}-${i}`,
           role: "option",
         },
         [
-          spec.icon ? icon(spec.icon, "sm") : el("span"),
-          el("span", { class: cls("pop-item-main") }, [
-            el("span", { class: cls("palette-title"), text: spec.title }),
-            el("span", { class: cls("palette-doc"), text: spec.doc }),
-          ]),
-          chord
-            ? el("span", { class: cls("pop-item-hint"), text: chord })
-            : el("span"),
+          el("span", { class: cls("palette-title"), text: spec.title }),
+          el("span", { class: cls("palette-doc"), text: spec.doc }),
+          // Always present, even empty. The three cells are placed into the
+          // list's subgrid by source order, so a row that skipped its chord
+          // would put its sentence in the chord's column.
+          chordChips(chord ? [chord] : []),
         ]
       );
       const invoke = (): void => {

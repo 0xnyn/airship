@@ -1,10 +1,11 @@
 import type { Meta, StoryObj } from "@storybook/html-vite";
-import { cls, el } from "../dom";
+import { cls, el, PREFIX } from "../dom";
 import { icon } from "../icons";
 import { plainStage } from "../stories/chrome";
 import { noop } from "../stories/fixtures";
 import { onStoryTeardown } from "../stories/lifecycle";
-import { ALL_COMMANDS, ALL_GESTURES, displayChord } from "./catalog";
+import { ALL_COMMANDS, ALL_GESTURES, displayChordParts } from "./catalog";
+import { chordChips } from "./chips";
 import { closePalette, openPalette } from "./palette";
 import { keys } from "./registry";
 import { closeShortcuts, openShortcuts } from "./shortcuts-panel";
@@ -48,7 +49,12 @@ export const Catalogue: StoryObj = {
           "div",
           {
             class: cls("sc-body"),
-            style: "columns: 1; max-width: 720px; padding: 20px;",
+            // The chip track is a custom property, normally set by the `.sc-sect`
+            // these rows would be inside. There is no section here, and both
+            // stories need more room than a command section's 112px anyway:
+            // `Catalogue` puts *two* chips on every row (mac, then pc — four for
+            // Redo) and `Gestures` puts a phrase.
+            style: `columns: 1; max-width: 720px; padding: 20px; --${PREFIX}-sc-chord-w: 260px;`,
           },
           ALL_COMMANDS.map((spec) =>
             el("div", { class: cls("sc-row") }, [
@@ -56,18 +62,13 @@ export const Catalogue: StoryObj = {
                 el("span", { text: spec.title }),
                 el("span", { class: cls("sc-why"), text: spec.group }),
               ]),
-              el(
-                "span",
-                { class: cls("sc-keys") },
+              // Both spellings of every chord, through the product's own chip
+              // renderer — so a regression in how a chord is broken into keys
+              // shows up here rather than only in the two live surfaces.
+              chordChips(
                 (spec.primary ?? spec.keys).flatMap((chord) => [
-                  el("kbd", {
-                    class: cls("sc-key"),
-                    text: displayChord(chord, "mac"),
-                  }),
-                  el("kbd", {
-                    class: cls("sc-key"),
-                    text: displayChord(chord, "pc"),
-                  }),
+                  displayChordParts(chord, "mac"),
+                  displayChordParts(chord, "pc"),
                 ])
               ),
             ])
@@ -90,7 +91,12 @@ export const Gestures: StoryObj = {
           "div",
           {
             class: cls("sc-body"),
-            style: "columns: 1; max-width: 720px; padding: 20px;",
+            // The chip track is a custom property, normally set by the `.sc-sect`
+            // these rows would be inside. There is no section here, and both
+            // stories need more room than a command section's 112px anyway:
+            // `Catalogue` puts *two* chips on every row (mac, then pc — four for
+            // Redo) and `Gestures` puts a phrase.
+            style: `columns: 1; max-width: 720px; padding: 20px; --${PREFIX}-sc-chord-w: 260px;`,
           },
           ALL_GESTURES.map((spec) =>
             el("div", { class: cls("sc-row") }, [
@@ -98,9 +104,7 @@ export const Gestures: StoryObj = {
                 el("span", { text: spec.title }),
                 el("span", { class: cls("sc-why"), text: spec.device }),
               ]),
-              el("span", { class: cls("sc-keys") }, [
-                el("kbd", { class: cls("sc-key"), text: spec.input }),
-              ]),
+              chordChips([[spec.input]]),
             ])
           )
         ),
@@ -166,12 +170,82 @@ export const ShortcutsSheet: StoryObj = {
  * Rendered from `keys.available()` — bound *and* allowed by its guard right
  * now. An action surface has to be able to run every row it shows, so the zoom
  * commands that the sheet above dims are simply absent here.
+ *
+ * Its `play` is the assertion that the rows are in columns. That is not a thing
+ * the unit suite can see — happy-dom does no layout — and it is exactly what was
+ * wrong: the row composed `.pop-item`, whose `justify-content: space-between`
+ * put the body between two zero-width placeholders, so a title's x-position was
+ * a function of the icon and chord widths beside it and no two rows agreed.
  */
 export const Palette: StoryObj = {
-  play: () => {
+  play: async () => {
     openPalette();
     // Closed explicitly, for the reason the sheet above gives.
     onStoryTeardown(closePalette);
+    // The tracks are `max-content`/`fit-content`, so they are only right once
+    // the real face has replaced the fallback and been measured against.
+    await document.fonts.ready;
+
+    const titles = [
+      ...document.querySelectorAll<HTMLElement>(`.${cls("palette-title")}`),
+    ];
+    if (titles.length < 5) {
+      throw new Error(
+        `The palette listed ${titles.length} rows, expected more.`
+      );
+    }
+    const lefts = new Set(
+      titles.map((node) => Math.round(node.getBoundingClientRect().left))
+    );
+    if (lefts.size !== 1) {
+      throw new Error(
+        `Titles start at ${lefts.size} different edges: ${[...lefts].join(", ")}px. ` +
+          "The columns come from `.palette-list`'s subgrid, not from each row."
+      );
+    }
+
+    const docs = [
+      ...document.querySelectorAll<HTMLElement>(`.${cls("palette-doc")}`),
+    ];
+    const docLefts = new Set(
+      docs.map((node) => Math.round(node.getBoundingClientRect().left))
+    );
+    if (docLefts.size !== 1) {
+      throw new Error(
+        `Sentences start at ${docLefts.size} different edges: ${[...docLefts].join(", ")}px.`
+      );
+    }
+    /*
+     * And the sentence is the thing that gives way.
+     *
+     * Asserted as "the chord column does not move" rather than "some sentence is
+     * truncated", which would be a test that the palette is too narrow — it
+     * would start failing the day the copy got shorter, which is the wrong way
+     * round. What matters is that a long sentence cannot push anything: it used
+     * to be a flex item with the initial `min-width: auto`, so its min-content
+     * width was the whole sentence and it widened the row rather than eliding,
+     * which is also why the ellipsis it declared could never fire.
+     */
+    const chords = [
+      ...document.querySelectorAll<HTMLElement>(
+        `.${cls("palette-row")} > .${cls("keys")}`
+      ),
+    ];
+    const rights = new Set(
+      chords.map((node) => Math.round(node.getBoundingClientRect().right))
+    );
+    if (rights.size !== 1) {
+      throw new Error(
+        `Chords end at ${rights.size} different edges: ${[...rights].join(", ")}px — ` +
+          "a sentence is pushing the row rather than eliding."
+      );
+    }
+    const list = document.querySelector<HTMLElement>(`.${cls("palette-list")}`);
+    if (list && list.scrollWidth > list.clientWidth + 1) {
+      throw new Error(
+        `The results overflow their card by ${list.scrollWidth - list.clientWidth}px.`
+      );
+    }
   },
   render: () => {
     bindSome();
@@ -198,7 +272,7 @@ export const HelpButton: StoryObj = {
               "data-tip": "Keyboard shortcuts",
               type: "button",
             },
-            [icon("keyboard", "sm")]
+            [icon("question", "sm")]
           ),
         ]),
       ],

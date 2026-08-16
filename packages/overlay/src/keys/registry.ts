@@ -26,6 +26,7 @@ import {
   type CommandId,
   commandSpec,
   displayChord,
+  displayChordParts,
 } from "./catalog";
 
 /**
@@ -393,6 +394,24 @@ export class Keys {
     // `primary` where one is declared: zoom answers to six real keystrokes and
     // a panel row showing all six is noise, not thoroughness.
     return (spec.primary ?? spec.keys).map((k) => displayChord(k, PLATFORM));
+  }
+
+  /**
+   * The same list, split into the keys you press — `[["⌘", "⇧", "Z"], ["⌘", "Y"]]`.
+   *
+   * For the two discovery surfaces, which render a chip per key rather than one
+   * chip per chord. A `display` override is deliberately *not* split: it exists
+   * because the literal spelling reads badly, so it is a phrase somebody wrote
+   * ("?", "← → ↑ ↓") rather than a chord to take apart.
+   */
+  chordParts(id: CommandId): string[][] {
+    const spec = commandSpec(id);
+    if (spec.display) {
+      return [[spec.display]];
+    }
+    return (spec.primary ?? spec.keys).map((k) =>
+      displayChordParts(k, PLATFORM)
+    );
   }
 
   /** Is this command bound at all right now? */

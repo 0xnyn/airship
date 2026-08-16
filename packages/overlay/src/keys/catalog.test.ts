@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { PALETTE_TITLE_MAX_CHARS } from "../styles/const";
 import {
   ALL_COMMANDS,
   COMMAND_GROUPS,
@@ -248,5 +249,28 @@ describe("rendering a chord", () => {
     expect(displayChord("numpadadd", "mac")).toBe("+");
     expect(displayChord("arrowleft", "pc")).toBe("←");
     expect(displayChord("escape", "pc")).toBe("Esc");
+  });
+});
+
+describe("what the two discovery surfaces can render", () => {
+  it("keeps every title inside the palette's title column", () => {
+    /*
+     * The column is measured with `fit-content()` where `subgrid` is available
+     * and a literal where it is not, and `PALETTE_TITLE_W` is derived from the
+     * longest title the catalog ships — "Drop the change you are on", 26
+     * characters at 13px Inter. Past that the title elides, which is a worse
+     * failure than it sounds: a palette row is a list of titles, and half a
+     * title is not a row you can pick from.
+     *
+     * Asserted rather than written down for the reason `LABEL_MAX_CHARS` gives
+     * about the rail it bounds: prose cannot hold a budget. That one claimed
+     * ten characters was the longest shipped, by which time three labels were
+     * past fourteen and one was twenty-four.
+     */
+    const over = ALL_COMMANDS.filter(
+      (spec) => spec.title.length > PALETTE_TITLE_MAX_CHARS
+    ).map((spec) => `${spec.id} (${spec.title.length})`);
+
+    expect(over).toEqual([]);
   });
 });
