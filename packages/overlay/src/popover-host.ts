@@ -756,6 +756,14 @@ export interface MenuItem {
   label: string;
   on?: boolean;
   run: () => void;
+  /**
+   * Why this row is greyed, shown on hover.
+   *
+   * A disabled row that does not say why is a dead end: the user can see that
+   * Commit is unavailable and has nothing to act on. Pair it with `disabled`
+   * whenever the reason is something they can fix.
+   */
+  tip?: string;
 }
 
 /**
@@ -1002,16 +1010,35 @@ export function createMenu(entries: MenuEntry[]): MenuHandle {
 
   const buildRow = (entry: MenuItem): HTMLElement => {
     const disabled = Boolean(entry.disabled);
+    /*
+     * A disabled row that carries a reason keeps `aria-disabled` and loses the
+     * `disabled` *attribute*.
+     *
+     * Browsers do not dispatch pointer events from a disabled form control, so
+     * `data-tip` on one is never read: `Tooltips` matches on `pointerover`, and
+     * the event it sees is targeted at the ancestor instead. The greying is
+     * driven by `[aria-disabled="true"]` in `pop.css.ts`, not by `:disabled`, so
+     * dropping the attribute costs nothing visually, and `tabindex="-1"` keeps
+     * the row out of the tab order that the attribute used to hold it out of.
+     * Rows with no reason to give keep the plain `disabled` and are unchanged.
+     */
+    const hoverable = disabled && Boolean(entry.tip);
     const row = el(
       "button",
       {
+        "aria-label":
+          hoverable && entry.tip ? `${entry.label}. ${entry.tip}` : undefined,
         class: `${cls("pop-item")}${entry.on ? ` ${cls("pop-item-on")}` : ""}`,
+        "data-tip": entry.tip,
         role: "menuitem",
         type: "button",
         // Omitting the attribute is what keeps the roving cursor off it; the
         // arrow-key code only ever queries `[data-pop-item]`.
         ...(disabled
-          ? { "aria-disabled": "true", disabled: "" }
+          ? {
+              "aria-disabled": "true",
+              ...(hoverable ? { tabindex: "-1" } : { disabled: "" }),
+            }
           : { "data-pop-item": "" }),
         onClick: disabled
           ? undefined

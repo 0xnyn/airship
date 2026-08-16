@@ -7,6 +7,7 @@ import {
   type CreateJobRequest,
   type Editor,
   type ElementContext,
+  type GitHealth,
   type ImageInput,
   type JobDiffBundle,
   type JobHistorySummary,
@@ -630,6 +631,14 @@ export class AirshipApp {
   private undoBtn!: HTMLButtonElement;
   private redoBtn!: HTMLButtonElement;
   private tooltips: Tooltips | null = null;
+
+  /**
+   * Whether the daemon's git works, so the turn menu can grey its git verbs
+   * with the reason attached. Undefined until the first `git:health` arrives,
+   * which reads as healthy — an older daemon never sends one, and hiding a
+   * working Commit is worse than offering one that might fail.
+   */
+  private gitHealth: GitHealth | undefined;
 
   private selected: Selection | null = null;
   private images: ImageInput[] = [];
@@ -4027,6 +4036,12 @@ export class AirshipApp {
         this.previewKey = "";
         this.schedulePreview();
         break;
+      case "git:health":
+        // Stored, not rendered: the turn menu is built on open, so the next
+        // time it opens it reads this. Nothing on screen depends on it until
+        // then, which is why there is no repaint here.
+        this.gitHealth = ev.health;
+        break;
       case "job:created":
         if (this.awaiting && !this.activeJobId) {
           this.activeJobId = ev.job.jobId;
@@ -4238,6 +4253,7 @@ export class AirshipApp {
   private assistantActions(bundle: JobDiffBundle): AssistantActions {
     const canRevert = bundle.status === "done" && bundle.diffs.length > 0;
     return {
+      git: this.gitHealth,
       onBranch:
         bundle.status === "done" ? () => this.branch(bundle.jobId) : undefined,
       onComment: canRevert
