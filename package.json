@@ -29,7 +29,7 @@
     "husky": "^9.1.7",
     "tsup": "^8.5.0",
     "turbo": "^2.10.9",
-    "typescript": "^6.0.3",
+    "typescript": "^7.0.2",
     "ultracite": "^7.10.1",
     "vitest": "^4.1.10"
   },
