@@ -7,9 +7,11 @@
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import { createRequire } from "node:module";
 import net from "node:net";
 import type { Duplex } from "node:stream";
+import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import {
   brotliCompressSync,
@@ -253,6 +255,13 @@ export interface ProxyDeps {
   ) => void;
   targetHost: string;
   targetPort: number;
+  /**
+   * What the dev server speaks. Detected by the CLI's handshake probe, never
+   * configured — a plaintext request into a TLS listener fails the handshake
+   * and surfaces as an unreachable server, which is indistinguishable from a
+   * dev server that is simply not running.
+   */
+  targetProtocol: "http" | "https";
   wsPath: string;
 }
 
@@ -279,6 +288,26 @@ export function createProxyServer(deps: ProxyDeps): http.Server {
     tunnelUpgrade(req, socket, head, deps);
   });
   return server;
+}
+
+/**
+ * How Airship connects to a TLS dev server.
+ *
+ * `rejectUnauthorized: false` is deliberate and safe here: the target is a
+ * loopback dev server whose certificate is self-signed or chains to a locally
+ * generated mkcert root that Node does not trust. Verifying it would refuse to
+ * proxy the exact servers this exists for, and there is no transport to
+ * intercept — both ends are this machine.
+ */
+function tlsClientOptions(host: string): {
+  rejectUnauthorized: boolean;
+  servername?: string;
+} {
+  return {
+    rejectUnauthorized: false,
+    // SNI may not carry an IP literal (RFC 6066), and Node warns when handed one.
+    ...(net.isIP(host) ? {} : { servername: host }),
+  };
 }
 
 function handleHttp(
@@ -316,7 +345,10 @@ function handleHttp(
     host: `${deps.targetHost}:${deps.targetPort}`,
   };
 
-  const proxyReq = http.request(
+  const secure = deps.targetProtocol === "https";
+  const client = secure ? https : http;
+
+  const proxyReq = client.request(
     {
       headers,
       host: deps.targetHost,
@@ -325,6 +357,7 @@ function handleHttp(
       port: deps.targetPort,
       // Node >=20 defaults autoSelectFamily on, so a `localhost` target reaches
       // whichever of ::1/127.0.0.1 the dev server bound (Vite 6 binds ::1 only).
+      ...(secure ? tlsClientOptions(deps.targetHost) : {}),
     },
     (proxyRes) => {
       const status = proxyRes.statusCode ?? 200;
@@ -400,7 +433,7 @@ function handleHttp(
   proxyReq.on("error", (err) => {
     res.writeHead(502, { "content-type": "text/plain" });
     res.end(
-      `airship: could not reach your dev server at ${deps.targetHost}:${deps.targetPort}\n${err.message}`
+      `airship: could not reach your dev server at ${deps.targetProtocol}://${deps.targetHost}:${deps.targetPort}\n${err.message}`
     );
   });
 
@@ -581,29 +614,41 @@ function tunnelUpgrade(
   head: Buffer,
   deps: ProxyDeps
 ): void {
-  const upstream = net.connect(
-    // Options form so happy-eyeballs applies (Vite 6 binds ::1 only).
-    { autoSelectFamily: true, host: deps.targetHost, port: deps.targetPort },
-    () => {
-      const lines = [`${req.method} ${req.url} HTTP/1.1`];
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (Array.isArray(value)) {
-          for (const v of value) {
-            lines.push(`${key}: ${v}`);
-          }
-        } else if (value !== undefined) {
-          lines.push(`${key}: ${value}`);
+  const secure = deps.targetProtocol === "https";
+  // Options form so happy-eyeballs applies (Vite 6 binds ::1 only).
+  const connectOptions = {
+    autoSelectFamily: true,
+    host: deps.targetHost,
+    port: deps.targetPort,
+  };
+  const onConnect = () => {
+    const lines = [`${req.method} ${req.url} HTTP/1.1`];
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (Array.isArray(value)) {
+        for (const v of value) {
+          lines.push(`${key}: ${v}`);
         }
+      } else if (value !== undefined) {
+        lines.push(`${key}: ${value}`);
       }
-      lines.push("\r\n");
-      upstream.write(lines.join("\r\n"));
-      if (head?.length) {
-        upstream.write(head);
-      }
-      upstream.pipe(socket);
-      socket.pipe(upstream);
     }
-  );
+    lines.push("\r\n");
+    upstream.write(lines.join("\r\n"));
+    if (head?.length) {
+      upstream.write(head);
+    }
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+  };
+  // tls.connect and net.connect don't unify under one signature — tls.TLSSocket
+  // extends net.Socket and tls.connect's callback fires on secureConnect, so an
+  // explicit branch typed as net.Socket is equivalent to the union at runtime.
+  const upstream: net.Socket = secure
+    ? tls.connect(
+        { ...connectOptions, ...tlsClientOptions(deps.targetHost) },
+        onConnect
+      )
+    : net.connect(connectOptions, onConnect);
 
   upstream.setTimeout(TUNNEL_TIMEOUT_MS);
   const teardown = () => {

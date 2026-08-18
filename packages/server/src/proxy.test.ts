@@ -1,7 +1,12 @@
-import type http from "node:http";
+import { readFileSync } from "node:fs";
+import http from "node:http";
+import https from "node:https";
+import type { AddressInfo } from "node:net";
+import { join } from "node:path";
+import type { Duplex } from "node:stream";
 import { AIRSHIP_SURFACE_COOKIE } from "@airship/protocol";
-import { describe, expect, it } from "vitest";
-import { filterProxyHeaders, resolveMode } from "./proxy";
+import { afterEach, describe, expect, it } from "vitest";
+import { createProxyServer, filterProxyHeaders, resolveMode } from "./proxy";
 
 /** Just enough of an IncomingMessage for `resolveMode`. */
 function req(opts: {
@@ -198,5 +203,139 @@ describe("filterProxyHeaders", () => {
       { forSurface: true, injecting: false, keepCsp: false }
     );
     expect(out["set-cookie"]).toEqual(["a=1", "b=2"]);
+  });
+});
+
+const FIXTURES = join(import.meta.dirname, "../test-fixtures");
+const TLS_OPTIONS = {
+  cert: readFileSync(join(FIXTURES, "localhost.pem")),
+  key: readFileSync(join(FIXTURES, "localhost-key.pem")),
+};
+
+const open: (http.Server | https.Server)[] = [];
+
+function listen(server: http.Server | https.Server): Promise<number> {
+  open.push(server);
+  return new Promise((resolvePort) => {
+    server.listen(0, "localhost", () => {
+      resolvePort((server.address() as AddressInfo).port);
+    });
+  });
+}
+
+/** GET through the proxy, which always serves plaintext. */
+function get(
+  port: number,
+  path: string
+): Promise<{ body: string; status: number }> {
+  return new Promise((resolveBody, reject) => {
+    const request = http.request({ host: "localhost", path, port }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on("data", (c: Buffer) => chunks.push(c));
+      res.on("end", () =>
+        resolveBody({
+          body: Buffer.concat(chunks).toString("utf8"),
+          status: res.statusCode ?? 0,
+        })
+      );
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+/** A proxy pointed at `targetPort`, with the parts these tests do not exercise stubbed. */
+async function proxyTo(
+  targetPort: number,
+  targetProtocol: "http" | "https"
+): Promise<number> {
+  const server = createProxyServer({
+    // Empty is correct rather than lazy: isAllowedHost always permits localhost
+    // and IP literals, and these tests only ever reach the proxy on localhost.
+    allowedHosts: new Set<string>(),
+    defaultMode: "inline",
+    onAirshipUpgrade: () => undefined,
+    targetHost: "localhost",
+    targetPort,
+    targetProtocol,
+    wsPath: "/__airship/ws",
+  });
+  return await listen(server);
+}
+
+afterEach(async () => {
+  await Promise.all(
+    open.splice(0).map(
+      (server) =>
+        new Promise<void>((done) => {
+          server.closeAllConnections?.();
+          server.close(() => done());
+        })
+    )
+  );
+});
+
+describe("proxying an https dev server", () => {
+  it("injects the overlay into HTML served over TLS", async () => {
+    const upstream = https.createServer(TLS_OPTIONS, (_req, res) => {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end("<html><head></head><body><h1>hi</h1></body></html>");
+    });
+    const proxyPort = await proxyTo(await listen(upstream), "https");
+
+    const { body, status } = await get(proxyPort, "/");
+    expect(status).toBe(200);
+    expect(body).toContain("/__airship/overlay.js");
+    expect(body).toContain("<h1>hi</h1>");
+  });
+
+  it("passes a non-HTML response straight through", async () => {
+    const upstream = https.createServer(TLS_OPTIONS, (_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end('{"ok":true}');
+    });
+    const proxyPort = await proxyTo(await listen(upstream), "https");
+
+    expect((await get(proxyPort, "/api")).body).toBe('{"ok":true}');
+  });
+
+  it("still proxies a plaintext dev server", async () => {
+    const upstream = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end("<html><body>plain</body></html>");
+    });
+    const proxyPort = await proxyTo(await listen(upstream), "http");
+
+    expect((await get(proxyPort, "/")).body).toContain("/__airship/overlay.js");
+  });
+
+  it("tunnels a websocket upgrade over TLS", async () => {
+    const upstream = https.createServer(TLS_OPTIONS);
+    upstream.on("upgrade", (_req, serverSocket) => {
+      serverSocket.write(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+      );
+      serverSocket.on("data", (chunk: Buffer) => serverSocket.write(chunk));
+    });
+    const proxyPort = await proxyTo(await listen(upstream), "https");
+
+    const request = http.request({
+      headers: { Connection: "Upgrade", Upgrade: "websocket" },
+      host: "localhost",
+      path: "/hmr",
+      port: proxyPort,
+    });
+    request.end();
+
+    const socket = await new Promise<Duplex>((resolveSocket) => {
+      request.on("upgrade", (_res, upgraded) => resolveSocket(upgraded));
+    });
+    socket.write("ping");
+    const echoed = await new Promise<string>((resolveEcho) => {
+      socket.once("data", (chunk: Buffer) => resolveEcho(chunk.toString()));
+    });
+    socket.destroy();
+
+    expect(echoed).toBe("ping");
   });
 });

@@ -129,6 +129,8 @@ export interface ServerOptions {
   targetHost?: string;
   /** Port the user's dev server is already running on. */
   targetPort: number;
+  /** What the dev server speaks; detected by the CLI. */
+  targetProtocol?: "http" | "https";
 }
 
 export interface RunningServer {
@@ -645,6 +647,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     },
     targetHost,
     targetPort: opts.targetPort,
+    targetProtocol: opts.targetProtocol ?? "http",
     wsPath: WS_PATH,
   });
 

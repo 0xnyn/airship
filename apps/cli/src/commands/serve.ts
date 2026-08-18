@@ -36,6 +36,8 @@ import {
   detectTarget,
   firstFreePort,
   isListening,
+  probeScheme,
+  type TargetScheme,
 } from "../lib/detect";
 import { CliError, EXIT } from "../lib/errors";
 import { type DevServer, openInBrowser, startDevServer } from "../lib/exec";
@@ -166,6 +168,12 @@ export function toServeOptions(settings: Settings, cwd: string): ServeOptions {
   };
 }
 
+interface ResolvedTarget {
+  port: number;
+  /** Undefined under `--exec`: nothing is listening yet to probe. */
+  scheme?: TargetScheme;
+}
+
 /**
  * Settle on a target port.
  *
@@ -173,19 +181,24 @@ export function toServeOptions(settings: Settings, cwd: string): ServeOptions {
  * is listening on yet is exactly right. Without it, the port has to be live —
  * proxying a dead port produces a 502 on the first request and looks like
  * airship is broken rather than like the dev server is not running.
+ *
+ * Exported for the tests, following `toServeOptions`'s own precedent.
  */
-async function resolveTarget(opts: ServeOptions): Promise<number> {
+export async function resolveTarget(
+  opts: ServeOptions
+): Promise<ResolvedTarget> {
   if (opts.target !== undefined) {
     if (opts.exec) {
       await assertFree(opts.target);
-      return opts.target;
+      return { port: opts.target };
     }
-    if (!(await isListening(opts.target))) {
+    const scheme = await probeScheme(opts.target);
+    if (!scheme) {
       throw new CliError(`Nothing is listening on port ${opts.target}`, {
         hint: 'Start your dev server first, or let airship start it with --exec "pnpm dev".',
       });
     }
-    return opts.target;
+    return { port: opts.target, scheme };
   }
 
   if (opts.exec) {
@@ -204,7 +217,7 @@ async function resolveTarget(opts: ServeOptions): Promise<number> {
     if (!opts.quiet) {
       note(`  → expecting port ${first.port} — ${first.reason}\n`);
     }
-    return first.port;
+    return { port: first.port };
   }
 
   const detected = await detectTarget(opts.cwd);
@@ -224,7 +237,7 @@ async function resolveTarget(opts: ServeOptions): Promise<number> {
   if (!opts.quiet) {
     note(`  → using port ${detected.port} — ${detected.reason}\n`);
   }
-  return detected.port;
+  return { port: detected.port, scheme: detected.scheme };
 }
 
 /**
@@ -240,6 +253,37 @@ async function assertFree(port: number): Promise<void> {
       hint: "Stop it, or drop --exec to attach to it instead.",
     });
   }
+}
+
+/**
+ * Longer than `probeScheme`'s own 400ms default. This call runs immediately
+ * after `startDevServer`'s readiness poll — which proves only that the port
+ * accepts TCP — against a process that may still be mid first-compile. A
+ * truncated TLS handshake here falls back to plain `isListening` and reports
+ * "http", which would silently serve the editor in plaintext against a dev
+ * server that is actually HTTPS. `PROBE_TIMEOUT_MS` itself stays untouched:
+ * it is Task 1's constant and other callers rely on its current value.
+ */
+const POST_SPAWN_PROBE_TIMEOUT_MS = 2000;
+
+/**
+ * The target's scheme, probing only when it is not already known.
+ *
+ * Exported for the tests: this is the exact mechanism responsible for
+ * re-probing after `--exec` starts the dev server. Inlining the `??` at the
+ * call site let a prior version of this file's test suite pass even after
+ * the probe was deleted — the test only ever checked what `resolveTarget`
+ * returned, never that this step actually ran.
+ */
+export async function settleScheme(
+  known: TargetScheme | undefined,
+  port: number
+): Promise<TargetScheme> {
+  return (
+    known ??
+    (await probeScheme(port, "localhost", POST_SPAWN_PROBE_TIMEOUT_MS)) ??
+    "http"
+  );
 }
 
 /**
@@ -285,7 +329,7 @@ export const serve = defineCommand({
     const opts = toServeOptions(settings, cwd);
     setColorEnabled(shouldColor({ json: opts.json }));
 
-    const targetPort = await resolveTarget(opts);
+    const { port: targetPort, scheme } = await resolveTarget(opts);
     // Default to target + 1, but step past anything already bound so a second
     // airship in another project does not fail on EADDRINUSE. Probed on the
     // bind host: a port free on ::1 can still be taken on 127.0.0.1.
@@ -324,7 +368,12 @@ export const serve = defineCommand({
     }
 
     let server: Awaited<ReturnType<typeof startServer>>;
+    let targetScheme: TargetScheme;
     try {
+      // Under --exec the port was free until a moment ago, so this is the first
+      // point at which there is anything to probe.
+      targetScheme = await settleScheme(scheme, targetPort);
+
       server = await startServer({
         agent: opts.agent,
         allowedHosts: opts.allowedHosts,
@@ -343,6 +392,7 @@ export const serve = defineCommand({
         safe: opts.safe,
         surface: opts.surface,
         targetPort,
+        targetProtocol: targetScheme,
       });
     } catch (err) {
       // We started the dev server; if the proxy cannot come up it is ours to
@@ -366,6 +416,7 @@ export const serve = defineCommand({
             port,
             safe: opts.safe,
             targetPort,
+            targetScheme,
             url: server.url,
           },
           null,
@@ -382,6 +433,7 @@ export const serve = defineCommand({
           safe: opts.safe,
           surface: opts.surface,
           targetPort,
+          targetScheme,
           url: server.url,
         })
       );

@@ -275,6 +275,20 @@ forwarded.
 | `--open` | Open the editor in your browser once it is listening. | |
 | `--keep-csp` | Keep your app's `Content-Security-Policy` on editor surfaces instead of stripping it. Framing headers (`X-Frame-Options`) are always stripped. | off |
 
+A dev server running over HTTPS needs no configuration: airship detects that it
+speaks TLS and connects accordingly, including for HMR. The editor itself is
+always served over plain `http://localhost`, which browsers treat as a secure
+context — `Secure` cookies, service workers and the rest all work there, and an
+HTTP page loading HTTPS resources is not mixed content.
+
+Note that the editor runs on its own port, so your app's origin changes from
+`:3000` to `:3001`. Anything your app fetches with an absolute URL at the dev
+server's own origin — an asset prefix, a `NEXT_PUBLIC_*` base URL — will bypass
+the proxy and be blocked by CORS, since fonts are always CORS-checked and images
+are whenever `crossorigin` is set. Point those at a relative path so they flow
+through airship. For the same reason, if a backend's CORS allowlist names an
+origin with its port, add the editor's or pick a matching `--port`.
+
 ### Agent
 
 | Flag | | Default |

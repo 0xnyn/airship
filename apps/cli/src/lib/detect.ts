@@ -12,6 +12,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
+import tls from "node:tls";
 
 export interface Candidate {
   port: number;
@@ -22,6 +23,8 @@ export interface Candidate {
 export interface Detection extends Candidate {
   /** Whether something is accepting connections there right now. */
   listening: boolean;
+  /** The protocol it speaks. Only meaningful when `listening`. */
+  scheme?: TargetScheme;
 }
 
 /**
@@ -127,6 +130,17 @@ export function candidatePorts(cwd: string): Candidate[] {
 
 const PROBE_TIMEOUT_MS = 400;
 
+/**
+ * Retry window for a handshake that only timed out, not one that errored.
+ *
+ * A `next dev --experimental-https` process whose event loop is blocked
+ * mid-compile can miss `PROBE_TIMEOUT_MS`'s 400ms without being plaintext —
+ * unlike an `error`, which is a plaintext server actively rejecting the
+ * ClientHello and needs no second look. `PROBE_TIMEOUT_MS` itself stays 400 for
+ * every caller; this only widens the window for the one retry a timeout gets.
+ */
+const TIMEOUT_RETRY_MS = 2000;
+
 /** Whether anything is listening. Used for detection and by `doctor`. */
 export function isListening(
   port: number,
@@ -143,6 +157,88 @@ export function isListening(
     socket.once("connect", () => done(true));
     socket.once("timeout", () => done(false));
     socket.once("error", () => done(false));
+  });
+}
+
+export type TargetScheme = "http" | "https";
+
+/**
+ * Which protocol the dev server speaks.
+ *
+ * A TLS handshake is the only unambiguous test: a plaintext server cannot
+ * complete one. It fails in one of two ways, and they are not equally good
+ * evidence. An `error` — the ClientHello answered with an HTTP 400 and the
+ * connection dropped — is a plaintext server actively rejecting it, a sound
+ * inference the first time. A `timeout` — the TCP connection accepted and then
+ * nothing read or written — is genuinely ambiguous: it is what a plaintext
+ * server looks like, but it is equally what an https dev server whose event
+ * loop is blocked mid-compile looks like for however long the compile takes.
+ * So `error` falls straight back to a plain TCP probe, while `timeout` gets one
+ * retry with a longer window first — `retryTimeoutMs` doubling as the "have we
+ * already retried" flag, since the recursive call passes `0` to disable a
+ * second one. Only once *that* also fails to complete does a timeout fall back
+ * to the same TCP probe `error` uses. `isListening` alone cannot make any of
+ * this distinction — it is a bare TCP connect, which a TLS listener accepts
+ * happily, which is why an https dev server used to launch cleanly and then
+ * 502 on the first request.
+ *
+ * `rejectUnauthorized: false` because the question is "does this speak TLS",
+ * not "do I trust it". Dev certificates are self-signed or chain to a locally
+ * generated mkcert root, and validating them here would report every real https
+ * dev server as plaintext.
+ */
+export function probeScheme(
+  port: number,
+  host = "localhost",
+  timeoutMs = PROBE_TIMEOUT_MS,
+  retryTimeoutMs = TIMEOUT_RETRY_MS
+): Promise<TargetScheme | null> {
+  return new Promise((resolveScheme) => {
+    const socket = tls.connect({
+      host,
+      port,
+      rejectUnauthorized: false,
+      // SNI is not permitted to carry an IP literal (RFC 6066), and Node warns
+      // when handed one.
+      ...(net.isIP(host) ? {} : { servername: host }),
+    });
+    let settled = false;
+    const done = (result: TargetScheme): void => {
+      settled = true;
+      socket.destroy();
+      resolveScheme(result);
+    };
+    // Shared by `error` and a `timeout` that has already had its retry: neither
+    // a rejected handshake nor one that never completes proves the port is
+    // dead, so both fall back to a plain TCP probe to tell "plaintext" apart
+    // from "nothing there". Guarded against running twice, in case two events
+    // somehow fire for the same socket.
+    const fallbackToTcpProbe = (): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.destroy();
+      isListening(port, host, timeoutMs).then((live) =>
+        resolveScheme(live ? "http" : null)
+      );
+    };
+    const onTimeout = (): void => {
+      if (settled) {
+        return;
+      }
+      if (retryTimeoutMs <= 0) {
+        fallbackToTcpProbe();
+        return;
+      }
+      settled = true;
+      socket.destroy();
+      probeScheme(port, host, retryTimeoutMs, 0).then(resolveScheme);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("secureConnect", () => done("https"));
+    socket.once("error", fallbackToTcpProbe);
+    socket.once("timeout", onTimeout);
   });
 }
 
@@ -164,8 +260,9 @@ export async function detectTarget(
     // hit wins, so probing them together would open connections to ports we have
     // already decided against and could pick the one that merely answered first.
     // biome-ignore lint/performance/noAwaitInLoops: ordered first-match search
-    if (await isListening(candidate.port, host)) {
-      return { ...candidate, listening: true };
+    const scheme = await probeScheme(candidate.port, host);
+    if (scheme) {
+      return { ...candidate, listening: true, scheme };
     }
   }
   const [first] = candidates;
