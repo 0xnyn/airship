@@ -149,7 +149,7 @@ inspector are open on either side of it.
 
 **View** is about your frames. The page underneath is fully interactive — click through it,
 fill in forms, scroll — so there is no element selection, and the two panels that depend on
-one step aside. In their place the left panel lists every frame, and a minimap appears in
+it step aside. In their place the left panel lists every frame, and a minimap appears in
 the bottom-right corner:
 
 - Click a frame in the list to go to it without changing your zoom; double-click to zoom
