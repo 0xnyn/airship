@@ -1,7 +1,7 @@
 ---
 name: Airship Site
 description: >-
-  The design system for airship's home page — a warm neutral stone ramp, hairline
+  The design system for Airship's home page — a warm neutral stone ramp, hairline
   rules instead of shadows, a single near-black call to action, and no accent hue
   in the page chrome at all. Hierarchy comes from size, weight and space. This
   front-matter is the canonical token source for `@airship/site-tokens` (emitted
