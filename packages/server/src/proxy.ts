@@ -49,7 +49,36 @@ const STRIP_ON_INJECT = new Set([
   "upgrade",
   "content-length",
   "content-encoding",
+  // Validators and freshness describe the upstream body. The one we serve is
+  // rewritten per surface, so every one of them is wrong for it — and worse
+  // than wrong, see `SURFACE_NO_STORE`.
+  "etag",
+  "last-modified",
+  "expires",
+  "cache-control",
 ]);
+
+/**
+ * Every document served as a surface is `no-store`, and every request that
+ * will become one goes upstream unconditionally.
+ *
+ * A surface document is chosen per request — by `?__airship=`, the fetch
+ * destination, and the sticky cookie — so the same URL legitimately yields the
+ * shell one moment and the injected page the next. Browsers do not know that.
+ * An injected page that kept upstream's `Last-Modified` (and no
+ * `Cache-Control`, as static servers tend to send) was heuristically cached,
+ * and the surface switcher's next navigation to the same URL either reused it
+ * outright or revalidated with `If-Modified-Since`, got a 304 from upstream —
+ * which cannot be injected into, so it passed through — and the browser showed
+ * the cached inline page again. Switching inline → canvas silently failed,
+ * while canvas → inline worked because the shell was already `no-store`.
+ *
+ * Two halves, both needed: `no-store` on what we serve stops the next visit
+ * from caching it, and dropping the conditional headers on what we forward
+ * stops an already-cached copy from being revalidated past us.
+ */
+const SURFACE_NO_STORE = "no-store";
+const CONDITIONAL_REQUEST = ["if-none-match", "if-modified-since"] as const;
 
 // Policy, not protocol: framing headers exist to stop *other* origins from
 // embedding the app, but every surface here is same-origin inside the editor's
@@ -309,12 +338,18 @@ function handleHttp(
   // know whether the response is frame-destined even when it cannot inject.
   const resolved = resolveMode(req, deps.defaultMode);
 
-  const headers = {
+  const headers: http.IncomingHttpHeaders = {
     ...req.headers,
     // Ask for identity so we can inject into HTML reliably.
     "accept-encoding": "identity",
     host: `${deps.targetHost}:${deps.targetPort}`,
   };
+  if (resolved !== "passthrough") {
+    // See `SURFACE_NO_STORE`: a 304 cannot become a surface.
+    for (const name of CONDITIONAL_REQUEST) {
+      delete headers[name];
+    }
+  }
 
   const proxyReq = http.request(
     {
@@ -369,7 +404,7 @@ function handleHttp(
           wsPath: deps.wsPath,
         });
         res.writeHead(status, {
-          "cache-control": "no-store",
+          "cache-control": SURFACE_NO_STORE,
           "content-length": String(Buffer.byteLength(body)),
           "content-type": "text/html; charset=utf-8",
         });
@@ -390,6 +425,7 @@ function handleHttp(
           injecting: true,
           keepCsp: deps.keepCsp ?? false,
         });
+        outHeaders["cache-control"] = SURFACE_NO_STORE;
         outHeaders["content-length"] = String(Buffer.byteLength(body));
         res.writeHead(status, outHeaders);
         res.end(body);
