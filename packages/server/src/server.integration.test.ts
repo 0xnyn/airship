@@ -44,7 +44,17 @@ async function startUpstream(): Promise<Upstream> {
   const upgrades: string[] = [];
   const server = createServer((req, res) => {
     requests.push(`${req.method} ${req.url}`);
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    // As a static file server behaves: a validator on every page, and a 304
+    // for any revalidation. The surface tests below lean on both.
+    if (req.headers["if-modified-since"] || req.headers["if-none-match"]) {
+      res.writeHead(304);
+      res.end();
+      return;
+    }
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "last-modified": "Fri, 21 Aug 2026 19:52:53 GMT",
+    });
     res.end("<html><body>upstream</body></html>");
   });
   server.on("upgrade", (req, socket) => {
@@ -222,6 +232,51 @@ describe("the editor server, over raw sockets", () => {
         said('"type":"git:health"')
       );
       expect(reply).toContain('"type":"git:health"');
+    });
+  });
+
+  describe("the surfaces and the browser cache", () => {
+    // The surface switcher writes a cookie and navigates to the same URL. A
+    // browser holding a cached copy of that URL revalidates it, and a 304 from
+    // upstream cannot become a surface — so a switch inline → canvas used to
+    // silently show the cached inline page again.
+    const navigation = (extra: string) =>
+      `GET / HTTP/1.1\r\nhost: 127.0.0.1:${port}\r\nsec-fetch-dest: document\r\n${extra}\r\n`;
+
+    it("serves the shell to a revalidating navigation, not a 304", async () => {
+      const reply = await exchange(
+        port,
+        navigation(
+          "cookie: __airship_surface=canvas\r\nif-modified-since: Fri, 21 Aug 2026 19:52:53 GMT\r\n"
+        ),
+        said("</html>")
+      );
+      expect(reply.startsWith("HTTP/1.1 200 ")).toBe(true);
+      expect(reply).toContain("data-airship-shell");
+    });
+
+    it("serves an injected page as no-store, with upstream's validator gone", async () => {
+      const reply = await exchange(
+        port,
+        navigation(
+          'cookie: __airship_surface=inline\r\nif-none-match: "abc"\r\n'
+        ),
+        said("</html>")
+      );
+      const [head] = reply.split("\r\n\r\n");
+      expect(reply.startsWith("HTTP/1.1 200 ")).toBe(true);
+      expect(reply).toContain("/__airship/overlay.js");
+      expect(head.toLowerCase()).toContain("cache-control: no-store");
+      expect(head.toLowerCase()).not.toContain("last-modified:");
+    });
+
+    it("leaves a subresource's revalidation alone", async () => {
+      const reply = await exchange(
+        port,
+        `GET /app.js HTTP/1.1\r\nhost: 127.0.0.1:${port}\r\nsec-fetch-dest: script\r\nif-modified-since: Fri, 21 Aug 2026 19:52:53 GMT\r\n\r\n`,
+        (data) => data.includes("\r\n\r\n")
+      );
+      expect(reply.startsWith("HTTP/1.1 304 ")).toBe(true);
     });
   });
 
