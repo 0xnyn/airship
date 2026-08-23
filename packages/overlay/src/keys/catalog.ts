@@ -273,12 +273,17 @@ export const COMMANDS = [
 
   // -- View -----------------------------------------------------------------
   {
-    // One chord for both directions rather than a pair. The bar's segmented
+    // One command for both directions rather than a pair. The bar's segmented
     // control is the same shape — two buttons, one of them lit — and a toggle
     // reads off that state, so the key always does what pressing the *other*
-    // segment would. Two chords would also have doubled the ways to collide
-    // with a browser's own bindings; ⌘E is taken by nothing that matters in
-    // Chrome or Safari (find-by-selection, which the editor pre-empts anyway).
+    // segment would.
+    //
+    // Two chords, because this is the one command a browser is most likely to
+    // steal. ⌘E is find-by-selection in Chrome and Safari, which the editor
+    // pre-empts; but Chromium forks hang their own furniture on it (Dia takes
+    // it at the browser level, before the page sees it). ⌘. is "stop loading"
+    // everywhere, harmless on a loaded page, and pages may pre-empt it. Both
+    // are bound and both are shown, so whichever a browser leaves alone works.
     //
     // `inFrame`, necessarily: in view mode the page in a frame has focus, and
     // a shortcut back to edit mode that goes dead the moment you use the page
@@ -289,7 +294,7 @@ export const COMMANDS = [
     icon: "edit-mode",
     id: "mode.toggle",
     inFrame: true,
-    keys: ["mod+e"],
+    keys: ["mod+e", "mod+."],
     mode: "any",
     surface: "both",
     title: "Toggle Edit / View",

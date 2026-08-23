@@ -35,7 +35,7 @@ the editor also answers to a plain `+` and `-`.
 
 | Command | macOS | Windows / Linux | Where | |
 | --- | --- | --- | --- | --- |
-| Toggle Edit / View | ⌘E | Ctrl+E | anywhere | Switch between Edit and View. Edit selects and inspects; View leaves the page interactive. |
+| Toggle Edit / View | ⌘E or ⌘. | Ctrl+E or Ctrl+. | anywhere | Switch between Edit and View. Edit selects and inspects; View leaves the page interactive. |
 | Zoom in | ⌘= or = | Ctrl+= or = | canvas only | Zoom in a step, centred on the canvas. On Safari, use + rather than ⌘+. |
 | Zoom out | ⌘- or - | Ctrl+- or - | canvas only | Zoom out a step. On Safari, use − rather than ⌘−. |
 | Zoom to 100% | ⌘0 or ⇧0 | Ctrl+0 or Shift+0 | canvas only | Return the canvas to actual size. |
