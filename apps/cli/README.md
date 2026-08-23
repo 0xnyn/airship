@@ -127,12 +127,15 @@ catalog, so it cannot drift from what the keys actually do:
 | edit text | ↩ or T | Enter or T |
 | move | V | V |
 | inspect | I | I |
+| toggle edit / view | ⌘E | Ctrl+E |
 | zoom in | ⌘= or = | Ctrl+= or = |
 | zoom out | ⌘- or - | Ctrl+- or - |
 | zoom to 100% | ⌘0 or ⇧0 | Ctrl+0 or Shift+0 |
 | zoom to fit | ⇧1 | Shift+1 |
 | hand tool | H | H |
 | add a frame | F | F |
+| toggle the left panel | ⌘\ | Ctrl+\ |
+| toggle the design panel | ⌘⇧\ | Ctrl+Shift+\ |
 | send | ⌘↩ | Ctrl+Enter |
 | keyboard shortcuts | ? | ? |
 | command palette | ⌘K | Ctrl+K |

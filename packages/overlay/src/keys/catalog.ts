@@ -49,6 +49,7 @@ export type CommandGroup =
   | "Frames"
   | "Help"
   | "Menus"
+  | "Panels"
   | "Selection"
   | "View";
 
@@ -272,6 +273,28 @@ export const COMMANDS = [
 
   // -- View -----------------------------------------------------------------
   {
+    // One chord for both directions rather than a pair. The bar's segmented
+    // control is the same shape — two buttons, one of them lit — and a toggle
+    // reads off that state, so the key always does what pressing the *other*
+    // segment would. Two chords would also have doubled the ways to collide
+    // with a browser's own bindings; ⌘E is taken by nothing that matters in
+    // Chrome or Safari (find-by-selection, which the editor pre-empts anyway).
+    //
+    // `inFrame`, necessarily: in view mode the page in a frame has focus, and
+    // a shortcut back to edit mode that goes dead the moment you use the page
+    // is the one case this command exists for.
+    doc: "Switch between Edit and View. Edit selects and inspects; View leaves the page interactive.",
+    essential: true,
+    group: "View",
+    icon: "edit-mode",
+    id: "mode.toggle",
+    inFrame: true,
+    keys: ["mod+e"],
+    mode: "any",
+    surface: "both",
+    title: "Toggle Edit / View",
+  },
+  {
     doc: "Zoom in a step, centred on the canvas. On Safari, use + rather than ⌘+.",
     essential: true,
     group: "View",
@@ -405,6 +428,37 @@ export const COMMANDS = [
     surface: "canvas",
     title: "Send frame backward",
     where: "on a frame's handle",
+  },
+
+  // -- Panels ---------------------------------------------------------------
+  // The two dock headers carry show/hide buttons already; these are the same
+  // verbs from the keyboard. ⌘\ is the design-tool convention for folding
+  // chrome away (Figma, Sketch), and the pair is spelled as left / shift-left
+  // rather than as two unrelated letters so that a hand that knows one knows
+  // the other. Neither is bound by Chrome or Safari.
+  {
+    doc: "Show or hide the left panel: the chat in Edit, the frame list in View.",
+    essential: true,
+    group: "Panels",
+    icon: "panel-left",
+    id: "dock.left",
+    inFrame: true,
+    keys: ["mod+\\"],
+    mode: "any",
+    surface: "both",
+    title: "Toggle the left panel",
+  },
+  {
+    doc: "Show or hide the Design panel. It only exists in Edit mode, so the key is quiet in View.",
+    essential: true,
+    group: "Panels",
+    icon: "panel-right",
+    id: "dock.right",
+    inFrame: true,
+    keys: ["mod+shift+\\"],
+    mode: "edit",
+    surface: "both",
+    title: "Toggle the Design panel",
   },
 
   // -- Agent ----------------------------------------------------------------
@@ -718,6 +772,7 @@ export const COMMAND_GROUPS: readonly CommandGroup[] = [
   "Selection",
   "View",
   "Frames",
+  "Panels",
   "Agent",
   "Help",
   "Menus",
