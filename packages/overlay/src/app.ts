@@ -922,6 +922,25 @@ export class AirshipApp {
           },
           when: live,
         },
+        // Mode and panels from the keyboard. Each is the key for a button that
+        // is already on screen, and each `when` is that button's own
+        // condition: the mode toggle is always there; the left pill or header
+        // is always there; the Design panel has no home in view mode
+        // (`dockVisible`), so its key declines rather than flipping a flag the
+        // user could not see the effect of until the next mode switch.
+        {
+          id: "mode.toggle",
+          run: () => this.setEditing(!this.editing),
+        },
+        {
+          id: "dock.left",
+          run: () => this.setLeft(!this.leftOpen),
+        },
+        {
+          id: "dock.right",
+          run: () => this.setRight(!this.rightOpen),
+          when: () => this.editing,
+        },
         // The two discovery surfaces. Ungated: they document both modes and
         // both surfaces, and a help sheet you can only reach from the mode you
         // already understand is the wrong way round.

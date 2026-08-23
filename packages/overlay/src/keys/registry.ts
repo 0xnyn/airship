@@ -62,11 +62,14 @@ const LETTER_CODE = /^Key([A-Z])$/;
 /**
  * Codes whose physical identity matters more than the character they produce.
  *
- * `Slash` is here for `?` (the shortcuts panel), and the two numpad keys because
- * a numeric keypad's `+` and `−` are the ones a lot of people reach for to zoom
- * and they arrive under names nothing else would match.
+ * `Slash` is here for `?` (the shortcuts panel), `Backslash` for the panel
+ * toggles (⌘⇧\ arrives as `"|"` on a US layout, as ⇧/ arrives as `"?"`), and
+ * the two numpad keys because a numeric keypad's `+` and `−` are the ones a lot
+ * of people reach for to zoom and they arrive under names nothing else would
+ * match.
  */
 const CODE_KEYS: Readonly<Record<string, string>> = {
+  Backslash: "\\",
   Equal: "=",
   Minus: "-",
   NumpadAdd: "numpadadd",
