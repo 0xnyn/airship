@@ -307,6 +307,32 @@ describe("an unscoped binding", () => {
   });
 });
 
+describe("a chord on a key whose shifted character differs", () => {
+  // ⌘⇧\ reaches the event as `key: "|"` on a US layout. The chord is spelled
+  // with the physical key, so the match has to go through `e.code`, exactly as
+  // `?` does for the shortcuts panel.
+  it("matches the panel toggle by its physical key", () => {
+    const run = vi.fn();
+    bind({ id: "dock.right", run });
+
+    press(plain(), "|", { code: "Backslash", mod: true, shift: true });
+
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the unshifted chord distinct", () => {
+    const left = vi.fn();
+    const right = vi.fn();
+    bind({ id: "dock.left", run: left });
+    bind({ id: "dock.right", run: right });
+
+    press(plain(), "\\", { code: "Backslash", mod: true });
+
+    expect(left).toHaveBeenCalledTimes(1);
+    expect(right).not.toHaveBeenCalled();
+  });
+});
+
 describe("precedence is declared, not incidental", () => {
   it("gives a modal binding the chord over an ordinary one", () => {
     const menu = vi.fn();

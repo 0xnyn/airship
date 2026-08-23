@@ -35,6 +35,7 @@ the editor also answers to a plain `+` and `-`.
 
 | Command | macOS | Windows / Linux | Where | |
 | --- | --- | --- | --- | --- |
+| Toggle Edit / View | ⌘E | Ctrl+E | anywhere | Switch between Edit and View. Edit selects and inspects; View leaves the page interactive. |
 | Zoom in | ⌘= or = | Ctrl+= or = | canvas only | Zoom in a step, centred on the canvas. On Safari, use + rather than ⌘+. |
 | Zoom out | ⌘- or - | Ctrl+- or - | canvas only | Zoom out a step. On Safari, use − rather than ⌘−. |
 | Zoom to 100% | ⌘0 or ⇧0 | Ctrl+0 or Shift+0 | canvas only | Return the canvas to actual size. |
@@ -51,6 +52,13 @@ the editor also answers to a plain `+` and `-`.
 | Delete frame | ⌫ or Del | Backspace or Del | view mode, canvas only | Remove the active frame from the canvas. |
 | Bring frame forward | ↑ | ↑ | on a frame's handle | Move the frame up the stack, so it covers the ones it overlaps. |
 | Send frame backward | ↓ | ↓ | on a frame's handle | Move the frame down the stack, behind the ones it overlaps. |
+
+## Panels
+
+| Command | macOS | Windows / Linux | Where | |
+| --- | --- | --- | --- | --- |
+| Toggle the left panel | ⌘\ | Ctrl+\ | anywhere | Show or hide the left panel: the chat in Edit, the frame list in View. |
+| Toggle the Design panel | ⌘⇧\ | Ctrl+Shift+\ | edit mode | Show or hide the Design panel. It only exists in Edit mode, so the key is quiet in View. |
 
 ## Agent
 
