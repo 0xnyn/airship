@@ -127,7 +127,7 @@ catalog, so it cannot drift from what the keys actually do:
 | edit text | ↩ or T | Enter or T |
 | move | V | V |
 | inspect | I | I |
-| toggle edit / view | ⌘E | Ctrl+E |
+| toggle edit / view | ⌘E or ⌘. | Ctrl+E or Ctrl+. |
 | zoom in | ⌘= or = | Ctrl+= or = |
 | zoom out | ⌘- or - | Ctrl+- or - |
 | zoom to 100% | ⌘0 or ⇧0 | Ctrl+0 or Shift+0 |
