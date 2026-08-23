@@ -167,6 +167,23 @@ describe("filterProxyHeaders", () => {
     expect(out).toEqual(upstream);
   });
 
+  it("drops upstream validators and freshness when injecting", () => {
+    // The served body is rewritten per surface; see `SURFACE_NO_STORE`.
+    const out = filterProxyHeaders(
+      {
+        ...upstream,
+        etag: '"abc"',
+        expires: "Thu, 01 Jan 2099 00:00:00 GMT",
+        "last-modified": "Fri, 21 Aug 2026 19:52:53 GMT",
+      },
+      { forSurface: false, injecting: true, keepCsp: false }
+    );
+    expect(out.etag).toBeUndefined();
+    expect(out.expires).toBeUndefined();
+    expect(out["last-modified"]).toBeUndefined();
+    expect(out["cache-control"]).toBeUndefined();
+  });
+
   it("strips framing headers and hop-by-hop when injecting", () => {
     const out = filterProxyHeaders(
       { ...upstream, connection: "keep-alive", "transfer-encoding": "chunked" },
