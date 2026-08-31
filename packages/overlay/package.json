@@ -26,18 +26,18 @@
     "@dnd-kit/abstract": "0.5.0",
     "@dnd-kit/dom": "0.5.0",
     "@dnd-kit/geometry": "0.5.0",
-    "bippy": "^0.6.1"
+    "bippy": "^0.7.3"
   },
   "devDependencies": {
-    "@storybook/addon-a11y": "10.5.8",
-    "@storybook/addon-vitest": "10.5.8",
-    "@storybook/html-vite": "10.5.8",
-    "@vitest/browser": "^4.1.10",
-    "@vitest/browser-playwright": "^4.1.10",
-    "happy-dom": "^20.11.2",
+    "@storybook/addon-a11y": "10.5.10",
+    "@storybook/addon-vitest": "10.5.10",
+    "@storybook/html-vite": "10.5.10",
+    "@vitest/browser": "^4.1.11",
+    "@vitest/browser-playwright": "^4.1.11",
+    "happy-dom": "^20.11.12",
     "playwright": "^1.62.1",
-    "storybook": "10.5.8",
-    "vite": "^8.2.1",
-    "vitest": "^4.1.10"
+    "storybook": "10.5.10",
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
   }
 }
