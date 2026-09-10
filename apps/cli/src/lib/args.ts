@@ -81,6 +81,14 @@ export const FLAGS: readonly FlagSpec[] = [
     type: "string",
   },
   {
+    defaultHint: "localhost",
+    group: "CORE",
+    help: "Hostname of your dev server, when it is not on localhost - for example a local subdomain like app.mylocalapp.com. The port still comes from --target.",
+    hint: "<hostname>",
+    name: "target-host",
+    type: "string",
+  },
+  {
     defaultHint: "127.0.0.1",
     group: "CORE",
     help: "Interface the airship proxy listens on. Loopback by default; 0.0.0.0 exposes an unauthenticated editor to your whole network.",

@@ -135,6 +135,7 @@ export function launchBanner(info: {
   model?: string;
   safe: boolean;
   surface: AirshipSurface;
+  targetHost?: string;
   targetPort: number;
   url: string;
 }): string {
@@ -144,10 +145,11 @@ export function launchBanner(info: {
   // nothing was configured: the backend picks in that case, and naming a default
   // airship did not choose would be a claim it cannot make.
   const on = info.model ? ` on ${info.model}` : "";
+  const targetHost = info.targetHost ?? "localhost";
   return (
     `\n  ${style.magenta("◆")} ${style.bold("airship")}  —  editing ${info.cwd} with ${info.agent}${on}\n` +
     `  → open ${style.cyan(info.url)}\n` +
-    `    ${style.dim(`(proxying your dev server at http://localhost:${info.targetPort})`)}\n\n` +
+    `    ${style.dim(`(proxying your dev server at http://${targetHost}:${info.targetPort})`)}\n\n` +
     exposureBanner(info.host) +
     // Stated at every launch, not just in --help: a tool that can write
     // anywhere on disk should say so where the user is actually looking.
