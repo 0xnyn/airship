@@ -11,6 +11,16 @@ import { readFileSync } from "node:fs";
 import type { CodexConfigValue } from "@airship/server";
 import { CliError, EXIT } from "./errors";
 
+// TOML lets a number use `_` between digits as a separator, so a config value
+// like `model_max_output_tokens=100_000` is valid TOML and reads a lot better
+// than `100000`. `Number()` does not know this syntax, so left alone it falls
+// through to the string branch below and Codex would get the literal text
+// "100_000" where it wants an integer. The lookaround only strips an
+// underscore that sits between two digits, so a wrongly placed one (`_100`,
+// `100_`, `1__000`) is left in place and still fails the numeric check, same
+// as it would in real TOML.
+const DIGIT_SEPARATOR = /(?<=[0-9])_(?=[0-9])/g;
+
 /**
  * Interpret a flag value as the TOML scalar it looks like.
  *
@@ -27,8 +37,9 @@ export function coerce(raw: string): CodexConfigValue {
   if (raw === "false") {
     return false;
   }
-  if (raw !== "" && Number.isFinite(Number(raw))) {
-    return Number(raw);
+  const withoutSeparators = raw.replace(DIGIT_SEPARATOR, "");
+  if (raw !== "" && Number.isFinite(Number(withoutSeparators))) {
+    return Number(withoutSeparators);
   }
   // An explicitly quoted value keeps its quotes stripped but stays a string.
   if (raw.length > 1 && raw.startsWith('"') && raw.endsWith('"')) {

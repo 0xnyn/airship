@@ -26,6 +26,31 @@ describe("coerce", () => {
     expect(coerce('"true"')).toBe("true");
     expect(coerce('"42"')).toBe("42");
   });
+
+  // The bug this is for: TOML let a number use `_` between digits, so
+  // `model_max_output_tokens=100_000` is valid TOML and much easier to read
+  // than `100000`. Before this, coerce() did not know that syntax and the
+  // value reach Codex as the literal string "100_000" instead of the number
+  // 100000.
+  it("reads a TOML digit separator in an integer", () => {
+    expect(coerce("100_000")).toBe(100_000);
+    expect(coerce("1_000_000")).toBe(1_000_000);
+  });
+
+  it("reads a TOML digit separator in a float", () => {
+    expect(coerce("1_234.5")).toBe(1234.5);
+  });
+
+  it("keeps a negative number with a digit separator", () => {
+    expect(coerce("-1_000")).toBe(-1000);
+  });
+
+  it.each(["_100", "100_", "1__000"])(
+    "does not touch an underscore that is not a valid separator: %s",
+    (bad) => {
+      expect(coerce(bad)).toBe(bad);
+    }
+  );
 });
 
 describe("parseCodexConfig", () => {
