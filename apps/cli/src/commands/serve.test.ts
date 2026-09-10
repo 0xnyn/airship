@@ -178,6 +178,26 @@ describe("toServeOptions — host and allowed hosts", () => {
   });
 });
 
+describe("toServeOptions - target host", () => {
+  it("leaves it unset by default", () => {
+    expect(optionsFor({}).targetHost).toBeUndefined();
+  });
+
+  it("passes a valid target host through, lowercased", () => {
+    expect(optionsFor({ "target-host": "App.MyLocalApp.com" }).targetHost).toBe(
+      "app.mylocalapp.com"
+    );
+  });
+
+  it("rejects a target host carrying a scheme, port or path", () => {
+    for (const bad of ["http://x", "app.mylocalapp.com:3000", "a/b"]) {
+      expect(errorFrom(() => optionsFor({ "target-host": bad }))?.message).toBe(
+        `Invalid --target-host '${bad}'`
+      );
+    }
+  });
+});
+
 // The half-wired-flag trap: a flag in the registry but missing here works via
 // env and config while `assertKnownFlags` rejects it on the command line — a
 // state no other test can see.
