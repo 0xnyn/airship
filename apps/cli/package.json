@@ -37,18 +37,18 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.232",
-    "@clack/prompts": "^1.7.0",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.276",
+    "@clack/prompts": "^1.8.1",
     "@jridgewell/trace-mapping": "^0.3.31",
-    "@openai/codex-sdk": "^0.147.0",
-    "@opencode-ai/sdk": "^1.18.18",
-    "bippy": "^0.6.1",
+    "@openai/codex-sdk": "^0.155.0",
+    "@opencode-ai/sdk": "^1.18.31",
+    "bippy": "^0.7.3",
     "citty": "^0.2.2",
     "diff": "^9.0.0",
     "element-source": "^0.0.5",
     "picocolors": "^1.1.1",
     "ws": "^8.21.3",
-    "zod": "^4.0.0"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@airship/core": "workspace:*",
@@ -58,7 +58,7 @@
     "@airship/protocol": "workspace:*",
     "@airship/server": "workspace:*",
     "@airship/source": "workspace:*",
-    "@types/node": "^26.2.0"
+    "@types/node": "^26.6.1"
   },
   "engines": {
     "node": ">=22.13.0"

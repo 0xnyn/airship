@@ -22,6 +22,6 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "yaml": "^2.6.1"
+    "yaml": "^2.9.1"
   }
 }

@@ -22,7 +22,7 @@
     "@airship/protocol": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.6.1",
     "vitest": "^4.1.10"
   }
 }
