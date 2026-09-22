@@ -2675,7 +2675,7 @@ export class AirshipApp {
         "aria-label": "Send",
         class: `${cls("action")} ${cls("action-icon")} ${cls("primary")} ${cls("send")}`,
         ...tip("Send", "chat.send"),
-        onClick: () => this.submit(),
+        onClick: () => this.onSendClick(),
         type: "button",
       },
       [icon("chev-up", "sm")]
@@ -3647,6 +3647,36 @@ export class AirshipApp {
   // -- Submit — the single outbox --------------------------------------------
 
   /**
+   * What Send does — submit a new turn, or stop the one already running.
+   *
+   * The button used to just disable itself for `awaiting`'s whole span, which
+   * left no way back from a turn that was taking too long or was typed wrong:
+   * the daemon has supported `{ type: "cancel", jobId }` since the protocol
+   * added it (`server/src/index.ts`'s `case "cancel"`), but nothing in the
+   * composer ever sent one. `syncSendBtn` is what repaints the button between
+   * the two meanings; this is what a click means once it has.
+   */
+  private onSendClick(): void {
+    if (this.awaiting) {
+      this.cancelActive();
+      return;
+    }
+    this.submit();
+  }
+
+  /** Stop the running turn so its composer state can be edited and resent —
+   *  `keepVisual` is what leaves the pending deltas queued for that resend. */
+  private cancelActive(): void {
+    if (!this.activeJobId) {
+      // `job:created` has not landed yet; there is nothing on the daemon to
+      // cancel. The button still reads "Stop" (see `syncSendBtn`), but a
+      // click this early is a no-op rather than a request with no target.
+      return;
+    }
+    this.socket.send({ jobId: this.activeJobId, type: "cancel" });
+  }
+
+  /**
    * Ship one edit turn from the left composer: the typed instruction plus any
    * pasted images and any pending direct-manipulation deltas (style tweaks +
    * structural moves) accumulated in the inspector — all in a single request.
@@ -3907,12 +3937,36 @@ export class AirshipApp {
   private beginJob(): void {
     this.awaiting = true;
     this.activeJobId = null;
-    this.sendBtn.disabled = true;
+    this.syncSendBtn();
     this.syncApplyGroup();
     this.syncJobChip();
     const turn = assistantTurn();
     this.activeTurn = turn;
     this.pushBubble(turn.root);
+  }
+
+  /**
+   * Repaint Send between its two meanings.
+   *
+   * Never disabled: disabling it during `awaiting` is what this replaces —
+   * the button stays live throughout a turn, it just means something else
+   * while one is running.
+   */
+  private syncSendBtn(): void {
+    this.sendBtn.disabled = false;
+    this.sendBtn.replaceChildren(
+      icon(this.awaiting ? "square" : "chev-up", "sm")
+    );
+    const label = this.awaiting ? "Stop" : "Send";
+    this.sendBtn.setAttribute("aria-label", label);
+    this.sendBtn.setAttribute("data-tip", label);
+    // `chat.send`'s ⌘⏎ hint belongs on Send, not on Stop — Enter never cancels
+    // a turn, only `submit`'s own early return while `awaiting` is set.
+    if (this.awaiting) {
+      this.sendBtn.removeAttribute("data-key");
+    } else {
+      this.sendBtn.setAttribute("data-key", "chat.send");
+    }
   }
 
   /**
@@ -3960,7 +4014,7 @@ export class AirshipApp {
     this.awaiting = false;
     this.activeJobId = null;
     this.applyingVisual = false;
-    this.sendBtn.disabled = false;
+    this.syncSendBtn();
     this.syncApplyGroup();
     this.syncJobChip();
 
@@ -4169,7 +4223,7 @@ export class AirshipApp {
 
   private onDone(bundle: JobDiffBundle): void {
     this.awaiting = false;
-    this.sendBtn.disabled = false;
+    this.syncSendBtn();
     this.syncApplyGroup();
     this.syncJobChip();
     this.reportOffscreenTurn(bundle);
