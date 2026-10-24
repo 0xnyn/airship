@@ -34,7 +34,7 @@
     "ultracite": "^8.0.2",
     "vitest": "^5.0.5"
   },
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@11.28.8",
   "engines": {
     "node": ">=22.13.0"
   }
