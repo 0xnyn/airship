@@ -21,5 +21,15 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "happy-dom",
+    environmentOptions: {
+      happyDOM: {
+        // happy-dom 21 stops loading iframe documents by default — an SSRF
+        // guard for servers rendering untrusted HTML, which this is not. The
+        // frame, realm and nested-surface tests all mount same-origin iframes
+        // and read their documents, and without this every one of them sees
+        // a frame that never gets a document.
+        settings: { enableIframePageLoading: true },
+      },
+    },
   },
 });

@@ -24,6 +24,9 @@ import site from "#/content/site.json";
 
 export type LinkKey = keyof typeof site.links;
 
+/** Plain code-unit order, the same order `sort()` used; Biome wants it said. */
+const byName = (a: string, b: string): number => a.localeCompare(b, "en");
+
 const TOKENS: Readonly<Record<string, string>> = {
   installCommand: site.installCommand,
   name: site.name,
@@ -40,7 +43,7 @@ export function fill(text: string): string {
     const value = TOKENS[key];
     if (value === undefined) {
       throw new Error(
-        `content: unknown token {{${key}}}. Known tokens: ${Object.keys(TOKENS).sort().join(", ")}`
+        `content: unknown token {{${key}}}. Known tokens: ${Object.keys(TOKENS).sort(byName).join(", ")}`
       );
     }
     return value;
@@ -52,7 +55,7 @@ export function linkFor(key: string): string {
   const url = (site.links as Record<string, string>)[key];
   if (url === undefined) {
     throw new Error(
-      `content: unknown link "${key}". Known links: ${Object.keys(site.links).sort().join(", ")}`
+      `content: unknown link "${key}". Known links: ${Object.keys(site.links).sort(byName).join(", ")}`
     );
   }
   return url;

@@ -23,7 +23,10 @@ describe("SEED_MODELS", () => {
     // The generated module spells its keys as string literals rather than
     // importing `AgentKind`, to stay free of the zod-importing barrel. This is
     // what makes that safe: a fourth backend, or a rename, fails here.
-    expect(Object.keys(SEED_MODELS).sort()).toEqual([...AGENT_KINDS].sort());
+    const byName = (a: string, b: string) => a.localeCompare(b);
+    expect(Object.keys(SEED_MODELS).sort(byName)).toEqual(
+      [...AGENT_KINDS].sort(byName)
+    );
   });
 
   it.each(entries)("gives %s something to offer", (_agent, models) => {
