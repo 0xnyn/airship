@@ -81,6 +81,14 @@ export const FLAGS: readonly FlagSpec[] = [
     type: "string",
   },
   {
+    defaultHint: "localhost",
+    group: "CORE",
+    help: "Hostname of your dev server when it is not on localhost — a local subdomain like app.mylocalapp.com, say. The port still comes from --target.",
+    hint: "<hostname>",
+    name: "target-host",
+    type: "string",
+  },
+  {
     defaultHint: "127.0.0.1",
     group: "CORE",
     help: "Interface the airship proxy listens on. Loopback by default; 0.0.0.0 exposes an unauthenticated editor to your whole network.",
@@ -504,8 +512,16 @@ const HOSTNAME = /^[a-zA-Z0-9.-]+$/;
 /**
  * A bind address or hostname: an IP literal (IPv6 bare or bracketed) or a
  * plain name. `net.isIP` runs first — a naive colon check would reject `::1`.
+ *
+ * `portFlag` names the flag the hint sends a `host:port` typo to. The proxy's
+ * own address splits across `--host`/`--port`; the dev server's across
+ * `--target-host`/`--target`.
  */
-export function requireHost(value: string, name: string): string {
+export function requireHost(
+  value: string,
+  name: string,
+  portFlag = "port"
+): string {
   const trimmed = value.trim();
   const bare =
     trimmed.startsWith("[") && trimmed.endsWith("]")
@@ -519,7 +535,7 @@ export function requireHost(value: string, name: string): string {
   }
   throw new CliError(`Invalid --${name} '${value}'`, {
     exitCode: EXIT.usage,
-    hint: "Give a bare address or hostname — no scheme, port or path. The port comes from --port.",
+    hint: `Give a bare address or hostname — no scheme, port or path. The port comes from --${portFlag}.`,
   });
 }
 

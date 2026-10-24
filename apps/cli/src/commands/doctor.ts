@@ -17,10 +17,11 @@ import {
   argsFor,
   assertKnownFlags,
   GLOBAL_FLAGS,
+  requireHost,
   requirePort,
 } from "../lib/args";
 import { asBoolean, asString, CONFIG_FILENAME } from "../lib/config";
-import { detectTarget, isListening } from "../lib/detect";
+import { DEFAULT_TARGET_HOST, detectTarget, isListening } from "../lib/detect";
 import { resolveSettings } from "../lib/settings";
 import {
   note,
@@ -34,6 +35,7 @@ import { VERSION } from "../lib/version";
 export const DOCTOR_FLAGS: readonly string[] = [
   "cwd",
   "target",
+  "target-host",
   "agent",
   ...GLOBAL_FLAGS,
 ];
@@ -222,20 +224,28 @@ function checkGit(cwd: string, preferred: AgentKind | undefined): Check[] {
  */
 async function checkDevServer(
   cwd: string,
-  targetFlag: string | undefined
+  targetFlag: string | undefined,
+  targetHostFlag: string | undefined
 ): Promise<Check> {
+  // The same host `serve` would probe, or the two commands disagree about
+  // whether the dev server is up.
+  const host = targetHostFlag
+    ? requireHost(targetHostFlag, "target-host", "target")
+    : DEFAULT_TARGET_HOST;
   if (targetFlag) {
     const port = requirePort(targetFlag, "target");
-    const live = await isListening(port);
+    const live = await isListening(port, host);
     return {
       hint: live ? undefined : "Start it, or pass a different --target.",
       label: "dev server",
       level: live ? "ok" : "fail",
-      value: live ? `listening on ${port}` : `nothing on ${port}`,
+      value: live
+        ? `listening on ${host}:${port}`
+        : `nothing on ${host}:${port}`,
     };
   }
 
-  const detected = await detectTarget(cwd);
+  const detected = await detectTarget(cwd, host);
   if (!detected) {
     return {
       hint: "Pass --target <port>.",
@@ -250,7 +260,7 @@ async function checkDevServer(
       : "Start your dev server, or pass --target <port>.",
     label: "dev server",
     level: detected.listening ? "ok" : "warn",
-    value: `${detected.listening ? "listening on" : "nothing on"} ${detected.port} (${detected.reason})`,
+    value: `${detected.listening ? "listening on" : "nothing on"} ${host}:${detected.port} (${detected.reason})`,
   };
 }
 
@@ -281,7 +291,11 @@ export const doctor = defineCommand({
       ...(await checkAgents(agent)),
       // The dev server last: it is the check most likely to be a transient
       // "not started yet", and it reads better after the things that stay true.
-      await checkDevServer(cwd, asString(settings, "target")),
+      await checkDevServer(
+        cwd,
+        asString(settings, "target"),
+        asString(settings, "target-host")
+      ),
     ];
 
     if (json) {

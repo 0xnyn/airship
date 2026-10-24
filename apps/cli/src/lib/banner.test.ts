@@ -11,7 +11,7 @@ import {
   it,
   vi,
 } from "vitest";
-import { exposureBanner, warnBackendLimits } from "./banner";
+import { exposureBanner, launchBanner, warnBackendLimits } from "./banner";
 import { setColorEnabled } from "./terminal";
 
 /*
@@ -322,6 +322,33 @@ describe("warnBackendLimits", () => {
         rmSync(anon, { force: true, maxRetries: 3, recursive: true });
       }
     });
+  });
+});
+
+describe("launchBanner", () => {
+  const base = {
+    agent: "claude" as const,
+    cwd: "/tmp/project",
+    host: "127.0.0.1",
+    safe: false,
+    surface: "canvas" as const,
+    targetHost: "localhost",
+    targetPort: 5173,
+    url: "http://localhost:5174",
+  };
+
+  it("names the dev server by host and port", () => {
+    expect(launchBanner(base)).toContain(
+      "proxying your dev server at http://localhost:5173"
+    );
+  });
+
+  it("names a custom target host instead of localhost", () => {
+    const banner = launchBanner({ ...base, targetHost: "app.mylocalapp.com" });
+    expect(banner).toContain(
+      "proxying your dev server at http://app.mylocalapp.com:5173"
+    );
+    expect(banner).not.toContain("http://localhost:5173");
   });
 });
 

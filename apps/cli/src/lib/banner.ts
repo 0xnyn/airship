@@ -135,6 +135,8 @@ export function launchBanner(info: {
   model?: string;
   safe: boolean;
   surface: AirshipSurface;
+  /** The dev server's hostname, already defaulted — what `--target-host` set. */
+  targetHost: string;
   targetPort: number;
   url: string;
 }): string {
@@ -147,7 +149,7 @@ export function launchBanner(info: {
   return (
     `\n  ${style.magenta("◆")} ${style.bold("airship")}  —  editing ${info.cwd} with ${info.agent}${on}\n` +
     `  → open ${style.cyan(info.url)}\n` +
-    `    ${style.dim(`(proxying your dev server at http://localhost:${info.targetPort})`)}\n\n` +
+    `    ${style.dim(`(proxying your dev server at http://${info.targetHost}:${info.targetPort})`)}\n\n` +
     exposureBanner(info.host) +
     // Stated at every launch, not just in --help: a tool that can write
     // anywhere on disk should say so where the user is actually looking.

@@ -33,6 +33,7 @@ import { launchBanner, warnBackendLimits } from "../lib/banner";
 import { asBoolean, asList, asString, type Settings } from "../lib/config";
 import {
   candidatePorts,
+  DEFAULT_TARGET_HOST,
   detectTarget,
   firstFreePort,
   isListening,
@@ -45,6 +46,7 @@ import { note, out, setColorEnabled, shouldColor } from "../lib/terminal";
 export const SERVE_FLAGS: readonly string[] = [
   "target",
   "port",
+  "target-host",
   "host",
   "allowed-hosts",
   "cwd",
@@ -94,6 +96,11 @@ export interface ServeOptions {
   safe: boolean;
   surface: AirshipSurface;
   target?: number;
+  /**
+   * Where the dev server is, when it is not on localhost. Resolved to the
+   * default here, so nothing downstream has to know what the default is.
+   */
+  targetHost: string;
 }
 
 /**
@@ -114,6 +121,7 @@ export function toServeOptions(settings: Settings, cwd: string): ServeOptions {
   const model = asString(settings, "model");
   const opencodeModel = asString(settings, "opencode-model");
   const host = asString(settings, "host");
+  const targetHost = asString(settings, "target-host");
 
   return {
     agent: (agent ? requireEnum(agent, "agent") : "claude") as AgentKind,
@@ -163,6 +171,9 @@ export function toServeOptions(settings: Settings, cwd: string): ServeOptions {
     safe: asBoolean(settings, "safe"),
     surface: (mode ? requireEnum(mode, "mode") : "canvas") as AirshipSurface,
     target: target ? requirePort(target, "target") : undefined,
+    targetHost: targetHost
+      ? requireHost(targetHost, "target-host", "target")
+      : DEFAULT_TARGET_HOST,
   };
 }
 
@@ -180,14 +191,21 @@ async function resolveTarget(opts: ServeOptions): Promise<number> {
       await assertFree(opts.target);
       return opts.target;
     }
-    if (!(await isListening(opts.target))) {
-      throw new CliError(`Nothing is listening on port ${opts.target}`, {
-        hint: 'Start your dev server first, or let airship start it with --exec "pnpm dev".',
-      });
+    if (!(await isListening(opts.target, opts.targetHost))) {
+      throw new CliError(
+        `Nothing is listening on ${opts.targetHost}:${opts.target}`,
+        {
+          hint: 'Start your dev server first, or let airship start it with --exec "pnpm dev".',
+        }
+      );
     }
     return opts.target;
   }
 
+  // `--exec` ignores `targetHost` on purpose, here and in `assertFree`: the
+  // dev server we are about to spawn is a local child process, so localhost is
+  // where it will (or must not yet) be listening, whatever hostname the proxy
+  // is later told to address it by.
   if (opts.exec) {
     // Deliberately *not* `detectTarget`: that returns the first candidate
     // already answering, which is the right answer when we are attaching to a
@@ -207,7 +225,7 @@ async function resolveTarget(opts: ServeOptions): Promise<number> {
     return first.port;
   }
 
-  const detected = await detectTarget(opts.cwd);
+  const detected = await detectTarget(opts.cwd, opts.targetHost);
   if (!detected) {
     throw new CliError("Could not work out your dev server's port", {
       hint: "Pass it with --target <port>.",
@@ -215,7 +233,7 @@ async function resolveTarget(opts: ServeOptions): Promise<number> {
   }
   if (!detected.listening) {
     throw new CliError(
-      `Nothing is listening on port ${detected.port} (${detected.reason})`,
+      `Nothing is listening on ${opts.targetHost}:${detected.port} (${detected.reason})`,
       {
         hint: 'Start your dev server first, pass --target <port>, or let airship start it with --exec "pnpm dev".',
       }
@@ -342,6 +360,7 @@ export const serve = defineCommand({
         port,
         safe: opts.safe,
         surface: opts.surface,
+        targetHost: opts.targetHost,
         targetPort,
       });
     } catch (err) {
@@ -365,6 +384,7 @@ export const serve = defineCommand({
             model: opts.models?.[opts.agent],
             port,
             safe: opts.safe,
+            targetHost: opts.targetHost,
             targetPort,
             url: server.url,
           },
@@ -381,6 +401,7 @@ export const serve = defineCommand({
           model: opts.models?.[opts.agent],
           safe: opts.safe,
           surface: opts.surface,
+          targetHost: opts.targetHost,
           targetPort,
           url: server.url,
         })
