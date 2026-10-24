@@ -31,7 +31,7 @@
     "turbo": "^2.11.10",
     "typescript": "^6.0.3",
     "ultracite": "^7.12.4",
-    "vitest": "^4.1.12"
+    "vitest": "^5.0.5"
   },
   "packageManager": "pnpm@11.9.0",
   "engines": {
