@@ -5,7 +5,8 @@ installing and using Airship; everything here is about working on it.
 
 ## Getting set up
 
-Node 22.13 or later, and [pnpm](https://pnpm.io) — the repo pins `pnpm@11.28.8` through
+Node 22.18 or later to build (tsup 9's floor; the published CLI still runs on 22.13), and
+[pnpm](https://pnpm.io) — the repo pins `pnpm@11.28.8` through
 `packageManager`, so Corepack will pick the right one.
 
 ```bash
