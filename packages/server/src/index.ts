@@ -126,6 +126,12 @@ export interface ServerOptions {
    * outranks both.
    */
   surface?: AirshipSurface;
+  /**
+   * Hostname the dev server is reached by — `--target-host`. Every forwarded
+   * request and tunnelled upgrade carries it as `Host`, so a server that routes
+   * by virtual host (a local subdomain) sees the name it expects rather than
+   * the proxy's own.
+   */
   targetHost?: string;
   /** Port the user's dev server is already running on. */
   targetPort: number;

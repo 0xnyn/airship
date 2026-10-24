@@ -127,10 +127,20 @@ export function candidatePorts(cwd: string): Candidate[] {
 
 const PROBE_TIMEOUT_MS = 400;
 
+/**
+ * Where the dev server is assumed to be unless `--target-host` says otherwise.
+ *
+ * The hostname rather than `127.0.0.1`: Vite 6 binds IPv6 `localhost` (::1)
+ * only, and a literal IPv4 address would get ECONNREFUSED from it. Node's
+ * happy-eyeballs (`autoSelectFamily`) resolves the name to whichever family
+ * the server actually bound.
+ */
+export const DEFAULT_TARGET_HOST = "localhost";
+
 /** Whether anything is listening. Used for detection and by `doctor`. */
 export function isListening(
   port: number,
-  host = "localhost",
+  host = DEFAULT_TARGET_HOST,
   timeoutMs = PROBE_TIMEOUT_MS
 ): Promise<boolean> {
   return new Promise((resolvePromise) => {
@@ -156,7 +166,7 @@ export function isListening(
  */
 export async function detectTarget(
   cwd: string,
-  host = "localhost"
+  host = DEFAULT_TARGET_HOST
 ): Promise<Detection | undefined> {
   const candidates = candidatePorts(cwd);
   for (const candidate of candidates) {

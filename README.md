@@ -267,7 +267,7 @@ forwarded.
 | --- | --- | --- |
 | `-t, --target <port>` | Port your dev server is already running on. Detected from your `package.json` when omitted. | |
 | `-p, --port <port>` | Port for the airship proxy. | `target + 1` |
-| `--target-host <hostname>` | Hostname of your dev server, when it is not on localhost - for example a local subdomain like `app.mylocalapp.com`. The port still comes from `--target`. | `localhost` |
+| `--target-host <hostname>` | Hostname of your dev server when it is not on localhost — a local subdomain like `app.mylocalapp.com`, say. Every request and HMR upgrade is forwarded with that `Host`. The port still comes from `--target`. | `localhost` |
 | `--host <address>` | Interface the proxy listens on. See [`--host`](#--host) before widening it. | `127.0.0.1` |
 | `--allowed-hosts <names>` | Extra hostnames airship answers to, repeatable or comma-separated. `localhost` and IP addresses are always allowed. | |
 | `--cwd <dir>` | Project root for edits. | current directory |
@@ -414,7 +414,7 @@ AIRSHIP_OPEN            AIRSHIP_COMMIT          AIRSHIP_OPENCODE_CONFIG
 AIRSHIP_SAFE            AIRSHIP_JSON            AIRSHIP_OPENCODE_MODEL
 AIRSHIP_DEBUG           AIRSHIP_QUIET           AIRSHIP_CLAUDE_MODEL
 AIRSHIP_KEEP_CSP        AIRSHIP_HOST            AIRSHIP_CODEX_MODEL
-AIRSHIP_ALLOWED_HOSTS
+AIRSHIP_ALLOWED_HOSTS   AIRSHIP_TARGET_HOST
 ```
 
 `AIRSHIP_HELP` and `AIRSHIP_VERSION` are deliberately not read — exporting one would leave the
