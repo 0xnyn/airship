@@ -332,17 +332,18 @@ describe("launchBanner", () => {
     host: "127.0.0.1",
     safe: false,
     surface: "canvas" as const,
+    targetHost: "localhost",
     targetPort: 5173,
     url: "http://localhost:5174",
   };
 
-  it("says localhost when --target-host is not given", () => {
+  it("names the dev server by host and port", () => {
     expect(launchBanner(base)).toContain(
       "proxying your dev server at http://localhost:5173"
     );
   });
 
-  it("names the custom target host instead of localhost", () => {
+  it("names a custom target host instead of localhost", () => {
     const banner = launchBanner({ ...base, targetHost: "app.mylocalapp.com" });
     expect(banner).toContain(
       "proxying your dev server at http://app.mylocalapp.com:5173"

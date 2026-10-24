@@ -581,12 +581,20 @@ function tunnelUpgrade(
   head: Buffer,
   deps: ProxyDeps
 ): void {
+  // The same rewrite `handleHttp` applies: the browser addressed the proxy,
+  // and a dev server that routes by virtual host — or rejects a Host it was
+  // not told about — has to see its own name on the upgrade too, or HMR dies
+  // while every page load works.
+  const headers: http.IncomingHttpHeaders = {
+    ...req.headers,
+    host: `${deps.targetHost}:${deps.targetPort}`,
+  };
   const upstream = net.connect(
     // Options form so happy-eyeballs applies (Vite 6 binds ::1 only).
     { autoSelectFamily: true, host: deps.targetHost, port: deps.targetPort },
     () => {
       const lines = [`${req.method} ${req.url} HTTP/1.1`];
-      for (const [key, value] of Object.entries(req.headers)) {
+      for (const [key, value] of Object.entries(headers)) {
         if (Array.isArray(value)) {
           for (const v of value) {
             lines.push(`${key}: ${v}`);

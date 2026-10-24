@@ -36,12 +36,15 @@ interface Upstream {
   port: number;
   requests: string[];
   server: Server;
+  /** The `Host` each tunnelled upgrade arrived under, in order. */
+  upgradeHosts: string[];
   upgrades: string[];
 }
 
 async function startUpstream(): Promise<Upstream> {
   const requests: string[] = [];
   const upgrades: string[] = [];
+  const upgradeHosts: string[] = [];
   const server = createServer((req, res) => {
     requests.push(`${req.method} ${req.url}`);
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
@@ -49,6 +52,7 @@ async function startUpstream(): Promise<Upstream> {
   });
   server.on("upgrade", (req, socket) => {
     upgrades.push(String(req.headers["sec-websocket-protocol"] ?? ""));
+    upgradeHosts.push(String(req.headers.host ?? ""));
     socket.end(
       "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\n\r\n"
     );
@@ -57,7 +61,7 @@ async function startUpstream(): Promise<Upstream> {
     server.listen(0, "127.0.0.1", resolve);
   });
   const { port } = server.address() as AddressInfo;
-  return { port, requests, server, upgrades };
+  return { port, requests, server, upgradeHosts, upgrades };
 }
 
 /**
@@ -268,6 +272,22 @@ describe("the editor server, over raw sockets", () => {
       // Recorded upstream when it received the upgrade, which is strictly
       // before the 101 waited on above was relayed back.
       expect(upstream.upgrades).toContain("vite-hmr");
+    });
+
+    it("addresses the upgrade to the dev server, as every page load is", async () => {
+      // The browser's Host names the proxy. A dev server that routes by
+      // virtual host, or refuses a Host it was not configured for, would
+      // serve every page and then drop HMR — the one request that kept the
+      // proxy's name.
+      await exchange(
+        port,
+        upgradeRequest("/", {
+          host: `localhost:${port}`,
+          "sec-websocket-protocol": "vite-hmr",
+        }),
+        said("HTTP/1.1 101 ")
+      );
+      expect(upstream.upgradeHosts.at(-1)).toBe(`localhost:${upstream.port}`);
     });
 
     it("refuses a cross-origin tunnel upgrade — the second door", async () => {

@@ -178,9 +178,9 @@ describe("toServeOptions — host and allowed hosts", () => {
   });
 });
 
-describe("toServeOptions - target host", () => {
-  it("leaves it unset by default", () => {
-    expect(optionsFor({}).targetHost).toBeUndefined();
+describe("toServeOptions — target host", () => {
+  it("defaults to localhost", () => {
+    expect(optionsFor({}).targetHost).toBe("localhost");
   });
 
   it("passes a valid target host through, lowercased", () => {
@@ -195,6 +195,16 @@ describe("toServeOptions - target host", () => {
         `Invalid --target-host '${bad}'`
       );
     }
+  });
+
+  it("sends a host:port typo to --target, not --port", () => {
+    // `--host`'s hint names `--port` because that is the proxy's pair; the dev
+    // server's port is `--target`, and the hint has to say so or it steers the
+    // user to the wrong flag.
+    expect(
+      errorFrom(() => optionsFor({ "target-host": "app.mylocalapp.com:3000" }))
+        ?.hint
+    ).toContain("--target.");
   });
 });
 
