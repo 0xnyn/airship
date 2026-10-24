@@ -21,6 +21,7 @@ import {
   type ModelProbeOptions,
 } from "@airship/server";
 import {
+  type CANCEL_SYMBOL,
   cancel,
   confirm,
   intro,
@@ -67,8 +68,14 @@ export interface WizardOptions {
   probe?: ModelProbeOptions;
 }
 
-/** Clack returns a symbol when the user hits Ctrl-C; treat it as an exit. */
-function unwrap<T>(value: T | symbol): T {
+/**
+ * Clack returns `CANCEL_SYMBOL` when the user hits Ctrl-C; treat it as an exit.
+ *
+ * Typed against that one symbol rather than `symbol`: since @clack/prompts 1.8
+ * `isCancel` narrows to the unique symbol, so excluding it from a `T | symbol`
+ * still left a `symbol` behind and every answer typed as "string or cancel".
+ */
+function unwrap<T>(value: T | typeof CANCEL_SYMBOL): T {
   if (isCancel(value)) {
     cancel("Cancelled.");
     process.exit(EXIT.interrupted);
