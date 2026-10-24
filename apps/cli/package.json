@@ -59,7 +59,7 @@
     "@airship/server": "workspace:*",
     "@airship/source": "workspace:*",
     "@types/node": "^26.6.5",
-    "tsup": "^8.5.1",
+    "tsup": "^9.0.0",
     "vitest": "^5.0.5"
   },
   "engines": {
