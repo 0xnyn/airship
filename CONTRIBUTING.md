@@ -41,6 +41,10 @@ under `packages/`, because the bundle it builds is staler than you would expect.
 Everything builds, tests and runs on Windows — `checks.yml` gates every PR on a
 `windows-latest` leg alongside Linux, so a break there fails the PR.
 
+One tool outside Node: the TLS tests (`detect.test.ts`, `serve.test.ts`, `proxy.test.ts`)
+generate a throwaway certificate with `openssl` rather than reading a committed key. Git for
+Windows ships one (`C:\Program Files\Git\usr\bin`), and the runner image has it on PATH.
+
 `make` is the one thing that does not carry over: the Makefile declares
 `SHELL := /bin/bash` and a handful of targets genuinely need it (`help` is an `awk`
 program, `preflight` a shell conditional, `release` a bash script). It is a thin
