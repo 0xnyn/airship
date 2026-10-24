@@ -21,17 +21,17 @@
     "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
-    "@commitlint/cli": "^21.2.3",
-    "@commitlint/config-conventional": "^21.2.3",
+    "@biomejs/biome": "~2.5.15",
+    "@commitlint/cli": "^21.2.4",
+    "@commitlint/config-conventional": "^21.2.4",
     "@types/node": "^26.6.5",
     "czg": "^1.14.0",
     "husky": "^9.1.7",
-    "tsup": "^8.5.0",
-    "turbo": "^2.11.8",
+    "tsup": "^8.5.1",
+    "turbo": "^2.11.10",
     "typescript": "^6.0.3",
-    "ultracite": "^7.10.3",
-    "vitest": "^4.1.10"
+    "ultracite": "^7.12.4",
+    "vitest": "^4.1.12"
   },
   "packageManager": "pnpm@11.9.0",
   "engines": {

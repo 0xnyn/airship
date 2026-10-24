@@ -249,7 +249,12 @@ function asRuleList(rules: unknown[]): CSSRuleList {
  * Returns a disposer; `resetDocument` clears them too.
  */
 export function installRules(rules: FakeRule[]): () => void {
-  const sheet = { cssRules: ruleTree(rules) } as unknown as CSSStyleSheet;
+  // A real `CSSStyleSheet` with its rule list swapped, not a bare object:
+  // happy-dom 20.14 type-checks what `adoptedStyleSheets` is assigned and
+  // refuses anything that is not its own class. The walkers only ever read
+  // `cssRules`, so the override is the whole of the fake.
+  const sheet = new CSSStyleSheet();
+  Object.defineProperty(sheet, "cssRules", { value: ruleTree(rules) });
   const doc = document as unknown as { adoptedStyleSheets: CSSStyleSheet[] };
   const before = doc.adoptedStyleSheets ?? [];
   doc.adoptedStyleSheets = [...before, sheet];

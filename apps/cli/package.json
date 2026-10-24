@@ -37,11 +37,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.301",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.309",
     "@clack/prompts": "^1.8.1",
     "@jridgewell/trace-mapping": "^0.3.31",
-    "@openai/codex-sdk": "^0.163.0",
-    "@opencode-ai/sdk": "^1.19.1",
+    "@openai/codex-sdk": "^0.164.0",
+    "@opencode-ai/sdk": "^1.19.4",
     "bippy": "^0.7.3",
     "citty": "^0.2.2",
     "diff": "^9.0.0",
