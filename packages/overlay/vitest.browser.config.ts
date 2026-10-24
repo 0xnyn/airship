@@ -9,13 +9,12 @@ import { defineConfig } from "vitest/config";
  *
  * The obvious shape is one `vitest.config.ts` with two projects — happy-dom for
  * the unit tests, a browser project for the stories. It is the wrong shape here
- * for a reason outside vitest entirely: `.husky/pre-commit` runs `pnpm test`,
- * which reaches `vitest run` with no project filter, which would run *both*.
- * Every commit would launch Chromium, and on a machine that has not downloaded
- * it the hook would fail and block the commit. This repo has no CI — `make
- * check` is documented in the Makefile as "what CI should run" — so that hook is
- * the only gate there is, and making it depend on a browser download is a bad
- * trade for a catalogue.
+ * for a reason outside vitest entirely: `pnpm test` reaches `vitest run` with
+ * no project filter, which would run *both*. Every `make check`, every `make
+ * preflight` and both lanes of checks.yml (`turbo run test` on Linux and
+ * Windows) would launch Chromium, and on a machine or runner that has not
+ * downloaded it the run would fail. Making the default gate depend on a browser
+ * download is a bad trade for a catalogue.
  *
  * Separate file, separate script, separate turbo task, not wired into `test`.
  * `make test-browser` opts in; `make browsers` fetches the browser.
