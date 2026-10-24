@@ -357,6 +357,13 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   async function startEdit(request: CreateJobRequest): Promise<void> {
     const displayPrompt = request.prompt.trim() || synthesizeLabel(request);
     const rec = jobs.create(displayPrompt);
+    // Cancellable from the moment the id is public. `job:created` is the
+    // client's cue that Stop has something to address, so a cancel can arrive
+    // the instant it is sent — and `case "cancel"` only ever aborts through
+    // `rec.abort`. Attached any later, a cancel landing during prompt
+    // preparation found nothing to abort and the turn ran to completion.
+    const abort = new AbortController();
+    rec.abort = abort;
     broadcast({
       job: {
         createdAt: rec.createdAt,
@@ -373,9 +380,6 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
 
     const { agent, model } = resolveTarget(request, opts);
     const resumeSessionId = resolveResume(cwd, request.parentJobId, agent);
-
-    const abort = new AbortController();
-    rec.abort = abort;
 
     const result = await runEdit(
       {

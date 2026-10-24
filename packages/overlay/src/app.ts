@@ -643,6 +643,8 @@ export class AirshipApp {
   private selected: Selection | null = null;
   private images: ImageInput[] = [];
   private activeJobId: string | null = null;
+  /** Stop was pressed before `job:created` named the job; see `cancelActive`. */
+  private cancelOnCreate = false;
   private parentJobId: string | null = null;
   private activeThreadRoot: string | null = null;
   private historyOpen = false;
@@ -3668,12 +3670,33 @@ export class AirshipApp {
    *  `keepVisual` is what leaves the pending deltas queued for that resend. */
   private cancelActive(): void {
     if (!this.activeJobId) {
-      // `job:created` has not landed yet; there is nothing on the daemon to
-      // cancel. The button still reads "Stop" (see `syncSendBtn`), but a
-      // click this early is a no-op rather than a request with no target.
+      // `job:created` has not landed yet, so there is no id to cancel by. The
+      // button already reads "Stop", and a click that does nothing is the one
+      // thing it must not do — so the intent is kept and the cancel goes out
+      // the moment the id arrives. Usually that is milliseconds; behind
+      // another tab's edit on the daemon's serial chain it can be a while.
+      this.cancelOnCreate = true;
       return;
     }
     this.socket.send({ jobId: this.activeJobId, type: "cancel" });
+  }
+
+  /**
+   * `job:created` — the daemon has named the turn we are waiting on.
+   *
+   * Only while a turn is ours to claim: edits run on one chain, so the single
+   * running job is necessarily the one `beginJob` latched. A Stop held since
+   * before the id existed goes out now (see `cancelActive`).
+   */
+  private adoptJob(jobId: string): void {
+    if (!this.awaiting || this.activeJobId) {
+      return;
+    }
+    this.activeJobId = jobId;
+    if (this.cancelOnCreate) {
+      this.cancelOnCreate = false;
+      this.cancelActive();
+    }
   }
 
   /**
@@ -3937,6 +3960,7 @@ export class AirshipApp {
   private beginJob(): void {
     this.awaiting = true;
     this.activeJobId = null;
+    this.cancelOnCreate = false;
     this.syncSendBtn();
     this.syncApplyGroup();
     this.syncJobChip();
@@ -4097,9 +4121,7 @@ export class AirshipApp {
         this.gitHealth = ev.health;
         break;
       case "job:created":
-        if (this.awaiting && !this.activeJobId) {
-          this.activeJobId = ev.job.jobId;
-        }
+        this.adoptJob(ev.job.jobId);
         break;
       case "job:step":
         // Coarse, self-overwriting status. The durable record of what happened
