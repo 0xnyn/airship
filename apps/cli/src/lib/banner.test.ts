@@ -334,6 +334,7 @@ describe("launchBanner", () => {
     surface: "canvas" as const,
     targetHost: "localhost",
     targetPort: 5173,
+    targetScheme: "http" as const,
     url: "http://localhost:5174",
   };
 
@@ -349,6 +350,15 @@ describe("launchBanner", () => {
       "proxying your dev server at http://app.mylocalapp.com:5173"
     );
     expect(banner).not.toContain("http://localhost:5173");
+  });
+
+  it("says https when that is what the dev server speaks", () => {
+    // The scheme the probe found, not a constant: a banner reading `http://`
+    // over an https dev server would describe a proxy that could not work.
+    const banner = launchBanner({ ...base, targetScheme: "https" });
+    expect(banner).toContain(
+      "proxying your dev server at https://localhost:5173"
+    );
   });
 });
 
