@@ -368,6 +368,13 @@ async function runTurn(
   input.abortController?.signal.addEventListener("abort", onAbort, {
     once: true,
   });
+  // A listener added after the fact never fires. The cancel can land during
+  // `openSession` or the subscribe above — the overlay's Stop sends it the
+  // moment `job:created` names the job — and without this the turn it was
+  // meant to stop would go out anyway, and be reported as "cancelled".
+  if (input.abortController?.signal.aborted) {
+    onAbort();
+  }
 
   try {
     const res = (await client.session.prompt(

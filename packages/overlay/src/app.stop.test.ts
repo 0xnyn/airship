@@ -136,8 +136,8 @@ describe("stopping an in-progress chat response", () => {
     typeAndSubmit("add a footer");
     expect(socket.sent).toEqual([{ request: expect.anything(), type: "edit" }]);
 
-    // The turn is running but the daemon has not answered `job:created` yet — there is nothing
-    // to cancel, so the button must not pretend otherwise.
+    // The turn is running but the daemon has not answered `job:created` yet. The button is
+    // already Stop, because the user's intent does not depend on the daemon's bookkeeping.
     expect(sendBtn().disabled).toBe(false);
     expect(sendBtn().getAttribute("aria-label")).toBe("Stop");
 
@@ -153,6 +153,49 @@ describe("stopping an in-progress chat response", () => {
       { request: expect.anything(), type: "edit" },
       { jobId: "job-1", type: "cancel" },
     ]);
+  });
+
+  it("holds a Stop pressed before the job has an id, and sends it when one lands", () => {
+    // The window between Send and `job:created` is usually milliseconds, but behind another
+    // tab's edit on the daemon's serial chain it is as long as that edit takes — and a Stop
+    // that silently did nothing there would read as a broken button.
+    const { socket } = mount();
+
+    typeAndSubmit("add a footer");
+    sendBtn().dispatchEvent(new Event("click", { bubbles: true }));
+    sendBtn().dispatchEvent(new Event("click", { bubbles: true }));
+    // Nothing to address it to yet, so nothing went out.
+    expect(socket.sent).toHaveLength(1);
+
+    socket.emit({
+      job: { createdAt: Date.now(), jobId: "job-3", status: "running" },
+      type: "job:created",
+    });
+
+    // One cancel, however many times Stop was pressed while waiting.
+    expect(socket.sent.slice(1)).toEqual([{ jobId: "job-3", type: "cancel" }]);
+  });
+
+  it("forgets a held Stop once the turn it was meant for is over", () => {
+    const { socket } = mount();
+
+    typeAndSubmit("add a footer");
+    sendBtn().dispatchEvent(new Event("click", { bubbles: true }));
+    // The daemon never created the job — the socket dropped, say — and the reconnect's
+    // `hello` reports nothing running, which releases the turn.
+    socket.emit({ defaultAgent: "claude", jobs: [], type: "hello" });
+    expect(sendBtn().getAttribute("aria-label")).toBe("Send");
+
+    typeAndSubmit("try again");
+    socket.emit({
+      job: { createdAt: Date.now(), jobId: "job-4", status: "running" },
+      type: "job:created",
+    });
+
+    // The stale Stop must not cancel the new turn.
+    expect(
+      socket.sent.filter((m) => (m as { type: string }).type === "cancel")
+    ).toEqual([]);
   });
 
   it("reverts to Send once the job ends, ready to submit the next turn", () => {
