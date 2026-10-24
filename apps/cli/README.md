@@ -152,7 +152,7 @@ inspector are open on either side of it.
 
 **View** is about your frames. The page underneath is fully interactive — click through it,
 fill in forms, scroll — so there is no element selection, and the two panels that depend on
-one step aside. In their place the left panel lists every frame, and a minimap appears in
+it step aside. In their place the left panel lists every frame, and a minimap appears in
 the bottom-right corner:
 
 - Click a frame in the list to go to it without changing your zoom; double-click to zoom
@@ -508,7 +508,7 @@ dev server on it. It won't start one on a port that's already taken.
 **The canvas frame is blank, or shows a broken-document icon.**
 Your dev server is probably sending `X-Frame-Options` or a `Content-Security-Policy` with
 `frame-ancestors` (Shopify's `shopify theme dev` does), which told the browser not to render the
-app inside airship's canvas frame. Airship strips those headers from the surfaces it serves, so
+app inside Airship's canvas frame. Airship strips those headers from the surfaces it serves, so
 this should not happen — unless you passed `--keep-csp`, which keeps your CSP and with it any
 `frame-ancestors` restriction. Drop the flag, or loosen the policy while editing.
 
