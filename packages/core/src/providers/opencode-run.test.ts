@@ -246,3 +246,49 @@ describe("format rejection retry", () => {
     expect(warnings(items)).toHaveLength(0);
   });
 });
+
+describe("a cancel that lands before the prompt goes out", () => {
+  // The abort listener is registered just before `session.prompt`, after two
+  // awaits (`openSession`, `event.subscribe`). A Stop pressed in that window
+  // aborts a signal nobody is listening to yet, so the turn used to run in
+  // full — and come back labelled "cancelled", because `failureText` reads the
+  // signal rather than what happened.
+  it("still stops the turn, and never sends the prompt", async () => {
+    const aborts: string[] = [];
+    const { client } = scriptedClient([{ info: assistant("msg_a") }]);
+    const abortController = new AbortController();
+    const cancelling: OpencodeClientLike = {
+      ...client,
+      event: {
+        subscribe: (...args) => {
+          // The cancel arrives while the stream is being set up.
+          abortController.abort();
+          return client.event.subscribe(...args);
+        },
+      },
+      session: {
+        ...client.session,
+        abort: (params) => {
+          aborts.push(params.sessionID);
+          return Promise.resolve({});
+        },
+        // As fetch behaves: a request handed an already-aborted signal rejects
+        // before anything is sent.
+        prompt: (params, options) => {
+          if (options?.signal?.aborted) {
+            return Promise.reject(new Error("The operation was aborted"));
+          }
+          return client.session.prompt(params, options);
+        },
+      },
+    };
+    const { ctx } = runCtx("prov/cancel-early-model");
+    (ctx.input as { abortController?: AbortController }).abortController =
+      abortController;
+
+    const outcome = await runWithClient(cancelling, ctx);
+
+    expect(outcome.error).toBe("cancelled");
+    expect(aborts).toEqual([SESSION]);
+  });
+});
