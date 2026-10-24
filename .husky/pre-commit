@@ -22,9 +22,12 @@ if [ -z "$STAGED_FILES" ]; then
   exit 0
 fi
 
-# Run formatter, capturing the exit code so we can still re-stage and report
+# Run formatter, capturing the exit code so we can still re-stage and report.
+# The workspace's ultracite, not `pnpm dlx`: dlx fetches whatever is newest on
+# npm at commit time, so the hook could run a different ruleset — and a
+# different Biome — from the one `pnpm lint` and CI run.
 FORMAT_EXIT_CODE=0
-pnpm dlx ultracite fix || FORMAT_EXIT_CODE=$?
+pnpm exec ultracite fix || FORMAT_EXIT_CODE=$?
 
 # Re-stage files that were already staged
 echo "$STAGED_FILES" | while IFS= read -r file; do
