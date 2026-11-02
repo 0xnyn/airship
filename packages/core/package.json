@@ -21,14 +21,14 @@
   "dependencies": {
     "@airship/git": "workspace:*",
     "@airship/protocol": "workspace:*",
-    "@anthropic-ai/claude-agent-sdk": "^0.3.309",
-    "@openai/codex-sdk": "^0.164.0",
-    "@opencode-ai/sdk": "^1.19.4",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.314",
+    "@openai/codex-sdk": "^0.166.0",
+    "@opencode-ai/sdk": "^1.19.5",
     "diff": "^9.0.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^26.6.5",
+    "@types/node": "^26.6.6",
     "vitest": "^5.0.5"
   }
 }
